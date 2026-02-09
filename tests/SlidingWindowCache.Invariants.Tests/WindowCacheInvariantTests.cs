@@ -127,6 +127,16 @@ public class WindowCacheInvariantTests : IDisposable
 
     #region A.1 Concurrency & Priority
 
+    /// <summary>
+    /// Tests Invariant A.0a (🟢 Behavioral): Every User Request MUST cancel any ongoing or pending
+    /// Rebalance Execution before performing cache mutations.
+    /// </summary>
+    /// <remarks>
+    /// This test verifies that when a new user request arrives while a rebalance is pending,
+    /// the system properly cancels the previous rebalance intent before proceeding.
+    /// Uses DEBUG instrumentation counters to verify cancellation behavior.
+    /// Related: A.0 (Architectural - User Path has higher priority than Rebalance Execution)
+    /// </remarks>
     [Fact]
     public async Task Invariant_A1_0a_UserRequestCancelsRebalanceBeforeMutations()
     {
@@ -164,6 +174,15 @@ public class WindowCacheInvariantTests : IDisposable
 
     #region A.2 User-Facing Guarantees
 
+    /// <summary>
+    /// Tests Invariant A.1 (🟢 Behavioral): The User Path always serves user requests
+    /// regardless of the state of rebalance execution.
+    /// </summary>
+    /// <remarks>
+    /// This test verifies that multiple user requests are all served successfully and return
+    /// correct data, independent of any background rebalance operations.
+    /// Validates the core guarantee that users are never blocked by cache maintenance.
+    /// </remarks>
     [Fact]
     public async Task Invariant_A2_1_UserPathAlwaysServesRequests()
     {
@@ -190,6 +209,14 @@ public class WindowCacheInvariantTests : IDisposable
 #endif
     }
 
+    /// <summary>
+    /// Tests Invariant A.2 (🟢 Behavioral): The User Path never waits for rebalance execution to complete.
+    /// </summary>
+    /// <remarks>
+    /// This test verifies that user requests complete quickly without waiting for the debounce delay
+    /// or background rebalance operations. Uses a 1-second debounce delay and verifies that requests
+    /// complete in less than 500ms, proving the User Path returns immediately.
+    /// </remarks>
     [Fact]
     public async Task Invariant_A2_2_UserPathNeverWaitsForRebalance()
     {
@@ -211,6 +238,14 @@ public class WindowCacheInvariantTests : IDisposable
         TestHelpers.VerifyDataMatchesRange(data, TestHelpers.CreateRange(100, 110));
     }
 
+    /// <summary>
+    /// Tests Invariant A.10 (🟢 Behavioral): The User always receives data exactly corresponding to RequestedRange.
+    /// </summary>
+    /// <remarks>
+    /// This test verifies that returned data matches exactly the requested range in terms of length and content,
+    /// regardless of cache state or rebalance operations. Tests multiple different ranges to ensure consistency.
+    /// This is a fundamental correctness guarantee of the cache.
+    /// </remarks>
     [Fact]
     public async Task Invariant_A2_10_UserAlwaysReceivesExactRequestedRange()
     {
@@ -243,6 +278,15 @@ public class WindowCacheInvariantTests : IDisposable
 
     #region A.3 Cache Mutation Rules (User Path)
 
+    /// <summary>
+    /// Tests Invariant A.8 (🟢 Behavioral): The User Path may mutate cache for initial population
+    /// during cold start (when CurrentCacheRange == null).
+    /// </summary>
+    /// <remarks>
+    /// This test verifies that the first user request to an empty cache properly populates the cache
+    /// with the requested data. This is one of the three controlled mutation scenarios allowed for
+    /// the User Path (cold start, expansion for intersecting requests, full replacement for non-intersecting).
+    /// </remarks>
     [Fact]
     public async Task Invariant_A3_8_ColdStart_InitialCachePopulation()
     {
@@ -273,6 +317,15 @@ public class WindowCacheInvariantTests : IDisposable
 #endif
     }
 
+    /// <summary>
+    /// Tests Invariant A.8 (🟢 Behavioral): The User Path may mutate cache by expanding it
+    /// when RequestedRange intersects with CurrentCacheRange.
+    /// </summary>
+    /// <remarks>
+    /// This test verifies that when a user request partially overlaps with existing cache,
+    /// the cache is expanded to include both the old and new data. The system properly unions
+    /// the ranges and serves the complete requested data.
+    /// </remarks>
     [Fact]
     public async Task Invariant_A3_8_CacheExpansion_IntersectingRequest()
     {
@@ -302,6 +355,15 @@ public class WindowCacheInvariantTests : IDisposable
 #endif
     }
 
+    /// <summary>
+    /// Tests Invariant A.8 (🟢 Behavioral): The User Path may mutate cache by performing
+    /// full cache replacement when RequestedRange does NOT intersect CurrentCacheRange.
+    /// </summary>
+    /// <remarks>
+    /// This test verifies that when a user request is completely disjoint from the current cache
+    /// (a "jump" to a different region), the cache is entirely replaced with the new data.
+    /// This prevents memory waste from maintaining distant, non-contiguous cache regions.
+    /// </remarks>
     [Fact]
     public async Task Invariant_A3_8_FullCacheReplacement_NonIntersectingRequest()
     {
@@ -332,6 +394,16 @@ public class WindowCacheInvariantTests : IDisposable
 #endif
     }
 
+    /// <summary>
+    /// Tests Invariant A.9a (🟢 Behavioral): Cache always represents a single contiguous range
+    /// and is never fragmented.
+    /// </summary>
+    /// <remarks>
+    /// This test verifies that the cache maintains contiguity even when requests jump to different
+    /// regions. When a non-intersecting request arrives, the cache replaces its contents entirely
+    /// rather than maintaining multiple disjoint ranges. This ensures efficient memory usage and
+    /// predictable cache behavior.
+    /// </remarks>
     [Fact]
     public async Task Invariant_A3_9a_CacheContiguityMaintained()
     {
@@ -359,6 +431,14 @@ public class WindowCacheInvariantTests : IDisposable
 
     #region B. Cache State & Consistency Invariants
 
+    /// <summary>
+    /// Tests Invariant B.11 (🟢 Behavioral): CacheData and CurrentCacheRange are always consistent.
+    /// </summary>
+    /// <remarks>
+    /// This test verifies that at all observable points, the cache's data content matches its declared
+    /// range. Tests multiple requests and verifies that the cache always returns correct data that
+    /// corresponds to its stated range. This is a fundamental correctness invariant.
+    /// </remarks>
     [Fact]
     public async Task Invariant_B11_CacheDataAndRangeAlwaysConsistent()
     {
@@ -388,6 +468,16 @@ public class WindowCacheInvariantTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// Tests Invariant B.15 (🟢 Behavioral): Partially executed or cancelled Rebalance Execution
+    /// MUST NOT leave cache in inconsistent state.
+    /// </summary>
+    /// <remarks>
+    /// This test verifies that when a rebalance is cancelled mid-execution (by a new user request),
+    /// the cache remains in a valid, consistent state and continues to serve correct data.
+    /// This ensures that aggressive cancellation for user responsiveness doesn't compromise correctness.
+    /// Also validates F.35b (same guarantee from execution perspective).
+    /// </remarks>
     [Fact]
     public async Task Invariant_B15_CancelledRebalanceDoesNotViolateConsistency()
     {
@@ -417,6 +507,15 @@ public class WindowCacheInvariantTests : IDisposable
 
     #region C. Rebalance Intent & Temporal Invariants
 
+    /// <summary>
+    /// Tests Invariant C.17 (🟢 Behavioral): At any point in time, there is at most one active rebalance intent.
+    /// </summary>
+    /// <remarks>
+    /// This test verifies that when rapid user requests arrive, each new request publishes a new intent
+    /// and cancels any previous intents. The system maintains at most one active intent at any time,
+    /// ensuring simplicity and preventing intent queue buildup. Uses DEBUG counters to track intent
+    /// publication and cancellation.
+    /// </remarks>
     [Fact]
     public async Task Invariant_C17_AtMostOneActiveIntent()
     {
@@ -441,6 +540,15 @@ public class WindowCacheInvariantTests : IDisposable
 #endif
     }
 
+    /// <summary>
+    /// Tests Invariant C.18 (🟢 Behavioral): Any previously created rebalance intent is considered
+    /// obsolete after a new intent is generated.
+    /// </summary>
+    /// <remarks>
+    /// This test verifies that when a new user request arrives and publishes a new intent,
+    /// the previous intent is immediately cancelled and considered obsolete. This prevents
+    /// stale rebalance operations from executing with outdated information.
+    /// </remarks>
     [Fact]
     public async Task Invariant_C18_PreviousIntentBecomesObsolete()
     {
@@ -468,6 +576,16 @@ public class WindowCacheInvariantTests : IDisposable
 #endif
     }
 
+    /// <summary>
+    /// Tests Invariant C.24 (🟡 Conceptual): Intent does not guarantee execution.
+    /// Execution is opportunistic and may be skipped entirely.
+    /// </summary>
+    /// <remarks>
+    /// This test verifies that publishing a rebalance intent doesn't guarantee execution will occur.
+    /// Tests scenarios where execution is skipped due to policy (C.24a - request within NoRebalanceRange)
+    /// or optimization (C.24c - DesiredCacheRange equals CurrentCacheRange). Also covers C.24b (debounce)
+    /// and C.24d (cancellation). This demonstrates the cache's opportunistic, efficiency-focused design.
+    /// </remarks>
     [Fact]
     public async Task Invariant_C24_IntentDoesNotGuaranteeExecution()
     {
@@ -516,6 +634,16 @@ public class WindowCacheInvariantTests : IDisposable
 #endif
     }
 
+    /// <summary>
+    /// Tests Invariant C.23 (🟢 Behavioral): The system stabilizes when user access patterns stabilize.
+    /// </summary>
+    /// <remarks>
+    /// This test verifies that after an initial burst of requests, when access patterns stabilize
+    /// (requests within the same region), the system converges to a stable state where subsequent
+    /// requests are served from cache without triggering rebalance execution. This demonstrates
+    /// the cache's convergence behavior under stable access patterns.
+    /// Related: C.22 (best-effort convergence guarantee).
+    /// </remarks>
     [Fact]
     public async Task Invariant_C23_SystemStabilizesUnderLoad()
     {
@@ -549,6 +677,16 @@ public class WindowCacheInvariantTests : IDisposable
 
     #region D. Rebalance Decision Path Invariants
 
+    /// <summary>
+    /// Tests Invariant D.27 (🟢 Behavioral): If RequestedRange is fully contained within NoRebalanceRange,
+    /// rebalance execution is prohibited.
+    /// </summary>
+    /// <remarks>
+    /// This test verifies the ThresholdRebalancePolicy correctly prevents unnecessary rebalance execution
+    /// when user requests fall within the NoRebalanceRange (the "dead zone" around the current cache).
+    /// This optimization reduces I/O and CPU usage for requests that are "close enough" to optimal.
+    /// Corresponds to sub-invariant C.24a (execution skipped due to policy).
+    /// </remarks>
     [Fact]
     public async Task Invariant_D27_NoRebalanceIfRequestInNoRebalanceRange()
     {
@@ -593,6 +731,16 @@ public class WindowCacheInvariantTests : IDisposable
 #endif
     }
 
+    /// <summary>
+    /// Tests Invariant D.28 (🟢 Behavioral): If DesiredCacheRange == CurrentCacheRange,
+    /// rebalance execution is not required.
+    /// </summary>
+    /// <remarks>
+    /// This test verifies that when the cache already matches the desired state (DesiredCacheRange
+    /// equals CurrentCacheRange), the system skips execution as an optimization. Uses DEBUG counter
+    /// RebalanceSkippedSameRange to verify this early-exit behavior in RebalanceExecutor.
+    /// Corresponds to sub-invariant C.24c (execution skipped due to optimization).
+    /// </remarks>
     [Fact]
     public async Task Invariant_D28_SkipWhenDesiredEqualsCurrentRange()
     {
@@ -661,6 +809,17 @@ public class WindowCacheInvariantTests : IDisposable
 
     #region E. Cache Geometry & Policy Invariants
 
+    /// <summary>
+    /// Tests Invariant E.30 (🟢 Behavioral): DesiredCacheRange is computed solely from
+    /// RequestedRange and cache configuration.
+    /// </summary>
+    /// <remarks>
+    /// This test verifies that the ProportionalRangePlanner computes the desired cache range
+    /// deterministically based only on the user's requested range and configuration parameters
+    /// (leftCacheSize, rightCacheSize), independent of current cache contents. With config
+    /// (leftSize=1.0, rightSize=1.0), the cache should expand by RequestedRange.Span on each side.
+    /// Related: E.31 (Architectural - DesiredCacheRange is independent of current cache contents).
+    /// </remarks>
     [Fact]
     public async Task Invariant_E30_DesiredRangeComputedFromConfigAndRequest()
     {
@@ -700,6 +859,17 @@ public class WindowCacheInvariantTests : IDisposable
 
     #region F. Rebalance Execution Invariants
 
+    /// <summary>
+    /// Tests Invariant F.35 (🟢 Behavioral) and F.35a (🔵 Architectural): Rebalance Execution MUST
+    /// support cancellation at all stages and MUST yield to User Path requests immediately upon cancellation.
+    /// </summary>
+    /// <remarks>
+    /// This test verifies that background rebalance execution can be cancelled when a new user request
+    /// arrives, and that the system properly handles cancellation at all stages (before I/O, during I/O,
+    /// before mutations). Uses a slow data source to increase the window for cancellation to occur.
+    /// Validates the cache's responsiveness to user requests over background optimization.
+    /// Corresponds to sub-invariant C.24d (execution skipped due to cancellation).
+    /// </remarks>
     [Fact]
     public async Task Invariant_F35_RebalanceExecutionSupportsCancellation()
     {
@@ -743,6 +913,17 @@ public class WindowCacheInvariantTests : IDisposable
 #endif
     }
 
+    /// <summary>
+    /// Tests Invariant F.36 (🔵 Architectural) and F.36a (🟢 Behavioral): The Rebalance Execution Path
+    /// is the only path responsible for cache normalization (expanding, trimming, recomputing NoRebalanceRange).
+    /// </summary>
+    /// <remarks>
+    /// This test verifies that after rebalance execution completes, the cache is normalized to serve
+    /// data from an expanded range beyond the originally requested range. The User Path performs minimal
+    /// mutations (cold start, expansion, replacement) while Rebalance Execution handles optimization
+    /// (expanding to DesiredCacheRange, trimming excess data). Verifies that background rebalance execution
+    /// properly expands the cache according to configuration.
+    /// </remarks>
     [Fact]
     public async Task Invariant_F36a_RebalanceNormalizesCache()
     {
@@ -783,6 +964,20 @@ public class WindowCacheInvariantTests : IDisposable
 #endif
     }
 
+    /// <summary>
+    /// Tests Invariants F.40 (🟢 Behavioral), F.41 (🟢 Behavioral), and F.42 (🟡 Conceptual):
+    /// Post-execution guarantees for successful rebalance completion.
+    /// </summary>
+    /// <remarks>
+    /// F.40: Upon successful completion, CacheData strictly corresponds to DesiredCacheRange.
+    /// F.41: Upon successful completion, CurrentCacheRange == DesiredCacheRange.
+    /// F.42: Upon successful completion, NoRebalanceRange is recomputed.
+    /// 
+    /// This test verifies that after a successful rebalance execution, the cache reaches its normalized
+    /// target state where it serves data from the expanded/optimized range. Tests by requesting from the
+    /// expected normalized range (based on config with leftSize=1.0, rightSize=1.0) and verifying correct
+    /// data is returned.
+    /// </remarks>
     [Fact]
     public async Task Invariant_F40_F41_F42_PostExecutionGuarantees()
     {
@@ -814,6 +1009,16 @@ public class WindowCacheInvariantTests : IDisposable
 #endif
     }
 
+    /// <summary>
+    /// Tests execution lifecycle integrity meta-invariant: If RebalanceExecutionStarted increments,
+    /// it must result in either Completed or Cancelled (Started == Completed + Cancelled).
+    /// </summary>
+    /// <remarks>
+    /// This test verifies the integrity of the DEBUG instrumentation counters and execution lifecycle
+    /// tracking. Every rebalance execution that starts must reach a terminal state (completed or cancelled).
+    /// This ensures that no executions are "lost" or improperly tracked, validating the correctness of
+    /// the concurrency model and instrumentation system.
+    /// </remarks>
     [Fact]
     public async Task Invariant_ExecutionLifecycle_StartedImpliesCompletedOrCancelled()
     {
@@ -856,6 +1061,19 @@ public class WindowCacheInvariantTests : IDisposable
 
     #region G. Execution Context & Scheduling Invariants
 
+    /// <summary>
+    /// Tests Invariants G.43 (🟢 Behavioral), G.44 (🔵 Architectural), and G.45 (🔵 Architectural):
+    /// Execution context separation between User Path and Rebalance operations.
+    /// </summary>
+    /// <remarks>
+    /// G.43: The User Path operates in the user execution context (request completes quickly).
+    /// G.44: Rebalance Decision Path and Execution Path execute outside user context (Task.Run).
+    /// G.45: Rebalance Execution Path performs I/O only in background context (not blocking user).
+    /// 
+    /// This test verifies that user requests complete quickly without blocking on background operations,
+    /// proving that rebalance work is properly scheduled on background threads via Task.Run().
+    /// This separation is critical for maintaining responsive user-facing latency.
+    /// </remarks>
     [Fact]
     public async Task Invariant_G43_G44_G45_ExecutionContextSeparation()
     {
@@ -888,12 +1106,22 @@ public class WindowCacheInvariantTests : IDisposable
 #endif
     }
 
+    /// <summary>
+    /// Tests Invariant G.46 (🟢 Behavioral): Cancellation must be supported for all rebalance execution scenarios.
+    /// </summary>
+    /// <remarks>
+    /// This test verifies that the cache properly handles cancellation in all scenarios:
+    /// 1. User-facing cancellation: Pre-cancelled CancellationToken throws OperationCanceledException
+    /// 2. Background cancellation: Rapid user requests cancel pending rebalance executions
+    /// 
+    /// Note: User Path may complete before cancellation takes effect (correct behavior - User Path
+    /// prioritizes serving data immediately). The key guarantee is that rebalance execution respects
+    /// cancellation at all checkpoints.
+    /// </remarks>
     [Fact]
     public async Task Invariant_G46_CancellationSupportedForAllScenarios()
     {
         // Invariant G.46: Cancellation must be supported for all rebalance execution scenarios
-        // Note: This invariant is about rebalance execution cancellation, not user path cancellation
-        // User Path may complete before cancellation takes effect (which is correct behavior)
 
         // Arrange: Create slow mock data source to ensure cancellation can occur during fetch
         var mockDataSource = CreateMockDataSource(fetchDelay: TimeSpan.FromMilliseconds(200));
@@ -937,6 +1165,22 @@ public class WindowCacheInvariantTests : IDisposable
 
     #region Additional Comprehensive Tests
 
+    /// <summary>
+    /// Comprehensive integration test covering multiple invariants in a realistic usage scenario
+    /// with sequential requests triggering various cache mutations and rebalance operations.
+    /// </summary>
+    /// <remarks>
+    /// This test exercises the complete system flow including:
+    /// - Cold start (A.8)
+    /// - Cache expansion for overlapping requests (A.8)
+    /// - Background rebalance normalization (F.36a)
+    /// - Non-intersecting cache replacement (A.8, A.9a)
+    /// - Cache consistency throughout (B.11)
+    /// 
+    /// Validates that all components work correctly together in a realistic access pattern.
+    /// Verifies user requests are always served (A.1), data is correct (A.10), and cache
+    /// properly maintains state through multiple transitions.
+    /// </remarks>
     [Fact]
     public async Task CompleteScenario_MultipleRequestsWithRebalancing()
     {
@@ -992,6 +1236,21 @@ public class WindowCacheInvariantTests : IDisposable
 #endif
     }
 
+    /// <summary>
+    /// Comprehensive concurrency test with rapid burst of requests verifying intent cancellation
+    /// and system stability under high load.
+    /// </summary>
+    /// <remarks>
+    /// This test exercises the system under high concurrency by firing 20 rapid concurrent requests.
+    /// Validates multiple critical invariants:
+    /// - All requests are served correctly (A.1, A.10)
+    /// - Intent cancellation works properly (C.17, C.18)
+    /// - At most one active intent at a time (C.17)
+    /// - Cache remains consistent under rapid mutations (B.11, B.15)
+    /// 
+    /// This stress test ensures the single-consumer model with cancellation-based coordination
+    /// handles realistic high-load scenarios without data corruption or request failures.
+    /// </remarks>
     [Fact]
     public async Task ConcurrencyScenario_RapidRequestsBurstWithCancellation()
     {
@@ -1031,6 +1290,17 @@ public class WindowCacheInvariantTests : IDisposable
 #endif
     }
 
+    /// <summary>
+    /// Tests Snapshot read mode behavior, verifying zero-allocation reads from cache.
+    /// </summary>
+    /// <remarks>
+    /// This test validates the SnapshotReadStorage implementation, which provides direct
+    /// ReadOnlyMemory access to cached data without copying. This mode offers the best
+    /// performance for scenarios where the caller can safely consume data immediately
+    /// without holding references beyond the synchronous call.
+    /// 
+    /// Verifies that data is correctly returned and matches requested ranges in Snapshot mode.
+    /// </remarks>
     [Fact]
     public async Task ReadModeSnapshot_VerifyBehavior()
     {
@@ -1050,6 +1320,17 @@ public class WindowCacheInvariantTests : IDisposable
         TestHelpers.VerifyDataMatchesRange(data2, TestHelpers.CreateRange(105, 115));
     }
 
+    /// <summary>
+    /// Tests CopyOnRead mode behavior, verifying safe defensive copies are made on each read.
+    /// </summary>
+    /// <remarks>
+    /// This test validates the CopyOnReadStorage implementation, which creates a defensive
+    /// copy of cached data on each read operation. This mode provides memory safety for
+    /// scenarios where callers may hold references to returned data beyond the call,
+    /// protecting against concurrent modifications during background rebalance operations.
+    /// 
+    /// Verifies that data is correctly returned and matches requested ranges in CopyOnRead mode.
+    /// </remarks>
     [Fact]
     public async Task ReadModeCopyOnRead_VerifyBehavior()
     {
