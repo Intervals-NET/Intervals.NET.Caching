@@ -345,7 +345,7 @@ internal sealed class CopyOnReadStorage<TRange, TData, TDomain> : ICacheStorage<
 
 **Best for**: Rematerialization-heavy workloads, large sliding windows, background cache layers
 
-**See**: [Storage Strategies Guide](STORAGE_STRATEGIES.md) for detailed comparison and usage scenarios
+**See**: [Storage Strategies Guide](storage-strategies.md) for detailed comparison and usage scenarios
 
 ---
 
@@ -1374,17 +1374,17 @@ The Sliding Window Cache follows a **single consumer model** as documented in `d
 
 ### Thread Contexts
 
-| Component | Thread Context | Notes |
-|-----------|----------------|-------|
-| **WindowCache** | Neutral | Just delegates |
-| **UserRequestHandler** | ⚡ **User Thread** | Synchronous, fast path |
-| **RebalanceIntentManager** | User Thread | Synchronous methods (called from user) |
-| **RebalanceScheduler** | 🔄 **Background** | ThreadPool, async |
-| **RebalanceDecisionEngine** | 🔄 **Background** | ThreadPool, pure logic |
-| **RebalanceExecutor** | 🔄 **Background** | ThreadPool, async, I/O |
-| **CacheDataFetcher** | Both ⚡🔄 | User Thread OR Background |
-| **CacheState** | Both ⚡🔄 | Shared mutable (no locks!) |
-| **Storage (Snapshot/CopyOnRead)** | Both ⚡🔄 | Owned by CacheState |
+| Component                         | Thread Context    | Notes                                  |
+|-----------------------------------|-------------------|----------------------------------------|
+| **WindowCache**                   | Neutral           | Just delegates                         |
+| **UserRequestHandler**            | ⚡ **User Thread** | Synchronous, fast path                 |
+| **RebalanceIntentManager**        | User Thread       | Synchronous methods (called from user) |
+| **RebalanceScheduler**            | 🔄 **Background** | ThreadPool, async                      |
+| **RebalanceDecisionEngine**       | 🔄 **Background** | ThreadPool, pure logic                 |
+| **RebalanceExecutor**             | 🔄 **Background** | ThreadPool, async, I/O                 |
+| **CacheDataFetcher**              | Both ⚡🔄          | User Thread OR Background              |
+| **CacheState**                    | Both ⚡🔄          | Shared mutable (no locks!)             |
+| **Storage (Snapshot/CopyOnRead)** | Both ⚡🔄          | Owned by CacheState                    |
 
 ### Concurrency Invariants (from `docs/invariants.md`)
 
@@ -1464,36 +1464,36 @@ var sharedCache = new WindowCache<int, Data, IntDomain>(...);
 
 ### Reference Types (Classes)
 
-| Component | Mutability | Shared State | Ownership | Lifetime |
-|-----------|------------|--------------|-----------|----------|
-| WindowCache | Immutable (after ctor) | No | User creates | App lifetime |
-| UserRequestHandler | Immutable | No | WindowCache owns | Cache lifetime |
-| CacheState | **Mutable** | **Yes** ⚠️ | WindowCache owns, shared | Cache lifetime |
-| IntentController | Mutable (_currentIntentCts) | No | WindowCache owns | Cache lifetime |
-| RebalanceScheduler | Immutable | No | IntentController owns | Cache lifetime |
-| RebalanceDecisionEngine | Immutable | No | WindowCache owns | Cache lifetime |
-| RebalanceExecutor | Immutable | No | WindowCache owns | Cache lifetime |
-| CacheDataFetcher | Immutable | No | WindowCache owns | Cache lifetime |
-| SnapshotReadStorage | **Mutable** (_storage array) | No | CacheState owns | Cache lifetime |
-| CopyOnReadStorage | **Mutable** (_activeStorage, _stagingBuffer) | No | CacheState owns | Cache lifetime |
+| Component               | Mutability                                   | Shared State | Ownership                | Lifetime       |
+|-------------------------|----------------------------------------------|--------------|--------------------------|----------------|
+| WindowCache             | Immutable (after ctor)                       | No           | User creates             | App lifetime   |
+| UserRequestHandler      | Immutable                                    | No           | WindowCache owns         | Cache lifetime |
+| CacheState              | **Mutable**                                  | **Yes** ⚠️   | WindowCache owns, shared | Cache lifetime |
+| IntentController        | Mutable (_currentIntentCts)                  | No           | WindowCache owns         | Cache lifetime |
+| RebalanceScheduler      | Immutable                                    | No           | IntentController owns    | Cache lifetime |
+| RebalanceDecisionEngine | Immutable                                    | No           | WindowCache owns         | Cache lifetime |
+| RebalanceExecutor       | Immutable                                    | No           | WindowCache owns         | Cache lifetime |
+| CacheDataFetcher        | Immutable                                    | No           | WindowCache owns         | Cache lifetime |
+| SnapshotReadStorage     | **Mutable** (_storage array)                 | No           | CacheState owns          | Cache lifetime |
+| CopyOnReadStorage       | **Mutable** (_activeStorage, _stagingBuffer) | No           | CacheState owns          | Cache lifetime |
 
 ### Value Types (Structs)
 
-| Component | Mutability | Ownership | Lifetime |
-|-----------|------------|-----------|----------|
-| ThresholdRebalancePolicy | Readonly | Copied into components | Component lifetime |
-| ProportionalRangePlanner | Readonly | Copied into components | Component lifetime |
-| RebalanceDecision | Readonly | Local variable | Method scope |
+| Component                | Mutability | Ownership              | Lifetime           |
+|--------------------------|------------|------------------------|--------------------|
+| ThresholdRebalancePolicy | Readonly   | Copied into components | Component lifetime |
+| ProportionalRangePlanner | Readonly   | Copied into components | Component lifetime |
+| RebalanceDecision        | Readonly   | Local variable         | Method scope       |
 
 ### Other Types
 
-| Component | Type | Purpose | Mutability |
-|-----------|------|---------|------------|
-| WindowCacheOptions | 🟨 Record | Configuration | Immutable |
-| RangeChunk | 🟨 Record | Data transfer | Immutable |
-| UserCacheReadMode | 🟪 Enum | Configuration option | Immutable |
-| ICacheStorage | 🟧 Interface | Storage abstraction | - |
-| IDataSource | 🟧 Interface | External data contract | - |
+| Component          | Type         | Purpose                | Mutability |
+|--------------------|--------------|------------------------|------------|
+| WindowCacheOptions | 🟨 Record    | Configuration          | Immutable  |
+| RangeChunk         | 🟨 Record    | Data transfer          | Immutable  |
+| UserCacheReadMode  | 🟪 Enum      | Configuration option   | Immutable  |
+| ICacheStorage      | 🟧 Interface | Storage abstraction    | -          |
+| IDataSource        | 🟧 Interface | External data contract | -          |
 
 ---
 
