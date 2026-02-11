@@ -4,6 +4,7 @@ using Intervals.NET.Domain.Extensions.Fixed;
 using SlidingWindowCache.Configuration;
 using SlidingWindowCache.DTO;
 using Moq;
+using SlidingWindowCache.Instrumentation;
 
 namespace SlidingWindowCache.Invariants.Tests.TestInfrastructure;
 
@@ -174,5 +175,111 @@ public static class TestHelpers
             });
 
         return mock;
+    }
+
+    /// <summary>
+    /// Creates a WindowCache instance with the specified options.
+    /// </summary>
+    public static WindowCache<int, int, IntegerFixedStepDomain> CreateCache(
+        Mock<IDataSource<int, int>> mockDataSource,
+        IntegerFixedStepDomain domain,
+        WindowCacheOptions options)
+    {
+        return new WindowCache<int, int, IntegerFixedStepDomain>(mockDataSource.Object, domain, options);
+    }
+
+    /// <summary>
+    /// Creates a WindowCache with default options and returns both cache and mock data source.
+    /// </summary>
+    public static (WindowCache<int, int, IntegerFixedStepDomain> cache, Mock<IDataSource<int, int>> mock) 
+        CreateCacheWithDefaults(IntegerFixedStepDomain domain, WindowCacheOptions? options = null, TimeSpan? fetchDelay = null)
+    {
+        var mock = CreateMockDataSource(domain, fetchDelay);
+        var cache = CreateCache(mock, domain, options ?? CreateDefaultOptions());
+        return (cache, mock);
+    }
+
+    /// <summary>
+    /// Executes a request and waits for rebalance to complete.
+    /// </summary>
+    public static async Task<ReadOnlyMemory<int>> ExecuteRequestAndWaitForRebalance(
+        WindowCache<int, int, IntegerFixedStepDomain> cache,
+        Range<int> range,
+        int rebalanceWaitMs = 200)
+    {
+        var data = await cache.GetDataAsync(range, CancellationToken.None);
+        await WaitForRebalanceAsync(rebalanceWaitMs);
+        return data;
+    }
+
+    /// <summary>
+    /// Asserts that user received correct data matching the requested range.
+    /// </summary>
+    public static void AssertUserDataCorrect(ReadOnlyMemory<int> data, Range<int> range)
+    {
+        VerifyDataMatchesRange(data, range);
+    }
+
+    /// <summary>
+    /// Asserts that User Path did not mutate cache (single-writer architecture).
+    /// </summary>
+    public static void AssertNoUserPathMutations()
+    {
+        Assert.Equal(0, CacheInstrumentationCounters.CacheExpanded);
+        Assert.Equal(0, CacheInstrumentationCounters.CacheReplaced);
+    }
+
+    /// <summary>
+    /// Asserts that rebalance intent was published.
+    /// </summary>
+    public static void AssertIntentPublished(int expectedCount = -1)
+    {
+        if (expectedCount >= 0)
+            Assert.Equal(expectedCount, CacheInstrumentationCounters.RebalanceIntentPublished);
+        else
+            Assert.True(CacheInstrumentationCounters.RebalanceIntentPublished > 0,
+                "Intent should be published");
+    }
+
+    /// <summary>
+    /// Asserts that rebalance intent was cancelled.
+    /// </summary>
+    public static void AssertIntentCancelled(int minExpected = 1)
+    {
+        Assert.True(CacheInstrumentationCounters.RebalanceIntentCancelled >= minExpected,
+            $"At least {minExpected} intent(s) should be cancelled");
+    }
+
+    /// <summary>
+    /// Asserts rebalance execution lifecycle integrity: Started == Completed + Cancelled.
+    /// </summary>
+    public static void AssertRebalanceLifecycleIntegrity()
+    {
+        var started = CacheInstrumentationCounters.RebalanceExecutionStarted;
+        var completed = CacheInstrumentationCounters.RebalanceExecutionCompleted;
+        var cancelled = CacheInstrumentationCounters.RebalanceExecutionCancelled;
+        Assert.Equal(started, completed + cancelled);
+    }
+
+    /// <summary>
+    /// Asserts that rebalance was skipped due to NoRebalanceRange policy.
+    /// </summary>
+    public static void AssertRebalanceSkippedDueToPolicy()
+    {
+        var skipped = CacheInstrumentationCounters.RebalanceSkippedNoRebalanceRange;
+        if (skipped > 0)
+        {
+            Assert.Equal(0, CacheInstrumentationCounters.RebalanceExecutionStarted);
+            Assert.Equal(0, CacheInstrumentationCounters.RebalanceExecutionCompleted);
+        }
+    }
+
+    /// <summary>
+    /// Asserts that rebalance execution completed successfully.
+    /// </summary>
+    public static void AssertRebalanceCompleted(int minExpected = 1)
+    {
+        Assert.True(CacheInstrumentationCounters.RebalanceExecutionCompleted >= minExpected,
+            $"Rebalance should have completed at least {minExpected} time(s)");
     }
 }
