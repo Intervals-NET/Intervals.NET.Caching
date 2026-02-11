@@ -66,7 +66,7 @@ Attempting to test architectural or conceptual invariants would require:
 - *Enforced by*: Component ownership, cancellation protocol
 - *Architecture*: User Path cancels rebalance; rebalance checks cancellation
 
-**A.0a** 🟢 **[Behavioral — Test: `Invariant_A1_0a_UserRequestCancelsRebalanceBeforeMutations`]** Every User Request **MUST cancel** any ongoing or pending Rebalance Execution to ensure rebalance doesn't interfere with User Path data assembly.
+**A.0a** 🟢 **[Behavioral — Test: `Invariant_A_0a_UserRequestCancelsRebalance`]** Every User Request **MUST cancel** any ongoing or pending Rebalance Execution to ensure rebalance doesn't interfere with User Path data assembly.
 - *Observable via*: DEBUG instrumentation counters tracking cancellation
 - *Test verifies*: Cancellation counter increments when new request arrives
 - *Note*: Cancellation ensures User Path priority, not mutation safety (User Path is read-only)
@@ -256,9 +256,11 @@ Attempting to test architectural or conceptual invariants would require:
 
 ### F.1 Execution Control & Cancellation
 
-**F.35** 🟢 **[Behavioral — Test: `Invariant_F35_RebalanceExecutionSupportsCancellation`]** Rebalance Execution **MUST support cancellation** at all stages.
-- *Observable via*: DEBUG counters showing execution cancelled (see C.24d)
-- *Test verifies*: Rapid requests cancel pending rebalance
+**F.35** 🟢 **[Behavioral — Test: `Invariant_F35_RebalanceExecutionSupportsCancellation`]** Rebalance Execution **MUST support cancellation** at all stages (before I/O, during I/O, before mutations).
+- *Observable via*: DEBUG counters showing execution cancelled, lifecycle tracking (Started == Completed + Cancelled)
+- *Test verifies*: Rapid requests cancel pending rebalance, execution lifecycle properly tracked
+- *Implementation details*: `ThrowIfCancellationRequested()` at multiple checkpoints in execution pipeline
+- *Related*: C.24d (execution skipped due to cancellation), A.0a (User Path triggers cancellation), G.46 (high-level guarantee)
 
 **F.35a** 🔵 **[Architectural]** Rebalance Execution **MUST yield** to User Path requests immediately upon cancellation.
 - *Enforced by*: `ThrowIfCancellationRequested()` at multiple checkpoints
@@ -327,9 +329,16 @@ Attempting to test architectural or conceptual invariants would require:
 - *Enforced by*: `ExecuteAsync` runs in ThreadPool thread
 - *Architecture*: User Path returns before background I/O starts
 
-**G.46** 🟢 **[Behavioral — Test: `Invariant_G46_CancellationSupportedForAllScenarios`]** Cancellation **must be supported** for all rebalance execution scenarios.
-- *Observable via*: Pre-cancelled token throws; rebalance respects cancellation
-- *Test verifies*: Both user-facing and background cancellation work correctly
+**G.46** 🟢 **[Behavioral — Tests: `Invariant_G46_UserCancellationDuringFetch`, `Invariant_G46_RebalanceCancellation`]** Cancellation **must be supported** for all scenarios:
+1. **User-facing cancellation**: User-provided CancellationToken propagates through User Path to IDataSource.FetchAsync()
+2. **Background rebalance cancellation**: New user requests cancel pending/ongoing rebalance execution
+- *Observable via*: 
+  - User cancellation: OperationCanceledException thrown during IDataSource fetch
+  - Rebalance cancellation: DEBUG counters showing intent/execution cancelled
+- *Test verifies*: 
+  - `Invariant_G46_UserCancellationDuringFetch`: Cancelling during IDataSource fetch throws OperationCanceledException
+  - `Invariant_G46_RebalanceCancellation`: Background rebalance supports cancellation (high-level guarantee)
+- *Related*: F.35 (detailed rebalance execution cancellation mechanics), A.0a (User Path priority via cancellation)
 
 ---
 
@@ -343,12 +352,12 @@ Attempting to test architectural or conceptual invariants would require:
 - 🟡 **Conceptual** (design-level): 8 invariants
 
 #### Test Coverage Analysis:
-- **28 automated tests** in `WindowCacheInvariantTests`
+- **29 automated tests** in `WindowCacheInvariantTests`
 - **19 behavioral invariants** directly covered
 - **20 architectural invariants** enforced by code structure (not tested)
 - **8 conceptual invariants** documented as design guidance (not tested)
 
-**This is by design.** The gap between 47 invariants and 28 tests is intentional:
+**This is by design.** The gap between 47 invariants and 29 tests is intentional:
 - Architecture enforces structural constraints automatically
 - Conceptual invariants guide development, not runtime behavior
 - Tests focus on externally observable behavior

@@ -46,19 +46,21 @@ public class WindowCacheInvariantTests : IDisposable
 
     /// <summary>
     /// Tests Invariant A.0a (🟢 Behavioral): Every User Request MUST cancel any ongoing or pending
-    /// Rebalance Execution before performing cache mutations.
+    /// Rebalance Execution to ensure rebalance doesn't interfere with User Path data assembly.
     /// </summary>
     /// <remarks>
     /// This test verifies that when a new user request arrives while a rebalance is pending,
-    /// the system properly cancels the previous rebalance intent before proceeding.
+    /// the system properly cancels the previous rebalance intent before the User Path proceeds
+    /// with data assembly. This ensures rebalance execution doesn't interfere with User Path
+    /// operations even though User Path is read-only (single-writer architecture).
     /// Uses DEBUG instrumentation counters to verify cancellation behavior.
     /// Related: A.0 (Architectural - User Path has higher priority than Rebalance Execution)
     /// </remarks>
     [Fact]
-    public async Task Invariant_A1_0a_UserRequestCancelsRebalanceBeforeMutations()
+    public async Task Invariant_A_0a_UserRequestCancelsRebalance()
     {
-        // Invariant A.1-0a: Every User Request MUST cancel any ongoing or pending
-        // Rebalance Execution before performing cache mutations
+        // Invariant A.0a: Every User Request MUST cancel any ongoing or pending
+        // Rebalance Execution to ensure rebalance doesn't interfere with User Path data assembly
 
         // Arrange: Create mock data source and cache with slow rebalance
         var mockDataSource = CreateMockDataSource();
@@ -83,7 +85,7 @@ public class WindowCacheInvariantTests : IDisposable
 #if DEBUG
         // Verify cancellation occurred
         Assert.True(CacheInstrumentationCounters.RebalanceIntentCancelled > 0,
-            "User request should cancel pending rebalance");
+            "User request should cancel pending rebalance to ensure priority");
 #endif
     }
 
@@ -799,11 +801,19 @@ public class WindowCacheInvariantTests : IDisposable
     /// support cancellation at all stages and MUST yield to User Path requests immediately upon cancellation.
     /// </summary>
     /// <remarks>
-    /// This test verifies that background rebalance execution can be cancelled when a new user request
-    /// arrives, and that the system properly handles cancellation at all stages (before I/O, during I/O,
-    /// before mutations). Uses a slow data source to increase the window for cancellation to occur.
-    /// Validates the cache's responsiveness to user requests over background optimization.
+    /// This test verifies the detailed mechanics of rebalance execution cancellation. It validates
+    /// that background rebalance execution properly handles cancellation at all stages (before I/O,
+    /// during I/O, before mutations) and tracks the execution lifecycle correctly.
+    /// 
+    /// Uses a slow data source to increase the window for cancellation to occur during execution.
+    /// Validates DEBUG instrumentation counters to ensure proper lifecycle tracking:
+    /// Started == (Completed + Cancelled)
+    /// 
+    /// This test focuses on the internal cancellation mechanics of rebalance execution.
+    /// For the high-level guarantee that cancellation is supported in all scenarios, see G.46.
+    /// 
     /// Corresponds to sub-invariant C.24d (execution skipped due to cancellation).
+    /// Related: A.0a (User Path cancels rebalance), G.46 (cancellation in all scenarios)
     /// </remarks>
     [Fact]
     public async Task Invariant_F35_RebalanceExecutionSupportsCancellation()
@@ -1038,57 +1048,88 @@ public class WindowCacheInvariantTests : IDisposable
     }
 
     /// <summary>
-    /// Tests Invariant G.46 (🟢 Behavioral): Cancellation must be supported for all rebalance execution scenarios.
+    /// Tests Invariant G.46 (🟢 Behavioral): User-facing cancellation during IDataSource fetch operations.
     /// </summary>
     /// <remarks>
-    /// This test verifies that the cache properly handles cancellation in all scenarios:
-    /// 1. User-facing cancellation: Pre-cancelled CancellationToken throws OperationCanceledException
-    /// 2. Background cancellation: Rapid user requests cancel pending rebalance executions
+    /// This test verifies that when a user provides a cancellation token, the User Path properly
+    /// propagates that token through to IDataSource.FetchAsync() operations. If the token is cancelled
+    /// during a fetch operation, an OperationCanceledException should be thrown.
     /// 
-    /// Note: User Path may complete before cancellation takes effect (correct behavior - User Path
-    /// prioritizes serving data immediately). The key guarantee is that rebalance execution respects
-    /// cancellation at all checkpoints.
+    /// This tests the user-facing cancellation scenario where users can cancel their own requests
+    /// during potentially long-running data source operations.
+    /// 
+    /// Related: G.46 covers "all scenarios" - this test focuses on user-facing cancellation.
+    /// See also: Invariant_G46_RebalanceCancellation for background rebalance cancellation.
     /// </remarks>
     [Fact]
-    public async Task Invariant_G46_CancellationSupportedForAllScenarios()
+    public async Task Invariant_G46_UserCancellationDuringFetch()
     {
-        // Invariant G.46: Cancellation must be supported for all rebalance execution scenarios
+        // Invariant G.46: Cancellation must be supported for all scenarios
+        // This test: User-facing cancellation during IDataSource fetch
 
-        // Arrange: Create slow mock data source to ensure cancellation can occur during fetch
-        var mockDataSource = CreateMockDataSource(fetchDelay: TimeSpan.FromMilliseconds(200));
+        // Arrange: Create slow mock data source to allow cancellation during fetch
+        var mockDataSource = CreateMockDataSource(fetchDelay: TimeSpan.FromMilliseconds(300));
         var options = TestHelpers.CreateDefaultOptions();
         var cache = new WindowCache<int, int, IntegerFixedStepDomain>(mockDataSource.Object, _domain, options);
 
-        // Act: Make request with pre-cancelled token
+        // Act & Assert: Cancel token during fetch operation
         var cts = new CancellationTokenSource();
-        await cts.CancelAsync(); // Cancel BEFORE making request
-
-        // Assert: Request with already-cancelled token should throw OperationCanceledException or derived type
-        // Note: TaskCanceledException derives from OperationCanceledException
-        var exception = await Record.ExceptionAsync(async () =>
-            await cache.GetDataAsync(TestHelpers.CreateRange(100, 110), cts.Token));
-
+        
+        // Start request and cancel after a short delay (during fetch)
+        var requestTask = cache.GetDataAsync(TestHelpers.CreateRange(100, 110), cts.Token).AsTask();
+        
+        // Cancel while fetch is in progress
+        await Task.Delay(50);
+        await cts.CancelAsync();
+        
+        // Should throw OperationCanceledException or derived type (TaskCanceledException)
+        var exception = await Record.ExceptionAsync(async () => await requestTask);
+        
         Assert.True(exception is OperationCanceledException,
-            "Should throw OperationCanceledException or derived type");
+            $"Expected OperationCanceledException but got {exception?.GetType().Name ?? "null"}");
+    }
+
+    /// <summary>
+    /// Tests Invariant G.46 (🟢 Behavioral): Background rebalance cancellation support.
+    /// </summary>
+    /// <remarks>
+    /// This test verifies that the system supports cancellation of background rebalance operations
+    /// when new user requests arrive, ensuring the cache remains responsive to user access patterns.
+    /// 
+    /// This is a high-level test confirming the overall guarantee that rebalance execution can be
+    /// cancelled. For detailed rebalance execution cancellation mechanics, see Invariant_F35.
+    /// 
+    /// Related: 
+    /// - F.35: Detailed rebalance execution cancellation with lifecycle tracking
+    /// - A.0a: User Path cancels rebalance to maintain priority
+    /// </remarks>
+    [Fact]
+    public async Task Invariant_G46_RebalanceCancellation()
+    {
+        // Invariant G.46: Cancellation must be supported for all scenarios
+        // This test: Background rebalance cancellation (high-level guarantee)
+        // See also: Invariant_F35 for detailed rebalance execution cancellation mechanics
+
+        // Arrange: Create cache with debounced rebalance
+        var mockDataSource = CreateMockDataSource();
+        var options = TestHelpers.CreateDefaultOptions(debounceDelay: TimeSpan.FromMilliseconds(100));
+        var cache = new WindowCache<int, int, IntegerFixedStepDomain>(mockDataSource.Object, _domain, options);
 
 #if DEBUG
-        // Alternative scenario: Test that rebalance execution supports cancellation
-        // (this is more aligned with what G.46 actually tests)
         CacheInstrumentationCounters.Reset();
-        var cts2 = new CancellationTokenSource();
+#endif
 
-        // Trigger a user request that will start background rebalance
+        // Act: Trigger rebalance intent, then immediately cancel with new request
+        await cache.GetDataAsync(TestHelpers.CreateRange(100, 110), CancellationToken.None);
         await cache.GetDataAsync(TestHelpers.CreateRange(200, 210), CancellationToken.None);
-
-        // Immediately make another request to cancel the pending rebalance
-        await cache.GetDataAsync(TestHelpers.CreateRange(300, 310), CancellationToken.None);
 
         // Wait for background operations
         await TestHelpers.WaitForRebalanceAsync();
 
+#if DEBUG
         // Verify that rebalance cancellation occurred (proving G.46)
         Assert.True(CacheInstrumentationCounters.RebalanceIntentCancelled > 0,
-            "Rebalance execution should support cancellation (G.46)");
+            "Rebalance execution should support cancellation in all scenarios (G.46)");
 #endif
     }
 
