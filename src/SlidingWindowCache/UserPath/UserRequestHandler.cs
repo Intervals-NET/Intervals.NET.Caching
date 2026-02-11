@@ -124,7 +124,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
                 // Scenario 2: Full Cache Hit
                 // All requested data is available in cache - read from cache (no IDataSource call)
                 var cachedData = _state.Cache.Read(requestedRange);
-                
+
                 // Create RangeData from cached data for intent
                 // Note: We must materialize to array to create proper RangeData for intent
                 var array = cachedData.ToArray();
@@ -140,7 +140,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
                     // RequestedRange intersects CurrentCacheRange - read from cache and fetch missing parts
                     // ExtendCacheAsync will compute missing ranges and fetch only those parts
                     var extendedData = await _cacheFetcher.ExtendCacheAsync(currentCacheData, requestedRange, cancellationToken);
-                    
+
                     // Slice to requested range only (ExtendCacheAsync returns union of cache + requested)
                     assembledData = extendedData[requestedRange];
                 }

@@ -39,12 +39,12 @@ internal static class IntervalsNetDomainExtensions
     public static RangeValue<long> Span<TRange, TDomain>(this Range<TRange> range, TDomain domain)
         where TRange : IComparable<TRange>
         where TDomain : IRangeDomain<TRange> => domain switch
-    {
-        IFixedStepDomain<TRange> fixedDomain => Intervals.NET.Domain.Extensions.Fixed.RangeDomainExtensions.Span(range, fixedDomain),
-        IVariableStepDomain<TRange> variableDomain => Intervals.NET.Domain.Extensions.Variable.RangeDomainExtensions.Span(range, variableDomain),
-        _ => throw new NotSupportedException(
-            $"Domain type {domain.GetType().Name} must implement either IFixedStepDomain<T> or IVariableStepDomain<T>.")
-    };
+        {
+            IFixedStepDomain<TRange> fixedDomain => Intervals.NET.Domain.Extensions.Fixed.RangeDomainExtensions.Span(range, fixedDomain),
+            IVariableStepDomain<TRange> variableDomain => Intervals.NET.Domain.Extensions.Variable.RangeDomainExtensions.Span(range, variableDomain),
+            _ => throw new NotSupportedException(
+                $"Domain type {domain.GetType().Name} must implement either IFixedStepDomain<T> or IVariableStepDomain<T>.")
+        };
 
     /// <summary>
     /// Expands a range by a specified number of steps on each side for any domain type.
@@ -71,14 +71,14 @@ internal static class IntervalsNetDomainExtensions
         long right)
         where TRange : IComparable<TRange>
         where TDomain : IRangeDomain<TRange> => domain switch
-    {
-        IFixedStepDomain<TRange> fixedDomain => Intervals.NET.Domain.Extensions.Fixed.RangeDomainExtensions.Expand(
-            range, fixedDomain, left, right),
-        IVariableStepDomain<TRange> variableDomain => Intervals.NET.Domain.Extensions.Variable.RangeDomainExtensions
-            .Expand(range, variableDomain, left, right),
-        _ => throw new NotSupportedException(
-            $"Domain type {domain.GetType().Name} must implement either IFixedStepDomain<T> or IVariableStepDomain<T>.")
-    };
+        {
+            IFixedStepDomain<TRange> fixedDomain => Intervals.NET.Domain.Extensions.Fixed.RangeDomainExtensions.Expand(
+                range, fixedDomain, left, right),
+            IVariableStepDomain<TRange> variableDomain => Intervals.NET.Domain.Extensions.Variable.RangeDomainExtensions
+                .Expand(range, variableDomain, left, right),
+            _ => throw new NotSupportedException(
+                $"Domain type {domain.GetType().Name} must implement either IFixedStepDomain<T> or IVariableStepDomain<T>.")
+        };
 
     /// <summary>
     /// Shifts a range by a specified number of steps for any domain type.
@@ -103,14 +103,14 @@ internal static class IntervalsNetDomainExtensions
         long offset)
         where TRange : IComparable<TRange>
         where TDomain : IRangeDomain<TRange> => domain switch
-    {
-        IFixedStepDomain<TRange> fixedDomain => Intervals.NET.Domain.Extensions.Fixed.RangeDomainExtensions.Shift(range,
-            fixedDomain, offset),
-        IVariableStepDomain<TRange> variableDomain => Intervals.NET.Domain.Extensions.Variable.RangeDomainExtensions
-            .Shift(range, variableDomain, offset),
-        _ => throw new NotSupportedException(
-            $"Domain type {domain.GetType().Name} must implement either IFixedStepDomain<T> or IVariableStepDomain<T>.")
-    };
+        {
+            IFixedStepDomain<TRange> fixedDomain => Intervals.NET.Domain.Extensions.Fixed.RangeDomainExtensions.Shift(range,
+                fixedDomain, offset),
+            IVariableStepDomain<TRange> variableDomain => Intervals.NET.Domain.Extensions.Variable.RangeDomainExtensions
+                .Shift(range, variableDomain, offset),
+            _ => throw new NotSupportedException(
+                $"Domain type {domain.GetType().Name} must implement either IFixedStepDomain<T> or IVariableStepDomain<T>.")
+        };
 
     /// <summary>
     /// Expands or shrinks a range by a ratio of its size for any domain type.
@@ -137,12 +137,12 @@ internal static class IntervalsNetDomainExtensions
         double rightRatio)
         where TRange : IComparable<TRange>
         where TDomain : IRangeDomain<TRange> => domain switch
-    {
-        IFixedStepDomain<TRange> fixedDomain => Intervals.NET.Domain.Extensions.Fixed.RangeDomainExtensions
-            .ExpandByRatio(range, fixedDomain, leftRatio, rightRatio),
-        IVariableStepDomain<TRange> variableDomain => Intervals.NET.Domain.Extensions.Variable.RangeDomainExtensions
-            .ExpandByRatio(range, variableDomain, leftRatio, rightRatio),
-        _ => throw new NotSupportedException(
-            $"Domain type {domain.GetType().Name} must implement either IFixedStepDomain<T> or IVariableStepDomain<T>.")
-    };
+        {
+            IFixedStepDomain<TRange> fixedDomain => Intervals.NET.Domain.Extensions.Fixed.RangeDomainExtensions
+                .ExpandByRatio(range, fixedDomain, leftRatio, rightRatio),
+            IVariableStepDomain<TRange> variableDomain => Intervals.NET.Domain.Extensions.Variable.RangeDomainExtensions
+                .ExpandByRatio(range, variableDomain, leftRatio, rightRatio),
+            _ => throw new NotSupportedException(
+                $"Domain type {domain.GetType().Name} must implement either IFixedStepDomain<T> or IVariableStepDomain<T>.")
+        };
 }

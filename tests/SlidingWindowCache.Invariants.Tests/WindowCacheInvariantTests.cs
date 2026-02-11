@@ -1074,17 +1074,17 @@ public class WindowCacheInvariantTests : IDisposable
 
         // Act & Assert: Cancel token during fetch operation
         var cts = new CancellationTokenSource();
-        
+
         // Start request and cancel after a short delay (during fetch)
         var requestTask = cache.GetDataAsync(TestHelpers.CreateRange(100, 110), cts.Token).AsTask();
-        
+
         // Cancel while fetch is in progress
         await Task.Delay(50);
         await cts.CancelAsync();
-        
+
         // Should throw OperationCanceledException or derived type (TaskCanceledException)
         var exception = await Record.ExceptionAsync(async () => await requestTask);
-        
+
         Assert.True(exception is OperationCanceledException,
             $"Expected OperationCanceledException but got {exception?.GetType().Name ?? "null"}");
     }

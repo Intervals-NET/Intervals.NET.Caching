@@ -110,13 +110,13 @@ public interface IDataSource<TRangeType, TDataType> where TRangeType : IComparab
         CancellationToken cancellationToken
     )
     {
-        var tasks = ranges.Select(async range => 
+        var tasks = ranges.Select(async range =>
             new RangeChunk<TRangeType, TDataType>(
-                range, 
+                range,
                 await FetchAsync(range, cancellationToken)
             )
         );
-        
+
         return await Task.WhenAll(tasks);
     }
 }

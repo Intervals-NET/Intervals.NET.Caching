@@ -40,7 +40,7 @@ internal sealed class IntentController<TRange, TData, TDomain>
     where TDomain : IRangeDomain<TRange>
 {
     private readonly RebalanceScheduler<TRange, TData, TDomain> _scheduler;
-    
+
     /// <summary>
     /// The current rebalance cancellation token source.
     /// Represents the identity and lifecycle of the latest rebalance intent.
@@ -97,7 +97,7 @@ internal sealed class IntentController<TRange, TData, TDomain>
         _currentIntentCts.Cancel();
         _currentIntentCts.Dispose();
         _currentIntentCts = null;
-        
+
 #if DEBUG
         Instrumentation.CacheInstrumentationCounters.OnRebalanceIntentCancelled();
 #endif
@@ -137,15 +137,15 @@ internal sealed class IntentController<TRange, TData, TDomain>
         // Invalidate previous intent (Invariant C.18: "Any previously created rebalance intent is obsolete")
         _currentIntentCts?.Cancel();
         _currentIntentCts?.Dispose();
-        
+
         // Create new intent identity
         _currentIntentCts = new CancellationTokenSource();
         var intentToken = _currentIntentCts.Token;
-        
+
 #if DEBUG
         Instrumentation.CacheInstrumentationCounters.OnRebalanceIntentPublished();
 #endif
-        
+
         // Delegate to scheduler for debounce and execution
         // The scheduler owns timing, debounce, and pipeline orchestration
         _scheduler.ScheduleRebalance(deliveredData, intentToken);

@@ -75,6 +75,7 @@ internal sealed class RebalanceExecutor<TRange, TData, TDomain>
             // Even though ranges match, we still need to update cache state since
             // User Path no longer writes to cache. Use delivered data directly.
             // Skip to cache state update without I/O.
+            // todo get rid of goto!!!!!
             goto UpdateCacheState;
         }
 
@@ -97,7 +98,7 @@ internal sealed class RebalanceExecutor<TRange, TData, TDomain>
         // Ensures we don't apply obsolete rebalance results
         cancellationToken.ThrowIfCancellationRequested();
 
-        UpdateCacheState:
+    UpdateCacheState:
         // Phase 3: Update the cache with the rebalanced data (atomic mutation)
         // SINGLE-WRITER: This is the ONLY place where cache state is written
         _state.Cache.Rematerialize(baseData);

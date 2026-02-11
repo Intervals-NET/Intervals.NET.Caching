@@ -22,23 +22,23 @@ public static class CacheInstrumentationCounters
     public static int UserRequestsServed => _userRequestsServed;
     public static int CacheExpanded => _cacheExpanded;
     public static int CacheReplaced => _cacheReplaced;
-    
+
     // Rebalance Intent lifecycle counters
     public static int RebalanceIntentPublished => _rebalanceIntentPublished;
     public static int RebalanceIntentCancelled => _rebalanceIntentCancelled;
-    
+
     // Rebalance Execution lifecycle counters
     public static int RebalanceExecutionStarted => _rebalanceExecutionStarted;
     public static int RebalanceExecutionCompleted => _rebalanceExecutionCompleted;
     public static int RebalanceExecutionCancelled => _rebalanceExecutionCancelled;
-    
+
     /// <summary>
     /// Incremented when rebalance is skipped due to RequestedRange being within NoRebalanceRange.
     /// This counter tracks policy-based skip decision (Invariant D.27).
     /// Location: RebalanceScheduler (after DecisionEngine returns ShouldExecute=false)
     /// </summary>
     public static int RebalanceSkippedNoRebalanceRange => _rebalanceSkippedNoRebalanceRange;
-    
+
     /// <summary>
     /// Incremented when rebalance execution is skipped because CurrentCacheRange == DesiredCacheRange.
     /// This counter tracks same-range optimization (Invariant D.28).

@@ -34,6 +34,6 @@ internal readonly struct RebalanceDecision<TRange>
     /// Creates a decision to execute rebalance with the specified desired range.
     /// </summary>
     /// <param name="desiredRange">The target cache range for rebalancing.</param>
-    public static RebalanceDecision<TRange> Execute(Range<TRange> desiredRange) => 
+    public static RebalanceDecision<TRange> Execute(Range<TRange> desiredRange) =>
         new(true, desiredRange);
 }

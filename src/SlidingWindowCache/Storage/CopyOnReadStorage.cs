@@ -64,10 +64,10 @@ internal sealed class CopyOnReadStorage<TRange, TData, TDomain> : ICacheStorage<
     where TDomain : IRangeDomain<TRange>
 {
     private readonly TDomain _domain;
-    
+
     // Active storage: immutable during reads, serves data to Read() operations
     private List<TData> _activeStorage = [];
-    
+
     // Staging buffer: write-only during rematerialization, reused across operations
     // This buffer may grow but never shrinks, amortizing allocation cost
     private List<TData> _stagingBuffer = [];
@@ -116,16 +116,16 @@ internal sealed class CopyOnReadStorage<TRange, TData, TDomain> : ICacheStorage<
     {
         // Clear staging buffer (preserves capacity for reuse)
         _stagingBuffer.Clear();
-        
+
         // Single-pass enumeration: materialize incoming range data into staging buffer
         // This is safe even if rangeData.Data is based on _activeStorage (e.g., LINQ chains during expansion)
         // because we never mutate _activeStorage during enumeration
         _stagingBuffer.AddRange(rangeData.Data);
-        
+
         // Atomically swap buffers: staging becomes active, old active becomes staging for next use
         // This swap is the only point where active storage is replaced, satisfying Invariant B.12 (atomic changes)
         (_activeStorage, _stagingBuffer) = (_stagingBuffer, _activeStorage);
-        
+
         // Update range to reflect new active storage (part of atomic change)
         Range = rangeData.Range;
     }

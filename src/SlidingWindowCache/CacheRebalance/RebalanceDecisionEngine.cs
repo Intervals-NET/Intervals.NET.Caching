@@ -45,7 +45,7 @@ internal sealed class RebalanceDecisionEngine<TRange, TDomain>
     {
         // Decision Path D1: Check NoRebalanceRange (fast path)
         // If RequestedRange is fully contained within NoRebalanceRange, skip rebalancing
-        if (noRebalanceRange.HasValue && 
+        if (noRebalanceRange.HasValue &&
             !_policy.ShouldRebalance(noRebalanceRange.Value, requestedRange))
         {
             return RebalanceDecision<TRange>.Skip();
