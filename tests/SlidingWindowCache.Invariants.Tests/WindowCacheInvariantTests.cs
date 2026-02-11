@@ -1,10 +1,7 @@
 using Intervals.NET.Domain.Default.Numeric;
 using Moq;
 using SlidingWindowCache.Invariants.Tests.TestInfrastructure;
-
-#if DEBUG
 using SlidingWindowCache.Instrumentation;
-#endif
 
 namespace SlidingWindowCache.Invariants.Tests;
 
@@ -21,16 +18,12 @@ public class WindowCacheInvariantTests : IDisposable
     public WindowCacheInvariantTests()
     {
         _domain = TestHelpers.CreateIntDomain();
-#if DEBUG
         CacheInstrumentationCounters.Reset();
-#endif
     }
 
     public void Dispose()
     {
-#if DEBUG
         CacheInstrumentationCounters.Reset();
-#endif
     }
 
     /// <summary>
@@ -74,19 +67,15 @@ public class WindowCacheInvariantTests : IDisposable
         // Act: First request triggers rebalance intent
         await cache.GetDataAsync(TestHelpers.CreateRange(100, 110), CancellationToken.None);
 
-#if DEBUG
         var intentPublishedBefore = CacheInstrumentationCounters.RebalanceIntentPublished;
         Assert.Equal(1, intentPublishedBefore);
-#endif
 
         // Second request should cancel the first rebalance intent
         await cache.GetDataAsync(TestHelpers.CreateRange(120, 130), CancellationToken.None);
 
-#if DEBUG
         // Verify cancellation occurred
         Assert.True(CacheInstrumentationCounters.RebalanceIntentCancelled > 0,
             "User request should cancel pending rebalance to ensure priority");
-#endif
     }
 
     #endregion
@@ -123,9 +112,7 @@ public class WindowCacheInvariantTests : IDisposable
         TestHelpers.VerifyDataMatchesRange(data2, TestHelpers.CreateRange(200, 210));
         TestHelpers.VerifyDataMatchesRange(data3, TestHelpers.CreateRange(105, 115));
 
-#if DEBUG
         Assert.Equal(3, CacheInstrumentationCounters.UserRequestsServed);
-#endif
     }
 
     /// <summary>
@@ -224,7 +211,6 @@ public class WindowCacheInvariantTests : IDisposable
         // Assert: User receives correct data immediately
         TestHelpers.VerifyDataMatchesRange(data, TestHelpers.CreateRange(100, 110));
 
-#if DEBUG
         // User Path should NOT have triggered cache mutations
         // CacheExpanded and CacheReplaced counters should remain at 0
         Assert.Equal(0, CacheInstrumentationCounters.CacheExpanded);
@@ -232,16 +218,13 @@ public class WindowCacheInvariantTests : IDisposable
 
         // Intent should be published for rebalance
         Assert.Equal(1, CacheInstrumentationCounters.RebalanceIntentPublished);
-#endif
 
         // Wait for rebalance execution to complete
         await TestHelpers.WaitForRebalanceAsync(200);
 
-#if DEBUG
         // After rebalance completes, cache should be populated by Rebalance Execution
         Assert.True(CacheInstrumentationCounters.RebalanceExecutionCompleted > 0,
             "Rebalance Execution should populate cache, not User Path");
-#endif
     }
 
     /// <summary>
@@ -268,9 +251,7 @@ public class WindowCacheInvariantTests : IDisposable
         await cache.GetDataAsync(TestHelpers.CreateRange(100, 110), CancellationToken.None);
         await TestHelpers.WaitForRebalanceAsync(200); // Wait for initial cache population
 
-#if DEBUG
         CacheInstrumentationCounters.Reset(); // Reset to track only the second request
-#endif
 
         // Second request intersects with first
         var data = await cache.GetDataAsync(TestHelpers.CreateRange(105, 120), CancellationToken.None);
@@ -278,14 +259,12 @@ public class WindowCacheInvariantTests : IDisposable
         // Assert: User receives correct data
         TestHelpers.VerifyDataMatchesRange(data, TestHelpers.CreateRange(105, 120));
 
-#if DEBUG
         // User Path should NOT have expanded cache
         Assert.Equal(0, CacheInstrumentationCounters.CacheExpanded);
 
         // Intent should be published for rebalance
         Assert.True(CacheInstrumentationCounters.RebalanceIntentPublished > 0,
             "Intent should be published for every request");
-#endif
     }
 
     /// <summary>
@@ -312,9 +291,7 @@ public class WindowCacheInvariantTests : IDisposable
         await cache.GetDataAsync(TestHelpers.CreateRange(100, 110), CancellationToken.None);
         await TestHelpers.WaitForRebalanceAsync(200); // Wait for initial cache population
 
-#if DEBUG
         CacheInstrumentationCounters.Reset();
-#endif
 
         // Second request does NOT intersect (jump to different region)
         var data = await cache.GetDataAsync(TestHelpers.CreateRange(200, 210), CancellationToken.None);
@@ -322,14 +299,12 @@ public class WindowCacheInvariantTests : IDisposable
         // Assert: User receives correct data
         TestHelpers.VerifyDataMatchesRange(data, TestHelpers.CreateRange(200, 210));
 
-#if DEBUG
         // User Path should NOT have replaced cache
         Assert.Equal(0, CacheInstrumentationCounters.CacheReplaced);
 
         // Intent should be published for rebalance
         Assert.True(CacheInstrumentationCounters.RebalanceIntentPublished > 0,
             "Intent should be published for every request");
-#endif
     }
 
     /// <summary>
@@ -469,13 +444,11 @@ public class WindowCacheInvariantTests : IDisposable
         await cache.GetDataAsync(TestHelpers.CreateRange(110, 120), CancellationToken.None);
         await cache.GetDataAsync(TestHelpers.CreateRange(120, 130), CancellationToken.None);
 
-#if DEBUG
         // Each new request publishes intent and cancels previous
         Assert.Equal(3, CacheInstrumentationCounters.RebalanceIntentPublished);
         // At least 2 intents should have been cancelled (first two)
         Assert.True(CacheInstrumentationCounters.RebalanceIntentCancelled >= 2,
             "Previous intents should be cancelled when new ones arrive");
-#endif
     }
 
     /// <summary>
@@ -501,17 +474,13 @@ public class WindowCacheInvariantTests : IDisposable
         // Act
         await cache.GetDataAsync(TestHelpers.CreateRange(100, 110), CancellationToken.None);
 
-#if DEBUG
         var publishedBefore = CacheInstrumentationCounters.RebalanceIntentPublished;
-#endif
 
         await cache.GetDataAsync(TestHelpers.CreateRange(200, 210), CancellationToken.None);
 
-#if DEBUG
         // New intent published, old one cancelled
         Assert.True(CacheInstrumentationCounters.RebalanceIntentPublished > publishedBefore);
         Assert.True(CacheInstrumentationCounters.RebalanceIntentCancelled > 0);
-#endif
     }
 
     /// <summary>
@@ -547,9 +516,7 @@ public class WindowCacheInvariantTests : IDisposable
         // Wait for potential rebalance to complete
         await TestHelpers.WaitForRebalanceAsync(300);
 
-#if DEBUG
         CacheInstrumentationCounters.Reset();
-#endif
 
         // Second request within NoRebalanceRange - intent published but execution skipped
         await cache.GetDataAsync(TestHelpers.CreateRange(102, 108), CancellationToken.None);
@@ -557,7 +524,6 @@ public class WindowCacheInvariantTests : IDisposable
         // Wait for potential rebalance
         await TestHelpers.WaitForRebalanceAsync(300);
 
-#if DEBUG
         // Intent was published
         Assert.True(CacheInstrumentationCounters.RebalanceIntentPublished > 0,
             "Intent should be published for every user request");
@@ -569,7 +535,6 @@ public class WindowCacheInvariantTests : IDisposable
         {
             Assert.Equal(0, CacheInstrumentationCounters.RebalanceExecutionCompleted);
         }
-#endif
     }
 
     /// <summary>
@@ -646,15 +611,12 @@ public class WindowCacheInvariantTests : IDisposable
         await cache.GetDataAsync(TestHelpers.CreateRange(100, 110), CancellationToken.None);
         await TestHelpers.WaitForRebalanceAsync(300);
 
-#if DEBUG
         CacheInstrumentationCounters.Reset();
-#endif
 
         // Second request within NoRebalanceRange
         await cache.GetDataAsync(TestHelpers.CreateRange(103, 107), CancellationToken.None);
         await TestHelpers.WaitForRebalanceAsync(300);
 
-#if DEBUG
         // Rebalance should be skipped due to NoRebalanceRange policy
         var skipped = CacheInstrumentationCounters.RebalanceSkippedNoRebalanceRange;
         var started = CacheInstrumentationCounters.RebalanceExecutionStarted;
@@ -666,7 +628,6 @@ public class WindowCacheInvariantTests : IDisposable
             Assert.Equal(0, started);
             Assert.Equal(0, completed);
         }
-#endif
     }
 
     /// <summary>
@@ -703,9 +664,7 @@ public class WindowCacheInvariantTests : IDisposable
         // Wait for first rebalance to complete and normalize cache
         await TestHelpers.WaitForRebalanceAsync(300);
 
-#if DEBUG
         CacheInstrumentationCounters.Reset();
-#endif
 
         // Second request: same range that should already be cached and normalized
         // This should trigger intent but skip execution due to same-range optimization
@@ -714,7 +673,6 @@ public class WindowCacheInvariantTests : IDisposable
         // Wait for potential rebalance
         await TestHelpers.WaitForRebalanceAsync(300);
 
-#if DEBUG
         // Intent should be published (every request publishes intent)
         Assert.True(CacheInstrumentationCounters.RebalanceIntentPublished > 0,
             "Intent should be published for every user request");
@@ -734,7 +692,6 @@ public class WindowCacheInvariantTests : IDisposable
                 Assert.Equal(0, completed);
                 break;
         }
-#endif
     }
 
     // TODO: Invariant D.25, D.26, D.28, D.29: Decision Path is purely analytical,
@@ -833,9 +790,7 @@ public class WindowCacheInvariantTests : IDisposable
         // Act: First request triggers rebalance
         await cache.GetDataAsync(TestHelpers.CreateRange(100, 110), CancellationToken.None);
 
-#if DEBUG
         CacheInstrumentationCounters.Reset();
-#endif
 
         // Immediately make another request to cancel rebalance
         await cache.GetDataAsync(TestHelpers.CreateRange(200, 210), CancellationToken.None);
@@ -843,7 +798,6 @@ public class WindowCacheInvariantTests : IDisposable
         // Wait for operations to complete
         await TestHelpers.WaitForRebalanceAsync();
 
-#if DEBUG
         // Cancellation should have occurred
         Assert.True(CacheInstrumentationCounters.RebalanceIntentCancelled > 0,
             "Rebalance should be cancelled by new user request");
@@ -855,7 +809,6 @@ public class WindowCacheInvariantTests : IDisposable
         // At least one rebalance should have been interrupted
         Assert.True(executionCancelled > 0 || executionCompleted >= 0,
             "Rebalance execution lifecycle should be tracked");
-#endif
     }
 
     /// <summary>
@@ -888,7 +841,6 @@ public class WindowCacheInvariantTests : IDisposable
         await cache.GetDataAsync(TestHelpers.CreateRange(100, 110), CancellationToken.None);
         await TestHelpers.WaitForRebalanceAsync(200);
 
-#if DEBUG
         // Rebalance execution should have started and completed
         var started = CacheInstrumentationCounters.RebalanceExecutionStarted;
         var completed = CacheInstrumentationCounters.RebalanceExecutionCompleted;
@@ -902,7 +854,6 @@ public class WindowCacheInvariantTests : IDisposable
         // Make request in expected expanded range to verify normalization occurred
         var extendedData = await cache.GetDataAsync(TestHelpers.CreateRange(95, 115), CancellationToken.None);
         TestHelpers.VerifyDataMatchesRange(extendedData, TestHelpers.CreateRange(95, 115));
-#endif
     }
 
     /// <summary>
@@ -939,7 +890,6 @@ public class WindowCacheInvariantTests : IDisposable
         await cache.GetDataAsync(TestHelpers.CreateRange(100, 110), CancellationToken.None);
         await TestHelpers.WaitForRebalanceAsync(200);
 
-#if DEBUG
         if (CacheInstrumentationCounters.RebalanceExecutionCompleted > 0)
         {
             // After rebalance, cache should serve data from normalized range
@@ -947,7 +897,6 @@ public class WindowCacheInvariantTests : IDisposable
             var normalizedData = await cache.GetDataAsync(TestHelpers.CreateRange(90, 120), CancellationToken.None);
             TestHelpers.VerifyDataMatchesRange(normalizedData, TestHelpers.CreateRange(90, 120));
         }
-#endif
     }
 
     /// <summary>
@@ -983,7 +932,6 @@ public class WindowCacheInvariantTests : IDisposable
         // Wait for all background operations
         await TestHelpers.WaitForRebalanceAsync();
 
-#if DEBUG
         var started = CacheInstrumentationCounters.RebalanceExecutionStarted;
         var completed = CacheInstrumentationCounters.RebalanceExecutionCompleted;
         var cancelled = CacheInstrumentationCounters.RebalanceExecutionCancelled;
@@ -991,7 +939,6 @@ public class WindowCacheInvariantTests : IDisposable
         // Lifecycle integrity: started == (completed + cancelled)
         // Every started execution must reach a terminal state
         Assert.Equal(started, completed + cancelled);
-#endif
     }
 
     // TODO: Invariant F.38, F.39: Requests data from IDataSource only for missing subranges,
@@ -1040,11 +987,9 @@ public class WindowCacheInvariantTests : IDisposable
         // Wait for background rebalance
         await TestHelpers.WaitForRebalanceAsync(300);
 
-#if DEBUG
         // Background rebalance should have executed
         Assert.True(CacheInstrumentationCounters.RebalanceIntentPublished > 0,
             "Rebalance intent should be published for background execution");
-#endif
     }
 
     /// <summary>
@@ -1115,9 +1060,7 @@ public class WindowCacheInvariantTests : IDisposable
         var options = TestHelpers.CreateDefaultOptions(debounceDelay: TimeSpan.FromMilliseconds(100));
         var cache = new WindowCache<int, int, IntegerFixedStepDomain>(mockDataSource.Object, _domain, options);
 
-#if DEBUG
         CacheInstrumentationCounters.Reset();
-#endif
 
         // Act: Trigger rebalance intent, then immediately cancel with new request
         await cache.GetDataAsync(TestHelpers.CreateRange(100, 110), CancellationToken.None);
@@ -1126,11 +1069,9 @@ public class WindowCacheInvariantTests : IDisposable
         // Wait for background operations
         await TestHelpers.WaitForRebalanceAsync();
 
-#if DEBUG
         // Verify that rebalance cancellation occurred (proving G.46)
         Assert.True(CacheInstrumentationCounters.RebalanceIntentCancelled > 0,
             "Rebalance execution should support cancellation in all scenarios (G.46)");
-#endif
     }
 
     #endregion
@@ -1196,7 +1137,6 @@ public class WindowCacheInvariantTests : IDisposable
         var data5 = await cache.GetDataAsync(TestHelpers.CreateRange(205, 215), CancellationToken.None);
         TestHelpers.VerifyDataMatchesRange(data5, TestHelpers.CreateRange(205, 215));
 
-#if DEBUG
         // Verify key behavioral properties
         Assert.True(CacheInstrumentationCounters.UserRequestsServed == 5,
             "All user requests should be served");
@@ -1206,7 +1146,6 @@ public class WindowCacheInvariantTests : IDisposable
         // Cache mutations now occur exclusively in Rebalance Execution
         Assert.True(CacheInstrumentationCounters.RebalanceExecutionCompleted > 0,
             "Rebalance execution should have completed at least once");
-#endif
     }
 
     /// <summary>
@@ -1254,13 +1193,11 @@ public class WindowCacheInvariantTests : IDisposable
             TestHelpers.VerifyDataMatchesRange(results[i], expectedRange);
         }
 
-#if DEBUG
         Assert.Equal(20, CacheInstrumentationCounters.UserRequestsServed);
         Assert.True(CacheInstrumentationCounters.RebalanceIntentPublished >= 20);
         // Many intents should have been cancelled
         Assert.True(CacheInstrumentationCounters.RebalanceIntentCancelled >= 15,
             "Rapid requests should cancel many pending rebalances");
-#endif
     }
 
     /// <summary>

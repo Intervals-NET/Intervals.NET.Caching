@@ -69,9 +69,7 @@ internal sealed class RebalanceExecutor<TRange, TData, TDomain>
         // This is a final check before expensive I/O operations
         if (deliveredRangeData.Range == desiredRange)
         {
-#if DEBUG
             Instrumentation.CacheInstrumentationCounters.OnRebalanceSkippedSameRange();
-#endif
             // Even though ranges match, we still need to update cache state since
             // User Path no longer writes to cache. Use delivered data directly.
             UpdateCacheState(baseRangeData);

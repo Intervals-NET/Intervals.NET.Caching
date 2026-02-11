@@ -175,9 +175,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
         // Rebalance Execution will use this as the authoritative source
         _intentManager.PublishIntent(deliveredData);
 
-#if DEBUG
         Instrumentation.CacheInstrumentationCounters.OnUserRequestServed();
-#endif
 
         // Return the data immediately (User Path never waits for rebalance)
         return result;

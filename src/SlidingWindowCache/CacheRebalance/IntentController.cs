@@ -98,9 +98,7 @@ internal sealed class IntentController<TRange, TData, TDomain>
         _currentIntentCts.Dispose();
         _currentIntentCts = null;
 
-#if DEBUG
         Instrumentation.CacheInstrumentationCounters.OnRebalanceIntentCancelled();
-#endif
     }
 
     /// <summary>
@@ -142,9 +140,7 @@ internal sealed class IntentController<TRange, TData, TDomain>
         _currentIntentCts = new CancellationTokenSource();
         var intentToken = _currentIntentCts.Token;
 
-#if DEBUG
         Instrumentation.CacheInstrumentationCounters.OnRebalanceIntentPublished();
-#endif
 
         // Delegate to scheduler for debounce and execution
         // The scheduler owns timing, debounce, and pipeline orchestration

@@ -142,15 +142,11 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
         // Step 2: If decision says skip, return early (no-op)
         if (!decision.ShouldExecute)
         {
-#if DEBUG
             Instrumentation.CacheInstrumentationCounters.OnRebalanceSkippedNoRebalanceRange();
-#endif
             return;
         }
 
-#if DEBUG
         Instrumentation.CacheInstrumentationCounters.OnRebalanceExecutionStarted();
-#endif
 
         // Step 3: If execution is allowed, invoke Executor with delivered data
         // The executor will use delivered data as authoritative source, merge with existing cache,
@@ -158,15 +154,11 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
         try
         {
             await _executor.ExecuteAsync(deliveredData, decision.DesiredRange!.Value, cancellationToken);
-#if DEBUG
             Instrumentation.CacheInstrumentationCounters.OnRebalanceExecutionCompleted();
-#endif
         }
         catch (OperationCanceledException)
         {
-#if DEBUG
             Instrumentation.CacheInstrumentationCounters.OnRebalanceExecutionCancelled();
-#endif
             throw;
         }
     }

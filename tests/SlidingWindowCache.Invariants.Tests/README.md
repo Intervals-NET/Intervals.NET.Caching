@@ -15,7 +15,7 @@ Comprehensive unit test suite for the WindowCache library verifying system invar
 ### 1. DEBUG-Only Instrumentation Infrastructure
 - **Location**: `src/SlidingWindowCache/Instrumentation/`
 - **Files Created**:
-  - `CacheInstrumentationCounters.cs` - Static thread-safe counters wrapped in `#if DEBUG`
+  - `CacheInstrumentationCounters.cs` - Static thread-safe counters with `[Conditional("DEBUG")]` attributes
   - Each counter property includes XML documentation linking to specific invariants
   
 - **Instrumented Components**:
@@ -235,7 +235,7 @@ See `docs/STORAGE_STRATEGIES.md` for detailed documentation.
 - **Architecture**: Single-writer model (User Path read-only, Rebalance Execution sole writer)
 - **Intent Structure**: Intent carries delivered `RangeData` (requested range + actual data)
 - **Eventual Consistency**: Cache state converges asynchronously via background rebalance
-- Instrumentation is DEBUG-only (`#if DEBUG`) - zero overhead in Release builds
+- Instrumentation is DEBUG-only using `[Conditional("DEBUG")]` attributes - zero overhead in Release builds
 - Tests use timing-based async verification with `WaitForRebalanceAsync()` helper
 - Counter reset in constructor/dispose ensures test isolation
 - Uses `Intervals.NET.Domain.Default.Numeric.IntegerFixedStepDomain` for proper range inclusivity handling

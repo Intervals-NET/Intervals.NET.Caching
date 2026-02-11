@@ -1,6 +1,7 @@
-﻿namespace SlidingWindowCache.Instrumentation;
+﻿using System.Diagnostics;
 
-#if DEBUG
+namespace SlidingWindowCache.Instrumentation;
+
 /// <summary>
 /// Thread-safe static instrumentation counters for tracking cache behavioral events in DEBUG mode.
 /// Used for testing and verification of system invariants.
@@ -46,30 +47,41 @@ public static class CacheInstrumentationCounters
     /// </summary>
     public static int RebalanceSkippedSameRange => _rebalanceSkippedSameRange;
 
+    [Conditional("DEBUG")]
     internal static void OnUserRequestServed() => Interlocked.Increment(ref _userRequestsServed);
 
+    [Conditional("DEBUG")]
     internal static void OnCacheExpanded() => Interlocked.Increment(ref _cacheExpanded);
 
+    [Conditional("DEBUG")]
     internal static void OnCacheReplaced() => Interlocked.Increment(ref _cacheReplaced);
 
+    [Conditional("DEBUG")]
     internal static void OnRebalanceIntentPublished() => Interlocked.Increment(ref _rebalanceIntentPublished);
 
+    [Conditional("DEBUG")]
     internal static void OnRebalanceIntentCancelled() => Interlocked.Increment(ref _rebalanceIntentCancelled);
 
+    [Conditional("DEBUG")]
     internal static void OnRebalanceExecutionStarted() => Interlocked.Increment(ref _rebalanceExecutionStarted);
 
+    [Conditional("DEBUG")]
     internal static void OnRebalanceExecutionCompleted() => Interlocked.Increment(ref _rebalanceExecutionCompleted);
 
+    [Conditional("DEBUG")]
     internal static void OnRebalanceExecutionCancelled() => Interlocked.Increment(ref _rebalanceExecutionCancelled);
 
+    [Conditional("DEBUG")]
     internal static void OnRebalanceSkippedNoRebalanceRange() =>
         Interlocked.Increment(ref _rebalanceSkippedNoRebalanceRange);
 
+    [Conditional("DEBUG")]
     internal static void OnRebalanceSkippedSameRange() => Interlocked.Increment(ref _rebalanceSkippedSameRange);
 
     /// <summary>
     /// Resets all counters to zero. Use this before each test to ensure clean state.
     /// </summary>
+    [Conditional("DEBUG")]
     public static void Reset()
     {
         _userRequestsServed = 0;
@@ -84,4 +96,3 @@ public static class CacheInstrumentationCounters
         _rebalanceSkippedSameRange = 0;
     }
 }
-#endif
