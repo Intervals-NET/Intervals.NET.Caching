@@ -75,6 +75,8 @@ internal sealed class CacheDataFetcher<TRange, TData, TDomain>
         CancellationToken ct
     )
     {
+        Instrumentation.CacheInstrumentationCounters.OnDataSourceFetchMissingSegments();
+
         // Step 1: Calculate which ranges are missing
         var missingRanges = CalculateMissingRanges(current.Range, requested);
 
@@ -129,7 +131,7 @@ internal sealed class CacheDataFetcher<TRange, TData, TDomain>
             // It is important to call Union on the current range data to overwrite outdated
             // intersected segments with the newly fetched data, ensuring that the most up-to-date
             // information is retained in the cache.
-            current = current.Union(new RangeData<TRange, TData, TDomain>(range, data, domain))!;
+            current = current.Union(data.ToRangeData(range, domain))!;
         }
 
         return current;
@@ -158,7 +160,7 @@ internal sealed class CacheDataFetcher<TRange, TData, TDomain>
         CancellationToken ct
     )
     {
-        var data = await _dataSource.FetchAsync(requested, ct);
-        return new RangeData<TRange, TData, TDomain>(requested, data, _domain);
+        Instrumentation.CacheInstrumentationCounters.OnDataSourceFetchFullRange();
+        return (await _dataSource.FetchAsync(requested, ct)).ToRangeData(requested, _domain);
     }
 }

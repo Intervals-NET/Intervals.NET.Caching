@@ -492,6 +492,7 @@ public class WindowCacheInvariantTests : IDisposable
     /// 2. Full Cache Hit (request fully within cache)
     /// 3. Partial Cache Hit (request partially overlaps cache)
     /// Validates cache hit/miss tracking is accurate for performance monitoring and testing.
+    /// Also verifies data source access patterns to ensure optimization correctness.
     /// </summary>
     [Fact]
     public async Task CacheHitMiss_AllScenarios()
@@ -505,8 +506,10 @@ public class WindowCacheInvariantTests : IDisposable
         CacheInstrumentationCounters.Reset();
         await cache.GetDataAsync(TestHelpers.CreateRange(100, 110), CancellationToken.None);
         TestHelpers.AssertFullCacheMiss(1);
+        TestHelpers.AssertDataSourceFetchedFullRange(1);
         Assert.Equal(0, CacheInstrumentationCounters.UserRequestFullCacheHit);
         Assert.Equal(0, CacheInstrumentationCounters.UserRequestPartialCacheHit);
+        Assert.Equal(0, CacheInstrumentationCounters.DataSourceFetchMissingSegments);
 
         // Wait for rebalance to populate cache with expanded range
         await TestHelpers.WaitForRebalanceAsync(200);
@@ -519,13 +522,17 @@ public class WindowCacheInvariantTests : IDisposable
         TestHelpers.AssertFullCacheHit(1);
         Assert.Equal(0, CacheInstrumentationCounters.UserRequestFullCacheMiss);
         Assert.Equal(0, CacheInstrumentationCounters.UserRequestPartialCacheHit);
+        Assert.Equal(0, CacheInstrumentationCounters.DataSourceFetchFullRange);
+        Assert.Equal(0, CacheInstrumentationCounters.DataSourceFetchMissingSegments);
 
         // SCENARIO 3: Partial Cache Hit - Request partially overlaps cache
         CacheInstrumentationCounters.Reset();
         await cache.GetDataAsync(TestHelpers.CreateRange(120, 130), CancellationToken.None);
         TestHelpers.AssertPartialCacheHit(1);
+        TestHelpers.AssertDataSourceFetchedMissingSegments(1);
         Assert.Equal(0, CacheInstrumentationCounters.UserRequestFullCacheMiss);
         Assert.Equal(0, CacheInstrumentationCounters.UserRequestFullCacheHit);
+        Assert.Equal(0, CacheInstrumentationCounters.DataSourceFetchFullRange);
 
         // Wait for rebalance
         await TestHelpers.WaitForRebalanceAsync(200);
@@ -534,8 +541,10 @@ public class WindowCacheInvariantTests : IDisposable
         CacheInstrumentationCounters.Reset();
         await cache.GetDataAsync(TestHelpers.CreateRange(300, 310), CancellationToken.None);
         TestHelpers.AssertFullCacheMiss(1);
+        TestHelpers.AssertDataSourceFetchedFullRange(1);
         Assert.Equal(0, CacheInstrumentationCounters.UserRequestFullCacheHit);
         Assert.Equal(0, CacheInstrumentationCounters.UserRequestPartialCacheHit);
+        Assert.Equal(0, CacheInstrumentationCounters.DataSourceFetchMissingSegments);
     }
 
     #endregion

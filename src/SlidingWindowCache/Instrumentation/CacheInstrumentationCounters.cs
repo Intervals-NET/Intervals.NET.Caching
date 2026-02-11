@@ -21,6 +21,8 @@ public static class CacheInstrumentationCounters
     private static int _userRequestFullCacheHit;
     private static int _userRequestPartialCacheHit;
     private static int _userRequestFullCacheMiss;
+    private static int _dataSourceFetchFullRange;
+    private static int _dataSourceFetchMissingSegments;
 
     // User Path counters
     public static int UserRequestsServed => _userRequestsServed;
@@ -29,6 +31,19 @@ public static class CacheInstrumentationCounters
     public static int UserRequestFullCacheHit => _userRequestFullCacheHit;
     public static int UserRequestPartialCacheHit => _userRequestPartialCacheHit;
     public static int UserRequestFullCacheMiss => _userRequestFullCacheMiss;
+
+    // Data Source Access counters
+    /// <summary>
+    /// Tracks calls to IDataSource.FetchAsync for a complete range (cold start or non-intersecting jump).
+    /// Incremented when CacheDataFetcher.FetchDataAsync is called.
+    /// </summary>
+    public static int DataSourceFetchFullRange => _dataSourceFetchFullRange;
+
+    /// <summary>
+    /// Tracks calls to IDataSource.FetchAsync for missing segments only (partial cache hit optimization).
+    /// Incremented when CacheDataFetcher.ExtendCacheAsync is called.
+    /// </summary>
+    public static int DataSourceFetchMissingSegments => _dataSourceFetchMissingSegments;
 
     // Rebalance Intent lifecycle counters
     public static int RebalanceIntentPublished => _rebalanceIntentPublished;
@@ -93,6 +108,12 @@ public static class CacheInstrumentationCounters
     [Conditional("DEBUG")]
     internal static void OnUserRequestFullCacheMiss() => Interlocked.Increment(ref _userRequestFullCacheMiss);
 
+    [Conditional("DEBUG")]
+    internal static void OnDataSourceFetchFullRange() => Interlocked.Increment(ref _dataSourceFetchFullRange);
+
+    [Conditional("DEBUG")]
+    internal static void OnDataSourceFetchMissingSegments() => Interlocked.Increment(ref _dataSourceFetchMissingSegments);
+
     /// <summary>
     /// Resets all counters to zero. Use this before each test to ensure clean state.
     /// </summary>
@@ -112,5 +133,7 @@ public static class CacheInstrumentationCounters
         _userRequestFullCacheHit = 0;
         _userRequestPartialCacheHit = 0;
         _userRequestFullCacheMiss = 0;
+        _dataSourceFetchFullRange = 0;
+        _dataSourceFetchMissingSegments = 0;
     }
 }

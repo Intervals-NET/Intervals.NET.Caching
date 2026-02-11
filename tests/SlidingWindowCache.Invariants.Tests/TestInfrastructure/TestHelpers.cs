@@ -358,4 +358,20 @@ public static class TestHelpers
     {
         Assert.Equal(expectedCount, CacheInstrumentationCounters.UserRequestFullCacheMiss);
     }
+
+    /// <summary>
+    /// Asserts that data was fetched from data source for a complete range (cold start or full miss).
+    /// </summary>
+    public static void AssertDataSourceFetchedFullRange(int expectedCount = 1)
+    {
+        Assert.Equal(expectedCount, CacheInstrumentationCounters.DataSourceFetchFullRange);
+    }
+
+    /// <summary>
+    /// Asserts that data was fetched from data source for missing segments only (partial hit optimization).
+    /// </summary>
+    public static void AssertDataSourceFetchedMissingSegments(int expectedCount = 1)
+    {
+        Assert.Equal(expectedCount, CacheInstrumentationCounters.DataSourceFetchMissingSegments);
+    }
 }
