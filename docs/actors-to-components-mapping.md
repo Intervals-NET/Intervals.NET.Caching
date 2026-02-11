@@ -333,9 +333,6 @@ but externally appears as a unified policy concept.
 two cooperating components for separation of concerns, but externally appears as 
 a single unified actor.
 
-**Detailed Documentation:** See `docs/rebalance-intent-manager-decomposition.md` for complete
-explanation of the internal decomposition.
-
 ### Execution Context
 
 **Lives in: Background / ThreadPool**

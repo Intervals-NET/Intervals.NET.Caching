@@ -1577,8 +1577,8 @@ Entire architecture assumes one logical consumer, avoiding traditional concurren
 - **Scenarios**: `docs/scenario-model.md`
 - **State Machine**: `docs/cache-state-machine.md`
 - **Concurrency Model**: `docs/concurrency-model.md`
-- **Intent Manager Decomposition**: `docs/rebalance-intent-manager-decomposition.md`
-- **Actor Decomposition Pattern**: `docs/actor-decomposition-pattern.md`
+- **Storage Strategies**: `docs/storage-strategies.md`
+- **Cache Hit/Miss Tracking**: `docs/cache-hit-miss-tracking-implementation.md`
 
 ---
 

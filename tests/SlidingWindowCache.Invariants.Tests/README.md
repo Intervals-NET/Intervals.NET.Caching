@@ -229,7 +229,7 @@ This pattern ensures:
 - Predictable memory allocation behavior
 - No temporary allocations beyond the staging buffer
 
-See `docs/STORAGE_STRATEGIES.md` for detailed documentation.
+See `docs/storage-strategies.md` for detailed documentation.
 
 ## Notes
 - **Architecture**: Single-writer model (User Path read-only, Rebalance Execution sole writer)

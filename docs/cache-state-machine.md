@@ -134,11 +134,11 @@ The cache exists in one of three states:
 
 ## Mutation Ownership Matrix
 
-| State          | User Path Mutations | Rebalance Execution Mutations                     |
-|----------------|---------------------|---------------------------------------------------|
-| Uninitialized  | ❌ None             | ✅ Initial cache write (after first user request) |
-| Initialized    | ❌ None             | ❌ Not active                                      |
-| Rebalancing    | ❌ None             | ✅ All cache mutations (expand, trim, write to cache/LastRequested/NoRebalanceRange)<br>⚠️ MUST yield on cancellation |
+| State         | User Path Mutations | Rebalance Execution Mutations                                                                                        |
+|---------------|---------------------|----------------------------------------------------------------------------------------------------------------------|
+| Uninitialized | ❌ None              | ✅ Initial cache write (after first user request)                                                                     |
+| Initialized   | ❌ None              | ❌ Not active                                                                                                         |
+| Rebalancing   | ❌ None              | ✅ All cache mutations (expand, trim, write to cache/LastRequested/NoRebalanceRange)<br>⚠️ MUST yield on cancellation |
 
 ### Mutation Rules Summary
 

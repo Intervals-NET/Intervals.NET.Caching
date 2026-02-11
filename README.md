@@ -13,7 +13,7 @@ The Sliding Window Cache is a high-performance caching library designed for scen
 - **Automatic Prefetching**: Intelligently prefetches data on both sides of requested ranges based on configurable coefficients
 - **Background Rebalancing**: Asynchronously adjusts the cache window when access patterns change, with debouncing to avoid thrashing
 - **Cancellation-Aware**: Full support for `CancellationToken` throughout the async pipeline
-- **Range-Based Operations**: Built on top of the [`Intervals.NET`](https://github.com/blaze6950/Intervals.NET] library) for robust range handling
+- **Range-Based Operations**: Built on top of the [`Intervals.NET`](https://github.com/blaze6950/Intervals.NET) library for robust range handling
 - **Configurable Read Modes**: Choose between different materialization strategies based on your performance requirements
 
 ---
@@ -94,16 +94,16 @@ The cache supports two materialization strategies, configured at creation time v
 
 ### Choosing a Read Mode
 
-| Scenario | Recommended Mode |
-|----------|------------------|
-| High read-to-rebalance ratio (e.g., 100:1) | **Snapshot** |
-| Frequent rebalancing (e.g., random access patterns) | **CopyOnRead** |
-| Large cache sizes (>85KB arrays) | **CopyOnRead** |
-| Read-once patterns | **CopyOnRead** |
-| Repeated reads of the same range | **Snapshot** |
-| Memory-constrained systems | **CopyOnRead** |
+| Scenario                                            | Recommended Mode |
+|-----------------------------------------------------|------------------|
+| High read-to-rebalance ratio (e.g., 100:1)          | **Snapshot**     |
+| Frequent rebalancing (e.g., random access patterns) | **CopyOnRead**   |
+| Large cache sizes (>85KB arrays)                    | **CopyOnRead**   |
+| Read-once patterns                                  | **CopyOnRead**   |
+| Repeated reads of the same range                    | **Snapshot**     |
+| Memory-constrained systems                          | **CopyOnRead**   |
 
-**For detailed comparison and multi-level cache composition patterns, see [Storage Strategies Guide](docs/STORAGE_STRATEGIES.md).**
+**For detailed comparison and multi-level cache composition patterns, see [Storage Strategies Guide](docs/storage-strategies.md).**
 
 ---
 
@@ -159,10 +159,20 @@ See `WindowCacheOptions` for detailed configuration parameters:
 
 For detailed architectural documentation, see:
 
+### Core Architecture
+
 - **[Invariants](docs/invariants.md)** - Complete list of system invariants and guarantees
 - **[Scenario Model](docs/scenario-model.md)** - Temporal behavior scenarios (User Path, Decision Path, Rebalance Execution)
 - **[Actors & Responsibilities](docs/actors-and-responsibilities.md)** - System actors and invariant ownership mapping
+- **[Actors to Components Mapping](docs/actors-to-components-mapping.md)** - How architectural actors map to concrete components
 - **[Cache State Machine](docs/cache-state-machine.md)** - Formal state machine with mutation ownership and concurrency semantics
+- **[Concurrency Model](docs/concurrency-model.md)** - Single-writer architecture and eventual consistency model
+
+### Implementation Details
+
+- **[Component Map](docs/component-map.md)** - Comprehensive component catalog with responsibilities and interactions
+- **[Storage Strategies](docs/storage-strategies.md)** - Detailed comparison of Snapshot vs. CopyOnRead modes and multi-level cache patterns
+- **[Cache Hit/Miss Tracking Implementation](docs/cache-hit-miss-tracking-implementation.md)** - Implementation details for cache hit/miss tracking
 
 ### Key Architectural Principles
 

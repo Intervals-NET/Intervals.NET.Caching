@@ -120,8 +120,6 @@ This logical actor is internally decomposed into two components for separation o
 - **IntentController** (Intent Controller) - intent identity, lifecycle, cancellation
 - **RebalanceScheduler** (Execution Scheduler) - timing, debounce, pipeline orchestration (stateless)
 
-See `docs/rebalance-intent-manager-decomposition.md` for detailed explanation.
-
 **Execution Context:**  
 **Lives in: Background / ThreadPool**
 
