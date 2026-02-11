@@ -97,24 +97,15 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
     public void ScheduleRebalance(RangeData<TRange, TData, TDomain> deliveredData, CancellationToken intentToken)
     {
         // Fire-and-forget: schedule execution in background thread pool
+        // Fixing ambiguous invocation by explicitly specifying the type for Task.Run
         var backgroundTask = Task.Run(async () =>
         {
             try
             {
-                // Debounce delay: wait before executing
-                // This can be cancelled if a new intent arrives during the delay
-                await Task.Delay(_debounceDelay, intentToken);
-
-                // Intent validity check: discard if cancelled during debounce
-                // This implements Invariant C.20: "If intent becomes obsolete before execution begins, execution must not start"
-                if (intentToken.IsCancellationRequested)
-                {
-                    CacheInstrumentationCounters.OnRebalanceIntentCancelled();
-                    return; // Obsolete intent, don't execute
-                }
-
-                // Execute the rebalance pipeline
-                await ExecutePipelineAsync(deliveredData, intentToken);
+                await ExecuteAfterAsync(
+                    executePipelineAsync: () => ExecutePipelineAsync(deliveredData, intentToken),
+                    intentToken: intentToken
+                );
             }
             catch (OperationCanceledException)
             {
@@ -122,14 +113,50 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
                 // This is normal behavior, not an error
                 CacheInstrumentationCounters.OnRebalanceIntentCancelled();
             }
+#if DEBUG
+            catch (Exception ex)
+            {
+                // Log unexpected exceptions in DEBUG builds for visibility during development
+                // In RELEASE builds, we let exceptions propagate to avoid masking critical issues
+                System.Diagnostics.Debug.WriteLine($"Unexpected exception in rebalance execution: {ex}");
+                throw;
+            }
+#endif
         }, CancellationToken.None);
-        // NOTE: Do NOT pass intentToken to Task.Run - it should only be used inside the lambda
+        // NOTE: Do NOT pass intentToken to Task.Run ^ - it should only be used inside the lambda
         // to ensure the try-catch properly handles all OperationCanceledExceptions
 
 #if DEBUG
         // Track the latest background task for deterministic idle synchronization (DEBUG-only)
         _idleTask = backgroundTask;
 #endif
+    }
+
+    /// <summary>
+    /// Executes the provided function after a debounce delay, checking intent validity before execution.
+    /// </summary>
+    /// <param name="executePipelineAsync">
+    /// The asynchronous function to execute after the debounce delay. This typically encapsulates the entire
+    /// decision and execution pipeline for rebalance. It receives the delivered data and intent token as context.
+    /// The function should respect the intentToken for cancellation to ensure timely yielding to new intents.
+    /// </param>
+    /// <param name="intentToken">
+    /// The cancellation token associated with the current intent. This token is used to implement single-flight execution and intent invalidation.
+    /// If this token is cancelled during the debounce delay, the execution will be aborted and the pipeline will not start. If the token is cancelled during execution, the pipeline should respond to cancellation as soon as possible to yield to new intents.
+    /// This token is owned and managed by the Intent Manager, which creates a new token for each intent and cancels the previous one when a new intent is published.
+    /// </param>
+    private async Task ExecuteAfterAsync(Func<Task> executePipelineAsync, CancellationToken intentToken)
+    {
+        // Debounce delay: wait before executing
+        // This can be cancelled if a new intent arrives during the delay
+        await Task.Delay(_debounceDelay, intentToken);
+
+        // Intent validity check: discard if cancelled during debounce
+        // This implements Invariant C.20: "If intent becomes obsolete before execution begins, execution must not start"
+        intentToken.ThrowIfCancellationRequested();
+
+        // Execute the provided function
+        await executePipelineAsync();
     }
 
     /// <summary>
@@ -145,7 +172,8 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
     /// <item><description>If needed, invoke Executor to perform rebalance using delivered data</description></item>
     /// </list>
     /// </remarks>
-    private async Task ExecutePipelineAsync(RangeData<TRange, TData, TDomain> deliveredData, CancellationToken cancellationToken)
+    private async Task ExecutePipelineAsync(RangeData<TRange, TData, TDomain> deliveredData,
+        CancellationToken cancellationToken)
     {
         // Final cancellation check before decision logic
         // Ensures we don't do work for an obsolete intent
