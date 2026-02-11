@@ -1,5 +1,5 @@
-using Intervals.NET;
 using Intervals.NET.Domain.Default.Numeric;
+using Intervals.NET.Domain.Extensions.Fixed;
 using Intervals.NET.Extensions;
 using SlidingWindowCache.Infrastructure.Instrumentation;
 using SlidingWindowCache.Invariants.Tests.TestInfrastructure;
@@ -153,7 +153,7 @@ public class WindowCacheInvariantTests : IDisposable
     [InlineData("CacheExpansion", 105, 120, 100, 110, true)] // Intersecting request
     [InlineData("FullReplacement", 200, 210, 100, 110, true)] // Non-intersecting jump
     public async Task Invariant_A3_8_UserPathNeverMutatesCache(
-        string scenario, int reqStart, int reqEnd, int priorStart, int priorEnd, bool hasPriorRequest)
+        string _, int reqStart, int reqEnd, int priorStart, int priorEnd, bool hasPriorRequest)
     {
         // ARRANGE
         var options = TestHelpers.CreateDefaultOptions(debounceDelay: TimeSpan.FromMilliseconds(50));
@@ -505,9 +505,10 @@ public class WindowCacheInvariantTests : IDisposable
 
         // SCENARIO 1: Cold Start - Full Cache Miss
         CacheInstrumentationCounters.Reset();
-        await cache.GetDataAsync(TestHelpers.CreateRange(100, 110), CancellationToken.None);
-        TestHelpers.AssertFullCacheMiss(1);
-        TestHelpers.AssertDataSourceFetchedFullRange(1);
+        var requestedRange = TestHelpers.CreateRange(100, 110);
+        await cache.GetDataAsync(requestedRange, CancellationToken.None);
+        TestHelpers.AssertFullCacheMiss();
+        TestHelpers.AssertDataSourceFetchedFullRange();
         Assert.Equal(0, CacheInstrumentationCounters.UserRequestFullCacheHit);
         Assert.Equal(0, CacheInstrumentationCounters.UserRequestPartialCacheHit);
         Assert.Equal(0, CacheInstrumentationCounters.DataSourceFetchMissingSegments);
@@ -517,10 +518,9 @@ public class WindowCacheInvariantTests : IDisposable
 
         // SCENARIO 2: Full Cache Hit - Request within cached range
         CacheInstrumentationCounters.Reset();
-        var expectedDesired = TestHelpers.CalculateExpectedDesiredRange(
-            TestHelpers.CreateRange(100, 110), options, _domain);
-        await cache.GetDataAsync(TestHelpers.CreateRange(95, 115), CancellationToken.None);
-        TestHelpers.AssertFullCacheHit(1);
+        var expectedDesired = TestHelpers.CalculateExpectedDesiredRange(requestedRange, options, _domain);
+        await cache.GetDataAsync(expectedDesired, CancellationToken.None);
+        TestHelpers.AssertFullCacheHit();
         Assert.Equal(0, CacheInstrumentationCounters.UserRequestFullCacheMiss);
         Assert.Equal(0, CacheInstrumentationCounters.UserRequestPartialCacheHit);
         Assert.Equal(0, CacheInstrumentationCounters.DataSourceFetchFullRange);
@@ -528,9 +528,12 @@ public class WindowCacheInvariantTests : IDisposable
 
         // SCENARIO 3: Partial Cache Hit - Request partially overlaps cache
         CacheInstrumentationCounters.Reset();
-        await cache.GetDataAsync(TestHelpers.CreateRange(120, 130), CancellationToken.None);
-        TestHelpers.AssertPartialCacheHit(1);
-        TestHelpers.AssertDataSourceFetchedMissingSegments(1);
+        // Shift the expected desired range to create a new request that partially overlaps the existing cache
+        expectedDesired = TestHelpers.CalculateExpectedDesiredRange(expectedDesired, options, _domain);
+        expectedDesired.Shift(_domain, expectedDesired.Span(_domain).Value / 2);
+        await cache.GetDataAsync(expectedDesired, CancellationToken.None);
+        TestHelpers.AssertPartialCacheHit();
+        TestHelpers.AssertDataSourceFetchedMissingSegments();
         Assert.Equal(0, CacheInstrumentationCounters.UserRequestFullCacheMiss);
         Assert.Equal(0, CacheInstrumentationCounters.UserRequestFullCacheHit);
         Assert.Equal(0, CacheInstrumentationCounters.DataSourceFetchFullRange);
@@ -540,9 +543,12 @@ public class WindowCacheInvariantTests : IDisposable
 
         // SCENARIO 4: Full Cache Miss - Non-intersecting jump
         CacheInstrumentationCounters.Reset();
+        // Create a request that is completely outside the current cache range to trigger a full cache miss
+        expectedDesired = TestHelpers.CalculateExpectedDesiredRange(expectedDesired, options, _domain);
+        expectedDesired.Shift(_domain, expectedDesired.Span(_domain).Value * 2);
         await cache.GetDataAsync(TestHelpers.CreateRange(300, 310), CancellationToken.None);
-        TestHelpers.AssertFullCacheMiss(1);
-        TestHelpers.AssertDataSourceFetchedFullRange(1);
+        TestHelpers.AssertFullCacheMiss();
+        TestHelpers.AssertDataSourceFetchedFullRange();
         Assert.Equal(0, CacheInstrumentationCounters.UserRequestFullCacheHit);
         Assert.Equal(0, CacheInstrumentationCounters.UserRequestPartialCacheHit);
         Assert.Equal(0, CacheInstrumentationCounters.DataSourceFetchMissingSegments);
@@ -691,13 +697,13 @@ public class WindowCacheInvariantTests : IDisposable
         var requestTask = cache.GetDataAsync(TestHelpers.CreateRange(100, 110), cts.Token).AsTask();
 
         // Cancel while fetch is in progress
-        await Task.Delay(50);
+        await Task.Delay(50, CancellationToken.None);
         await cts.CancelAsync();
 
         // Should throw OperationCanceledException or derived type (TaskCanceledException)
         var exception = await Record.ExceptionAsync(async () => await requestTask);
         Assert.True(exception is OperationCanceledException,
-            $"Expected OperationCanceledException but got {exception?.GetType().Name ?? "null"}");
+            $"Expected OperationCanceledException but got {exception.GetType().Name}");
     }
 
     #endregion
