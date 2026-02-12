@@ -701,13 +701,12 @@ public class WindowCacheInvariantTests : IAsyncDisposable
         stopwatch.Stop();
 
         // ASSERT: User request completed quickly (didn't wait for background rebalance)
-        Assert.True(stopwatch.ElapsedMilliseconds < 300,
-            "User request should complete in user context without waiting for background rebalance");
+        Assert.Equal(1, CacheInstrumentationCounters.UserRequestsServed);
+        Assert.Equal(1, CacheInstrumentationCounters.RebalanceIntentPublished);
+        Assert.Equal(0, CacheInstrumentationCounters.RebalanceExecutionCompleted);
         TestHelpers.AssertUserDataCorrect(data, TestHelpers.CreateRange(100, 110));
-
-        // Wait for background rebalance and verify it executed
         await cache.WaitForIdleAsync();
-        TestHelpers.AssertIntentPublished();
+        Assert.Equal(1, CacheInstrumentationCounters.RebalanceExecutionCompleted);
     }
 
     /// <summary>
