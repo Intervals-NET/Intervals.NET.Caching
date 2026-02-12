@@ -824,8 +824,9 @@ public class WindowCacheInvariantTests : IAsyncDisposable
         }
 
         Assert.Equal(20, CacheInstrumentationCounters.UserRequestsServed);
-        Assert.True(CacheInstrumentationCounters.RebalanceIntentPublished >= 20);
-        TestHelpers.AssertRebalancePathCancelled(15); // Many intents should have been cancelled
+        Assert.True(CacheInstrumentationCounters.RebalanceIntentPublished == 20);
+        TestHelpers.AssertRebalancePathCancelled(19); // Each new request cancels the previous intent, so expect 19 cancellations
+        Assert.Equal(1, CacheInstrumentationCounters.RebalanceExecutionCompleted);
     }
 
     /// <summary>
