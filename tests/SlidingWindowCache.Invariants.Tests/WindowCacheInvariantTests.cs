@@ -31,7 +31,7 @@ public class WindowCacheInvariantTests : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         // Wait for any background rebalance from current test to complete
-        await _currentCache.WaitForIdleAsync();
+        await _currentCache!.WaitForIdleAsync();
         CacheInstrumentationCounters.Reset();
     }
 
@@ -462,7 +462,7 @@ public class WindowCacheInvariantTests : IAsyncDisposable
         Assert.Equal(0, CacheInstrumentationCounters.RebalanceExecutionCompleted);
     }
 
-    // TODO: Invariant D.25, D.26, D.28, D.29: Decision Path is purely analytical,
+    // NOTE: Invariant D.25, D.26, D.28, D.29: Decision Path is purely analytical,
     // never mutates cache state, checks DesiredCacheRange == CurrentCacheRange
     // Cannot be directly tested via public API - requires internal state access
     // or integration tests with mock decision engine
@@ -511,7 +511,7 @@ public class WindowCacheInvariantTests : IAsyncDisposable
             $"Request range [95, 115] should be within calculated desired range {expectedDesiredRange}");
     }
 
-    // TODO: Invariant E.31, E.32, E.33, E.34: DesiredCacheRange independent of current cache,
+    // NOTE: Invariant E.31, E.32, E.33, E.34: DesiredCacheRange independent of current cache,
     // represents canonical target state, geometry determined by configuration,
     // NoRebalanceRange derived from CurrentCacheRange and config
     // Cannot be directly observed via public API - requires internal state inspection
@@ -672,7 +672,7 @@ public class WindowCacheInvariantTests : IAsyncDisposable
         }
     }
 
-    // TODO: Invariant F.38, F.39: Requests data from IDataSource only for missing subranges,
+    // NOTE: Invariant F.38, F.39: Requests data from IDataSource only for missing subranges,
     // does not overwrite existing data
     // Requires instrumentation of CacheDataFetcher or mock data source tracking
 
