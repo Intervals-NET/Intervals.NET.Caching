@@ -37,6 +37,14 @@ namespace SlidingWindowCache.Core.Rebalance.Intent;
 /// <item><description>❌ Does NOT decide whether rebalance is logically required (DecisionEngine's job)</description></item>
 /// <item><description>❌ Does NOT orchestrate execution pipeline (Scheduler's responsibility)</description></item>
 /// </list>
+/// <para><strong>Lock-Free Implementation:</strong></para>
+/// <list type="bullet">
+/// <item><description>✅ Thread-safe using <see cref="System.Threading.Interlocked"/> for atomic operations</description></item>
+/// <item><description>✅ No locks, no <c>lock</c> statements, no mutexes</description></item>
+/// <item><description>✅ No race conditions - atomic field replacement ensures correctness</description></item>
+/// <item><description>✅ Guaranteed progress - non-blocking operations</description></item>
+/// <item><description>✅ Validated under concurrent load by ConcurrencyStabilityTests</description></item>
+/// </list>
 /// </remarks>
 internal sealed class IntentController<TRange, TData, TDomain>
     where TRange : IComparable<TRange>
@@ -89,17 +97,29 @@ internal sealed class IntentController<TRange, TData, TDomain>
     /// User Path never waits for rebalance to fully complete - it just ensures
     /// the cancellation signal is sent before proceeding with its own mutations.
     /// </para>
+    /// <para><strong>Lock-Free Implementation:</strong></para>
+    /// <para>
+    /// Uses <see cref="System.Threading.Interlocked"/> atomic exchange to clear the current intent
+    /// without requiring locks. This ensures thread-safety and prevents race conditions
+    /// while maintaining non-blocking semantics.
+    /// </para>
     /// </remarks>
     public void CancelPendingRebalance()
     {
-        if (_currentIntentCts == null)
+        var cancellationTokenSource = Interlocked.Exchange(ref _currentIntentCts, null);
+
+        if (cancellationTokenSource == null)
         {
             return;
         }
 
-        _currentIntentCts.Cancel();
-        _currentIntentCts.Dispose();
-        _currentIntentCts = null;
+        if (cancellationTokenSource.IsCancellationRequested)
+        {
+            return;
+        }
+
+        cancellationTokenSource.Cancel();
+        cancellationTokenSource.Dispose();
     }
 
     /// <summary>
@@ -133,19 +153,26 @@ internal sealed class IntentController<TRange, TData, TDomain>
     /// </remarks>
     public void PublishIntent(RangeData<TRange, TData, TDomain> deliveredData)
     {
+        var newCts = new CancellationTokenSource();
+        var intentToken = newCts.Token;
+
+        // SAFE PATH - 
+        // Atomically replace the current intent with the new one and capture the old one for cancellation
+        var oldCts = Interlocked.Exchange(ref _currentIntentCts, newCts);
+
         // Invalidate previous intent (Invariant C.18: "Any previously created rebalance intent is obsolete")
-        _currentIntentCts?.Cancel();
-        _currentIntentCts?.Dispose();
-
-        // Create new intent identity
-        _currentIntentCts = new CancellationTokenSource();
-        var intentToken = _currentIntentCts.Token;
-
-        CacheInstrumentationCounters.OnRebalanceIntentPublished();
+        if (oldCts is not null)
+        {
+            oldCts.Cancel();
+            oldCts.Dispose();
+        }
+        // SAFE PATH END
 
         // Delegate to scheduler for debounce and execution
         // The scheduler owns timing, debounce, and pipeline orchestration
         _scheduler.ScheduleRebalance(deliveredData, intentToken);
+
+        CacheInstrumentationCounters.OnRebalanceIntentPublished();
     }
 
     /// <summary>
