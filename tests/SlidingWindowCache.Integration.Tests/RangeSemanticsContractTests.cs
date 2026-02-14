@@ -75,7 +75,7 @@ public sealed class RangeSemanticsContractTests : IAsyncDisposable
         var expectedLength = (int)range.Span(_domain);
         Assert.Equal(expectedLength, data.Length);
         Assert.Equal(11, data.Length); // [100, 110] inclusive = 11 elements
-        
+
         // ASSERT - Validate IDataSource was called with correct range
         Assert.True(_dataSource.TotalFetchCount > 0, "DataSource should be called for cold start");
         Assert.True(_dataSource.WasRangeCovered(100, 110), "DataSource should cover requested range [100, 110]");
@@ -131,7 +131,7 @@ public sealed class RangeSemanticsContractTests : IAsyncDisposable
 
         // ASSERT
         var array = data.ToArray();
-        Assert.Equal(1, array.Length);
+        Assert.Single(array);
         Assert.Equal(42, array[0]);
     }
 
@@ -162,7 +162,7 @@ public sealed class RangeSemanticsContractTests : IAsyncDisposable
     {
         // ARRANGE
         var cache = CreateCache();
-        
+
         // Note: IntegerFixedStepDomain uses int.MinValue for negative infinity
         // We test behavior with very large ranges but finite boundaries
         var range = Intervals.NET.Factories.Range.Closed<int>(int.MinValue + 1000, int.MinValue + 1100);
@@ -180,7 +180,7 @@ public sealed class RangeSemanticsContractTests : IAsyncDisposable
     {
         // ARRANGE
         var cache = CreateCache();
-        
+
         // Note: IntegerFixedStepDomain uses int.MaxValue for positive infinity
         var range = Intervals.NET.Factories.Range.Closed<int>(int.MaxValue - 1100, int.MaxValue - 1000);
 
@@ -266,7 +266,7 @@ public sealed class RangeSemanticsContractTests : IAsyncDisposable
         {
             var exception = await Record.ExceptionAsync(async () =>
                 await cache.GetDataAsync(range, CancellationToken.None));
-            
+
             Assert.Null(exception);
         }
     }
@@ -308,7 +308,7 @@ public sealed class RangeSemanticsContractTests : IAsyncDisposable
         Assert.Equal(11, array.Length);
         Assert.Equal(-100, array[0]);
         Assert.Equal(-90, array[^1]);
-        
+
         // ASSERT - IDataSource handled negative range correctly
         Assert.True(_dataSource.WasRangeCovered(-100, -90),
             "DataSource should cover negative range [-100, -90]");

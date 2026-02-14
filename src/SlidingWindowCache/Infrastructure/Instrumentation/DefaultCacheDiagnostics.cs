@@ -80,7 +80,7 @@ public class EventCounterCacheDiagnostics : ICacheDiagnostics
     void ICacheDiagnostics.RebalanceExecutionFailed(Exception ex)
     {
         Interlocked.Increment(ref _rebalanceExecutionFailed);
-        
+
         // ⚠️ WARNING: This default implementation only writes to Debug output!
         // For production use, you MUST create a custom implementation that:
         // 1. Logs to your logging framework (e.g., ILogger, Serilog, NLog)

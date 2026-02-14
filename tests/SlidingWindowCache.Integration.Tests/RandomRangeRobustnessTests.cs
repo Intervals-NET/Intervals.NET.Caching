@@ -82,10 +82,10 @@ public sealed class RandomRangeRobustnessTests : IAsyncDisposable
             var data = await cache.GetDataAsync(range, CancellationToken.None);
             Assert.Equal((int)range.Span(_domain), data.Length);
         }
-        
+
         // ASSERT - Verify IDataSource was called and no malformed ranges requested
         Assert.True(_dataSource.TotalFetchCount > 0, "IDataSource should be called during random iterations");
-        
+
         // Verify all requested ranges are valid
         var allRanges = _dataSource.GetAllRequestedRanges();
         Assert.All(allRanges, range =>
@@ -201,13 +201,13 @@ public sealed class RandomRangeRobustnessTests : IAsyncDisposable
             var data = await cache.GetDataAsync(range, CancellationToken.None);
             Assert.Equal((int)range.Span(_domain), data.Length);
         }
-        
+
         // ASSERT - Comprehensive validation of IDataSource interactions
         var totalFetches = _dataSource.TotalFetchCount;
         Assert.True(totalFetches > 0, "IDataSource should be called during stress test");
         Assert.True(totalFetches < iterations * 3,
             $"Fetch count ({totalFetches}) should be reasonable for {iterations} mixed-pattern iterations");
-        
+
         // Verify all ranges requested are valid
         var allRanges = _dataSource.GetAllRequestedRanges();
         Assert.NotEmpty(allRanges);
@@ -217,7 +217,7 @@ public sealed class RandomRangeRobustnessTests : IAsyncDisposable
             var end = (int)r.End;
             Assert.True(start <= end, $"Invalid range detected: [{start}, {end}]");
         });
-        
+
         // Verify no excessive redundant fetches
         var uniqueRanges = _dataSource.GetUniqueRequestedRanges();
         Assert.True(uniqueRanges.Count > 0, "Should have requested some unique ranges");

@@ -383,7 +383,7 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
 
         // ASSERT
         var array1 = data.ToArray();
-        Assert.Equal(1, array1.Length);
+        Assert.Single(array1);
         Assert.Equal(42, array1[0]);
         Assert.True(_dataSource.TotalFetchCount >= 1);
     }

@@ -85,10 +85,10 @@ public sealed class ConcurrencyStabilityTests : IAsyncDisposable
         {
             Assert.Equal(21, results[i].Length); // Each range has 21 elements
         }
-        
+
         // ASSERT - IDataSource was called and handled concurrent requests
         Assert.True(_dataSource.TotalFetchCount > 0, "IDataSource should handle concurrent requests");
-        
+
         // Verify all requested ranges are valid
         var allRanges = _dataSource.GetAllRequestedRanges();
         Assert.All(allRanges, range =>
@@ -398,11 +398,11 @@ public sealed class ConcurrencyStabilityTests : IAsyncDisposable
             Assert.Equal(51, length);
             Assert.Equal(expectedFirst, firstValue);
         }
-        
+
         // ASSERT - Concurrent reads should mostly hit cache after warmup
         var finalFetchCount = _dataSource.TotalFetchCount;
         Assert.True(finalFetchCount >= initialFetchCount, "May have additional fetches for range extensions");
-        
+
         // Verify no malformed ranges during concurrent access
         var allRanges = _dataSource.GetAllRequestedRanges();
         Assert.All(allRanges, range =>

@@ -456,7 +456,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
 
         // ASSERT: Intent published but execution optimized away
         Assert.Equal(1, _cacheDiagnostics.RebalanceIntentPublished);
-        
+
         // Execution should either be skipped entirely or not completed
         // (skipped due to same-range optimization or never started)
         Assert.Equal(0, _cacheDiagnostics.RebalanceExecutionCompleted);
