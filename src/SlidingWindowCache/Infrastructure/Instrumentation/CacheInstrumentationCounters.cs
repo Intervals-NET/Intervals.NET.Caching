@@ -8,7 +8,7 @@ namespace SlidingWindowCache.Infrastructure.Instrumentation;
 /// </summary>
 public static class CacheInstrumentationCounters
 {
-    private static int _userRequestsServed;
+    private static int _userRequestServed;
     private static int _cacheExpanded;
     private static int _cacheReplaced;
     private static int _rebalanceIntentPublished;
@@ -21,11 +21,11 @@ public static class CacheInstrumentationCounters
     private static int _userRequestFullCacheHit;
     private static int _userRequestPartialCacheHit;
     private static int _userRequestFullCacheMiss;
-    private static int _dataSourceFetchFullRange;
+    private static int _dataSourceFetchSingleRange;
     private static int _dataSourceFetchMissingSegments;
 
     // User Path counters
-    public static int UserRequestsServed => _userRequestsServed;
+    public static int UserRequestServed => _userRequestServed;
     public static int CacheExpanded => _cacheExpanded;
     public static int CacheReplaced => _cacheReplaced;
     public static int UserRequestFullCacheHit => _userRequestFullCacheHit;
@@ -37,7 +37,7 @@ public static class CacheInstrumentationCounters
     /// Tracks calls to IDataSource.FetchAsync for a complete range (cold start or non-intersecting jump).
     /// Incremented when CacheDataFetcher.FetchDataAsync is called.
     /// </summary>
-    public static int DataSourceFetchFullRange => _dataSourceFetchFullRange;
+    public static int DataSourceFetchSingleRange => _dataSourceFetchSingleRange;
 
     /// <summary>
     /// Tracks calls to IDataSource.FetchAsync for missing segments only (partial cache hit optimization).
@@ -69,7 +69,7 @@ public static class CacheInstrumentationCounters
     public static int RebalanceSkippedSameRange => _rebalanceSkippedSameRange;
 
     [Conditional("DEBUG")]
-    internal static void OnUserRequestServed() => Interlocked.Increment(ref _userRequestsServed);
+    internal static void OnUserRequestServed() => Interlocked.Increment(ref _userRequestServed);
 
     [Conditional("DEBUG")]
     internal static void OnCacheExpanded() => Interlocked.Increment(ref _cacheExpanded);
@@ -108,7 +108,7 @@ public static class CacheInstrumentationCounters
     internal static void OnUserRequestFullCacheMiss() => Interlocked.Increment(ref _userRequestFullCacheMiss);
 
     [Conditional("DEBUG")]
-    internal static void OnDataSourceFetchFullRange() => Interlocked.Increment(ref _dataSourceFetchFullRange);
+    internal static void OnDataSourceFetchSingleRange() => Interlocked.Increment(ref _dataSourceFetchSingleRange);
 
     [Conditional("DEBUG")]
     internal static void OnDataSourceFetchMissingSegments() => Interlocked.Increment(ref _dataSourceFetchMissingSegments);
@@ -119,7 +119,7 @@ public static class CacheInstrumentationCounters
     [Conditional("DEBUG")]
     public static void Reset()
     {
-        _userRequestsServed = 0;
+        _userRequestServed = 0;
         _cacheExpanded = 0;
         _cacheReplaced = 0;
         _rebalanceIntentPublished = 0;
@@ -132,7 +132,7 @@ public static class CacheInstrumentationCounters
         _userRequestFullCacheHit = 0;
         _userRequestPartialCacheHit = 0;
         _userRequestFullCacheMiss = 0;
-        _dataSourceFetchFullRange = 0;
+        _dataSourceFetchSingleRange = 0;
         _dataSourceFetchMissingSegments = 0;
     }
 }

@@ -102,7 +102,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         TestHelpers.AssertUserDataCorrect(data1, TestHelpers.CreateRange(100, 110));
         TestHelpers.AssertUserDataCorrect(data2, TestHelpers.CreateRange(200, 210));
         TestHelpers.AssertUserDataCorrect(data3, TestHelpers.CreateRange(105, 115));
-        Assert.Equal(3, CacheInstrumentationCounters.UserRequestsServed);
+        Assert.Equal(3, CacheInstrumentationCounters.UserRequestServed);
     }
 
     /// <summary>
@@ -122,7 +122,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         stopwatch.Stop();
 
         // ASSERT: Request completed quickly (much less than debounce delay)
-        Assert.Equal(1, CacheInstrumentationCounters.UserRequestsServed);
+        Assert.Equal(1, CacheInstrumentationCounters.UserRequestServed);
         Assert.Equal(1, CacheInstrumentationCounters.RebalanceIntentPublished);
         Assert.Equal(0, CacheInstrumentationCounters.RebalanceExecutionCompleted);
         TestHelpers.AssertUserDataCorrect(data, TestHelpers.CreateRange(100, 110));
@@ -442,7 +442,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     {
         // ARRANGE
         var options = TestHelpers.CreateDefaultOptions(leftCacheSize: 1.0, rightCacheSize: 1.0,
-            leftThreshold: 0.3, rightThreshold: 0.3, debounceDelay: TimeSpan.FromMilliseconds(100));
+            leftThreshold: 0.4, rightThreshold: 0.4, debounceDelay: TimeSpan.FromMilliseconds(100));
         var (cache, _) = TrackCache(TestHelpers.CreateCacheWithDefaults(_domain, options));
 
         // ACT: First request establishes cache at desired range
@@ -450,7 +450,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         await TestHelpers.ExecuteRequestAndWaitForRebalance(cache, firstRange);
         CacheInstrumentationCounters.Reset();
 
-        // Second request: same range should trigger intent but skip execution due to same-range optimization
+        // Second request: same range should trigger intent, pass decision logic, starts executions, but skip before mutating data due to same-range optimization
         await cache.GetDataAsync(firstRange, CancellationToken.None);
         await cache.WaitForIdleAsync();
 
@@ -460,6 +460,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         // Execution should either be skipped entirely or not completed
         // (skipped due to same-range optimization or never started)
         Assert.Equal(0, CacheInstrumentationCounters.RebalanceExecutionCompleted);
+        Assert.Equal(1, CacheInstrumentationCounters.RebalanceSkippedSameRange);
     }
 
     // NOTE: Invariant D.25, D.26, D.28, D.29: Decision Path is purely analytical,
@@ -552,7 +553,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         TestHelpers.AssertFullCacheHit();
         Assert.Equal(0, CacheInstrumentationCounters.UserRequestFullCacheMiss);
         Assert.Equal(0, CacheInstrumentationCounters.UserRequestPartialCacheHit);
-        Assert.Equal(0, CacheInstrumentationCounters.DataSourceFetchFullRange);
+        Assert.Equal(0, CacheInstrumentationCounters.DataSourceFetchSingleRange);
         Assert.Equal(0, CacheInstrumentationCounters.DataSourceFetchMissingSegments);
 
         // Wait for rebalance
@@ -568,7 +569,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         TestHelpers.AssertDataSourceFetchedMissingSegments();
         Assert.Equal(0, CacheInstrumentationCounters.UserRequestFullCacheMiss);
         Assert.Equal(0, CacheInstrumentationCounters.UserRequestFullCacheHit);
-        Assert.Equal(0, CacheInstrumentationCounters.DataSourceFetchFullRange);
+        Assert.Equal(0, CacheInstrumentationCounters.DataSourceFetchSingleRange);
 
         // Wait for rebalance
         await cache.WaitForIdleAsync();
@@ -701,7 +702,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         stopwatch.Stop();
 
         // ASSERT: User request completed quickly (didn't wait for background rebalance)
-        Assert.Equal(1, CacheInstrumentationCounters.UserRequestsServed);
+        Assert.Equal(1, CacheInstrumentationCounters.UserRequestServed);
         Assert.Equal(1, CacheInstrumentationCounters.RebalanceIntentPublished);
         Assert.Equal(0, CacheInstrumentationCounters.RebalanceExecutionCompleted);
         TestHelpers.AssertUserDataCorrect(data, TestHelpers.CreateRange(100, 110));
@@ -783,7 +784,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         await cache.WaitForIdleAsync();
 
         // Verify key behavioral properties
-        Assert.Equal(5, CacheInstrumentationCounters.UserRequestsServed);
+        Assert.Equal(5, CacheInstrumentationCounters.UserRequestServed);
         Assert.True(CacheInstrumentationCounters.RebalanceIntentPublished >= 5);
         TestHelpers.AssertRebalanceCompleted();
     }
@@ -823,7 +824,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
             TestHelpers.AssertUserDataCorrect(results[i], expectedRange);
         }
 
-        Assert.Equal(20, CacheInstrumentationCounters.UserRequestsServed);
+        Assert.Equal(20, CacheInstrumentationCounters.UserRequestServed);
         Assert.True(CacheInstrumentationCounters.RebalanceIntentPublished == 20);
         TestHelpers.AssertRebalancePathCancelled(19); // Each new request cancels the previous intent, so expect 19 cancellations
         Assert.Equal(1, CacheInstrumentationCounters.RebalanceExecutionCompleted);

@@ -22,7 +22,7 @@ namespace SlidingWindowCache.Core.Rebalance.Execution;
 /// <typeparam name="TDomain">
 /// The type representing the domain of the ranges. Must implement <see cref="IRangeDomain{TRange}"/>.
 /// </typeparam>
-internal sealed class CacheDataFetcher<TRange, TData, TDomain>
+internal sealed class CacheDataExtensionService<TRange, TData, TDomain>
     where TRange : IComparable<TRange>
     where TDomain : IRangeDomain<TRange>
 {
@@ -30,7 +30,7 @@ internal sealed class CacheDataFetcher<TRange, TData, TDomain>
     private readonly TDomain _domain;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="CacheDataFetcher{TRange, TData, TDomain}"/> class.
+    /// Initializes a new instance of the <see cref="CacheDataExtensionService{TRange,TData,TDomain}"/> class.
     /// </summary>
     /// <param name="dataSource">
     /// The data source from which to fetch data.
@@ -38,7 +38,7 @@ internal sealed class CacheDataFetcher<TRange, TData, TDomain>
     /// <param name="domain">
     /// The domain defining the range characteristics.
     /// </param>
-    public CacheDataFetcher(
+    public CacheDataExtensionService(
         IDataSource<TRange, TData> dataSource,
         TDomain domain
     )
@@ -51,7 +51,7 @@ internal sealed class CacheDataFetcher<TRange, TData, TDomain>
     /// Extends the cache to cover the requested range by fetching only missing data segments.
     /// Preserves all existing cached data without trimming.
     /// </summary>
-    /// <param name="current">The current cached data.</param>
+    /// <param name="currentCache">The current cached data.</param>
     /// <param name="requested">The requested range that needs to be covered by the cache.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>
@@ -72,7 +72,7 @@ internal sealed class CacheDataFetcher<TRange, TData, TDomain>
     /// </code>
     /// </remarks>
     public async Task<RangeData<TRange, TData, TDomain>> ExtendCacheAsync(
-        RangeData<TRange, TData, TDomain> current,
+        RangeData<TRange, TData, TDomain> currentCache,
         Range<TRange> requested,
         CancellationToken ct
     )
@@ -80,13 +80,13 @@ internal sealed class CacheDataFetcher<TRange, TData, TDomain>
         CacheInstrumentationCounters.OnDataSourceFetchMissingSegments();
 
         // Step 1: Calculate which ranges are missing
-        var missingRanges = CalculateMissingRanges(current.Range, requested);
+        var missingRanges = CalculateMissingRanges(currentCache.Range, requested);
 
         // Step 2: Fetch the missing data from data source
         var fetchedResults = await _dataSource.FetchAsync(missingRanges, ct);
 
         // Step 3: Union fetched data with current cache
-        return UnionAll(current, fetchedResults, _domain);
+        return UnionAll(currentCache, fetchedResults, _domain);
     }
 
     /// <summary>
@@ -108,10 +108,12 @@ internal sealed class CacheDataFetcher<TRange, TData, TDomain>
 
         if (intersection.HasValue)
         {
+            CacheInstrumentationCounters.OnCacheExpanded();
             // Calculate the missing segments using range subtraction
             return requestedRange.Except(intersection.Value);
         }
 
+        CacheInstrumentationCounters.OnCacheReplaced();
         // No overlap - indicate that entire requested range is missing
         // This signals to fetch the whole requested range without trying to calculate missing segments, as they are all missing.
         return [requestedRange];
@@ -137,33 +139,5 @@ internal sealed class CacheDataFetcher<TRange, TData, TDomain>
         }
 
         return current;
-    }
-
-    /// <summary>
-    /// Fetches data for the requested range without extending or merging with existing cache.
-    /// Used for cold start or full cache replacement scenarios.
-    /// </summary>
-    /// <param name="requested">The range to fetch.</param>
-    /// <param name="ct">Cancellation token.</param>
-    /// <returns>New RangeData containing only the requested range.</returns>
-    /// <remarks>
-    /// <para><strong>Operation:</strong> Fetches ONLY the requested range (no merging with existing cache).</para>
-    /// <para><strong>Use case:</strong> Cold start or non-intersecting requests (Invariant A.3.8, A.3.9b).</para>
-    /// <para><strong>Example:</strong></para>
-    /// <code>
-    /// Cache: [100, 200], Requested: [300, 400] (no intersection)
-    /// - Old cache is discarded per Invariant A.3.9b
-    /// - Fetch: [300, 400]
-    /// - Result: [300, 400] (old cache is NOT preserved)
-    /// </code>
-    /// </remarks>
-    public async Task<RangeData<TRange, TData, TDomain>> FetchDataAsync(
-        Range<TRange> requested,
-        CancellationToken ct
-    )
-    {
-        CacheInstrumentationCounters.OnDataSourceFetchFullRange();
-
-        return (await _dataSource.FetchAsync(requested, ct)).ToRangeData(requested, _domain);
     }
 }

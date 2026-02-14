@@ -24,16 +24,16 @@ internal sealed class RebalanceExecutor<TRange, TData, TDomain>
     where TDomain : IRangeDomain<TRange>
 {
     private readonly CacheState<TRange, TData, TDomain> _state;
-    private readonly CacheDataFetcher<TRange, TData, TDomain> _cacheFetcher;
+    private readonly CacheDataExtensionService<TRange, TData, TDomain> _cacheExtensionService;
     private readonly ThresholdRebalancePolicy<TRange, TDomain> _rebalancePolicy;
 
     public RebalanceExecutor(
         CacheState<TRange, TData, TDomain> state,
-        CacheDataFetcher<TRange, TData, TDomain> cacheFetcher,
+        CacheDataExtensionService<TRange, TData, TDomain> cacheExtensionService,
         ThresholdRebalancePolicy<TRange, TDomain> rebalancePolicy)
     {
         _state = state;
-        _cacheFetcher = cacheFetcher;
+        _cacheExtensionService = cacheExtensionService;
         _rebalancePolicy = rebalancePolicy;
     }
 
@@ -41,8 +41,9 @@ internal sealed class RebalanceExecutor<TRange, TData, TDomain>
     /// Executes rebalance by normalizing the cache to the desired range.
     /// This is the ONLY component that mutates cache state (single-writer architecture).
     /// </summary>
-    /// <param name="deliveredRangeData">The data that was actually delivered to the user for the requested range.</param>
+    /// <param name="intent">The intent with data that was actually assembled in UserPath and the requested range.</param>
     /// <param name="desiredRange">The target cache range to normalize to.</param>
+    /// <param name="requestedRange">The original range requested by the user, used for updating LastRequested field in cache state.</param>
     /// <param name="cancellationToken">Cancellation token to support cancellation at all stages.</param>
     /// <returns>A task representing the asynchronous rebalance operation.</returns>
     /// <remarks>
@@ -60,21 +61,21 @@ internal sealed class RebalanceExecutor<TRange, TData, TDomain>
     /// </para>
     /// </remarks>
     public async Task ExecuteAsync(
-        RangeData<TRange, TData, TDomain> deliveredRangeData,
+        Intent<TRange, TData, TDomain> intent,
         Range<TRange> desiredRange,
         CancellationToken cancellationToken)
     {
         // Use delivered data as the base - this is what the user received
-        var baseRangeData = deliveredRangeData;
+        var baseRangeData = intent.AvailableRangeData;
 
         // Check if desired range equals delivered data range (Decision Path D2)
         // This is a final check before expensive I/O operations
-        if (deliveredRangeData.Range == desiredRange)
+        if (baseRangeData.Range == desiredRange)
         {
             CacheInstrumentationCounters.OnRebalanceSkippedSameRange();
             // Even though ranges match, we still need to update cache state since
             // User Path no longer writes to cache. Use delivered data directly.
-            UpdateCacheState(baseRangeData);
+            UpdateCacheState(baseRangeData, intent.RequestedRange);
             return;
         }
 
@@ -84,7 +85,7 @@ internal sealed class RebalanceExecutor<TRange, TData, TDomain>
 
         // Phase 1: Extend delivered data to cover desired range (fetch only truly missing data)
         // Use delivered data as base instead of current cache to ensure consistency
-        var extended = await _cacheFetcher.ExtendCacheAsync(baseRangeData, desiredRange, cancellationToken);
+        var extended = await _cacheExtensionService.ExtendCacheAsync(baseRangeData, desiredRange, cancellationToken);
 
         // Cancellation check after I/O but before mutation
         // If User Path cancelled us, don't apply the rebalance result
@@ -98,7 +99,9 @@ internal sealed class RebalanceExecutor<TRange, TData, TDomain>
         cancellationToken.ThrowIfCancellationRequested();
 
         // Phase 3: Apply cache state mutations
-        UpdateCacheState(baseRangeData);
+        UpdateCacheState(baseRangeData, intent.RequestedRange);
+
+        CacheInstrumentationCounters.OnRebalanceExecutionCompleted();
     }
 
     /// <summary>
@@ -106,7 +109,8 @@ internal sealed class RebalanceExecutor<TRange, TData, TDomain>
     /// SINGLE-WRITER: Only Rebalance Execution writes to cache state.
     /// </summary>
     /// <param name="normalizedData">The normalized data to write to cache.</param>
-    private void UpdateCacheState(RangeData<TRange, TData, TDomain> normalizedData)
+    /// <param name="requestedRange">The original range requested by the user, used to update LastRequested field.</param>
+    private void UpdateCacheState(RangeData<TRange, TData, TDomain> normalizedData, Range<TRange> requestedRange)
     {
         // Phase 1: Update the cache with the rebalanced data (atomic mutation)
         // SINGLE-WRITER: This is the ONLY place where cache state is written
@@ -114,7 +118,7 @@ internal sealed class RebalanceExecutor<TRange, TData, TDomain>
 
         // Phase 2: Update LastRequested to the original user's requested range
         // SINGLE-WRITER: Only Rebalance Execution writes to LastRequested
-        _state.LastRequested = normalizedData.Range;
+        _state.LastRequested = requestedRange;
 
         // Phase 3: Update the no-rebalance range to prevent unnecessary rebalancing
         // SINGLE-WRITER: Only Rebalance Execution writes to NoRebalanceRange

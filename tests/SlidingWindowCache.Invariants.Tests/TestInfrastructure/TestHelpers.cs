@@ -429,7 +429,7 @@ public static class TestHelpers
     /// </summary>
     public static void AssertDataSourceFetchedFullRange(int expectedCount = 1)
     {
-        Assert.Equal(expectedCount, CacheInstrumentationCounters.DataSourceFetchFullRange);
+        Assert.Equal(expectedCount, CacheInstrumentationCounters.DataSourceFetchSingleRange);
     }
 
     /// <summary>

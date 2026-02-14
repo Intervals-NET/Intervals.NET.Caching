@@ -113,7 +113,7 @@ public sealed class WindowCache<TRange, TData, TDomain>
         // Initialize all internal actors following corrected execution context model
         var rebalancePolicy = new ThresholdRebalancePolicy<TRange, TDomain>(options, domain);
         var rangePlanner = new ProportionalRangePlanner<TRange, TDomain>(options, domain);
-        var cacheFetcher = new CacheDataFetcher<TRange, TData, TDomain>(dataSource, domain);
+        var cacheFetcher = new CacheDataExtensionService<TRange, TData, TDomain>(dataSource, domain);
 
         var decisionEngine = new RebalanceDecisionEngine<TRange, TDomain>(rebalancePolicy, rangePlanner);
         var executor = new RebalanceExecutor<TRange, TData, TDomain>(state, cacheFetcher, rebalancePolicy);
@@ -123,13 +123,17 @@ public sealed class WindowCache<TRange, TData, TDomain>
             state,
             decisionEngine,
             executor,
-            options.DebounceDelay);
+            options.DebounceDelay
+        );
 
         // Initialize the UserRequestHandler (Fast Path Actor)
         _userRequestHandler = new UserRequestHandler<TRange, TData, TDomain>(
             state,
             cacheFetcher,
-            _intentController);
+            _intentController,
+            domain,
+            dataSource
+        );
 
         return;
 

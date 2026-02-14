@@ -126,7 +126,7 @@ internal sealed class IntentController<TRange, TData, TDomain>
     /// Publishes a rebalance intent triggered by a user request.
     /// This method is fire-and-forget and returns immediately.
     /// </summary>
-    /// <param name="deliveredData">The data that was actually delivered to the user for the requested range.</param>
+    /// <param name="intent">The data that was actually delivered to the user for the requested range.</param>
     /// <remarks>
     /// <para>
     /// Every user access produces a rebalance intent. This method implements the
@@ -138,8 +138,8 @@ internal sealed class IntentController<TRange, TData, TDomain>
     /// </list>
     /// </para>
     /// <para>
-    /// The intent contains both the requested range and the actual data delivered to the user.
-    /// This allows Rebalance Execution to use the delivered data as an authoritative source,
+    /// The intent contains both the requested range and the assembled data.
+    /// This allows Rebalance Execution to use the assembled data as an authoritative source,
     /// avoiding duplicate fetches and ensuring consistency.
     /// </para>
     /// <para>
@@ -151,7 +151,7 @@ internal sealed class IntentController<TRange, TData, TDomain>
     /// while scheduling/execution is delegated to RebalanceScheduler.
     /// </para>
     /// </remarks>
-    public void PublishIntent(RangeData<TRange, TData, TDomain> deliveredData)
+    public void PublishIntent(Intent<TRange, TData, TDomain> intent)
     {
         var newCts = new CancellationTokenSource();
         var intentToken = newCts.Token;
@@ -170,7 +170,7 @@ internal sealed class IntentController<TRange, TData, TDomain>
 
         // Delegate to scheduler for debounce and execution
         // The scheduler owns timing, debounce, and pipeline orchestration
-        _scheduler.ScheduleRebalance(deliveredData, intentToken);
+        _scheduler.ScheduleRebalance(intent, intentToken);
 
         CacheInstrumentationCounters.OnRebalanceIntentPublished();
     }

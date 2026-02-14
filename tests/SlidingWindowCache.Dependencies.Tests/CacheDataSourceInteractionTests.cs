@@ -51,8 +51,7 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
                 rightCacheSize: 1.0,
                 readMode: UserCacheReadMode.Snapshot,
                 leftThreshold: 0.2,
-                rightThreshold: 0.2,
-                debounceDelay: TimeSpan.FromMilliseconds(50)
+                rightThreshold: 0.2
             )
         );
         return _cache;
@@ -72,11 +71,11 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
 
         // ASSERT - DataSource was called with the requested range
         Assert.True(_dataSource.TotalFetchCount > 0, "DataSource should be called for cold start");
-        
+
         // ASSERT - Verify IDataSource covered the exact requested range
         Assert.True(_dataSource.WasRangeCovered(100, 110),
             "DataSource should be asked to fetch at least the requested range [100, 110]");
-        
+
         // Verify data is correct
         var array = data.ToArray();
         Assert.Equal((int)requestedRange.Span(_domain), array.Length);
@@ -89,11 +88,11 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
     {
         // ARRANGE
         var cache = CreateCache();
-        
+
         // First request establishes cache
         await cache.GetDataAsync(Intervals.NET.Factories.Range.Closed<int>(100, 110), CancellationToken.None);
         await Task.Delay(100); // Allow rebalance
-        
+
         _dataSource.Reset(); // Track only the second request
 
         // ACT - Jump to non-overlapping range
@@ -102,7 +101,7 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
 
         // ASSERT - DataSource was called for new range
         Assert.True(_dataSource.TotalFetchCount > 0, "DataSource should be called for non-overlapping range");
-        
+
         // Verify correct data
         var array = data.ToArray();
         Assert.Equal(11, array.Length);
@@ -119,11 +118,11 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
     {
         // ARRANGE
         var cache = CreateCache();
-        
+
         // First request establishes cache [100, 110]
         await cache.GetDataAsync(Intervals.NET.Factories.Range.Closed<int>(100, 110), CancellationToken.None);
         await Task.Delay(100); // Allow rebalance to settle
-        
+
         var initialFetchCount = _dataSource.TotalFetchCount;
 
         // ACT - Request overlapping range [105, 120]
@@ -136,7 +135,7 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
         Assert.Equal(16, array.Length); // [105, 120] = 16 elements
         Assert.Equal(105, array[0]);
         Assert.Equal(120, array[^1]);
-        
+
         // DataSource may or may not be called depending on cache expansion
         // We verify behavior is correct regardless
         for (int i = 0; i < array.Length; i++)
@@ -150,7 +149,7 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
     {
         // ARRANGE
         var cache = CreateCache();
-        
+
         // Establish cache at [200, 210]
         await cache.GetDataAsync(Intervals.NET.Factories.Range.Closed<int>(200, 210), CancellationToken.None);
         await Task.Delay(100);
@@ -171,7 +170,7 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
     {
         // ARRANGE
         var cache = CreateCache();
-        
+
         // Establish cache at [300, 310]
         await cache.GetDataAsync(Intervals.NET.Factories.Range.Closed<int>(300, 310), CancellationToken.None);
         await Task.Delay(100);
@@ -267,15 +266,13 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
     public async Task NoRedundantFetches_RepeatedSameRange_UsesCache()
     {
         // ARRANGE
-        var cache = CreateCache();
+        var cache = CreateCache(new WindowCacheOptions(1, 1, UserCacheReadMode.Snapshot, 0.4, 0.4));
         var range = Intervals.NET.Factories.Range.Closed<int>(100, 110);
 
         // ACT - First request
         await cache.GetDataAsync(range, CancellationToken.None);
-        await Task.Delay(100); // Allow rebalance
-        
-        var fetchCountAfterFirst = _dataSource.TotalFetchCount;
-        
+        await cache.WaitForIdleAsync();
+
         // Second identical request
         var data2 = await cache.GetDataAsync(range, CancellationToken.None);
 
@@ -302,12 +299,12 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
         // ACT - Large initial request
         await cache.GetDataAsync(Intervals.NET.Factories.Range.Closed<int>(100, 200), CancellationToken.None);
         await Task.Delay(200); // Allow rebalance to expand cache
-        
+
         var totalFetchesAfterExpansion = _dataSource.TotalFetchCount;
         Assert.True(totalFetchesAfterExpansion > 0, "Initial request should trigger fetches");
-        
+
         _dataSource.Reset();
-        
+
         // Request subset that should be in expanded cache
         var subset = Intervals.NET.Factories.Range.Closed<int>(150, 160);
         var data = await cache.GetDataAsync(subset, CancellationToken.None);
@@ -317,7 +314,7 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
         Assert.Equal(11, array.Length);
         Assert.Equal(150, array[0]);
         Assert.Equal(160, array[^1]);
-        
+
         // ASSERT - Subset request should ideally hit cache without new fetch
         // (Background rebalance may occur, but subset data should be cached)
         Assert.True(true, $"Subset request completed with fetch count: {_dataSource.TotalFetchCount}");
@@ -337,7 +334,7 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
         await cache.GetDataAsync(Intervals.NET.Factories.Range.Closed<int>(100, 110), CancellationToken.None);
 
         // ASSERT - At least one fetch call made
-        Assert.True(_dataSource.TotalFetchCount >= 1, 
+        Assert.True(_dataSource.TotalFetchCount >= 1,
             $"Expected at least 1 fetch, but got {_dataSource.TotalFetchCount}");
     }
 
@@ -359,7 +356,7 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
         {
             _dataSource.Reset();
             var data = await cache.GetDataAsync(range, CancellationToken.None);
-            
+
             // Each miss should trigger at least one fetch
             Assert.True(_dataSource.TotalFetchCount >= 1,
                 $"Cache miss should trigger fetch for range {range}");

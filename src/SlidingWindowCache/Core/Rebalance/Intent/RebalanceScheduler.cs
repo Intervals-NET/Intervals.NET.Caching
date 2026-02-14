@@ -77,7 +77,7 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
     /// Schedules a rebalance operation to execute after the debounce delay.
     /// Checks intent validity before starting execution.
     /// </summary>
-    /// <param name="deliveredData">The data that was actually delivered to the user for the requested range.</param>
+    /// <param name="intent">The intent with data that was actually assembled in UserPath and the requested range.</param>
     /// <param name="intentToken">Cancellation token for this specific intent (owned by IntentManager).</param>
     /// <remarks>
     /// <para>
@@ -89,12 +89,8 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
     /// When a new intent arrives, the Intent Controller cancels the previous token, causing
     /// any pending or executing rebalance to be cancelled.
     /// </para>
-    /// <para>
-    /// The delivered data is passed through to Rebalance Execution, allowing it to use
-    /// the data already fetched and delivered to the user as an authoritative source.
-    /// </para>
     /// </remarks>
-    public void ScheduleRebalance(RangeData<TRange, TData, TDomain> deliveredData, CancellationToken intentToken)
+    public void ScheduleRebalance(Intent<TRange, TData, TDomain> intent, CancellationToken intentToken)
     {
         // Fire-and-forget: schedule execution in background thread pool
         // Fixing ambiguous invocation by explicitly specifying the type for Task.Run
@@ -103,7 +99,7 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
             try
             {
                 await ExecuteAfterAsync(
-                    executePipelineAsync: () => ExecutePipelineAsync(deliveredData, intentToken),
+                    executePipelineAsync: () => ExecutePipelineAsync(intent, intentToken),
                     intentToken: intentToken
                 );
             }
@@ -162,7 +158,7 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
     /// <summary>
     /// Executes the decision-execution pipeline in the background.
     /// </summary>
-    /// <param name="deliveredData">The data that was actually delivered to the user for the requested range.</param>
+    /// <param name="intent">The intent with data that was actually assembled in UserPath and the requested range.</param>
     /// <param name="cancellationToken">Cancellation token to support cancellation.</param>
     /// <remarks>
     /// <para><strong>Pipeline Flow:</strong></para>
@@ -172,7 +168,7 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
     /// <item><description>If needed, invoke Executor to perform rebalance using delivered data</description></item>
     /// </list>
     /// </remarks>
-    private async Task ExecutePipelineAsync(RangeData<TRange, TData, TDomain> deliveredData,
+    private async Task ExecutePipelineAsync(Intent<TRange, TData, TDomain> intent,
         CancellationToken cancellationToken)
     {
         // Final cancellation check before decision logic
@@ -186,8 +182,9 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
         // Step 1: Invoke DecisionEngine (pure decision logic)
         // This checks NoRebalanceRange and computes DesiredCacheRange
         var decision = _decisionEngine.ShouldExecuteRebalance(
-            deliveredData.Range,
-            _state.NoRebalanceRange);
+            requestedRange: intent.RequestedRange,
+            noRebalanceRange: _state.NoRebalanceRange
+        );
 
         // Step 2: If decision says skip, return early (no-op)
         if (!decision.ShouldExecute)
@@ -203,8 +200,7 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
         // expand to desired range, trim excess, and update cache state
         try
         {
-            await _executor.ExecuteAsync(deliveredData, decision.DesiredRange!.Value, cancellationToken);
-            CacheInstrumentationCounters.OnRebalanceExecutionCompleted();
+            await _executor.ExecuteAsync(intent, decision.DesiredRange!.Value, cancellationToken);
         }
         catch (OperationCanceledException)
         {

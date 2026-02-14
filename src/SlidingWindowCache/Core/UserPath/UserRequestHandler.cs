@@ -1,11 +1,13 @@
 ﻿using Intervals.NET;
 using Intervals.NET.Data;
+using Intervals.NET.Data.Extensions;
 using Intervals.NET.Domain.Abstractions;
 using Intervals.NET.Extensions;
 using SlidingWindowCache.Core.Rebalance.Execution;
 using SlidingWindowCache.Core.Rebalance.Intent;
 using SlidingWindowCache.Core.State;
 using SlidingWindowCache.Infrastructure.Instrumentation;
+using SlidingWindowCache.Public;
 
 namespace SlidingWindowCache.Core.UserPath;
 
@@ -45,23 +47,37 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     where TDomain : IRangeDomain<TRange>
 {
     private readonly CacheState<TRange, TData, TDomain> _state;
-    private readonly CacheDataFetcher<TRange, TData, TDomain> _cacheFetcher;
+    private readonly CacheDataExtensionService<TRange, TData, TDomain> _cacheExtensionService;
     private readonly IntentController<TRange, TData, TDomain> _intentManager;
+    private readonly TDomain _domain;
+    private readonly IDataSource<TRange, TData> _dataSource;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="UserRequestHandler{TRange,TData,TDomain}"/> class.
     /// </summary>
     /// <param name="state">The cache state.</param>
-    /// <param name="cacheFetcher">The cache data fetcher for extending cache coverage.</param>
+    /// <param name="cacheExtensionService">The cache data fetcher for extending cache coverage.</param>
     /// <param name="intentManager">The intent controller for publishing rebalance intents.</param>
-    public UserRequestHandler(
-        CacheState<TRange, TData, TDomain> state,
-        CacheDataFetcher<TRange, TData, TDomain> cacheFetcher,
-        IntentController<TRange, TData, TDomain> intentManager)
+    /// <param name="domain">
+    /// The domain defining the range characteristics. This is required for any range computations or transformations
+    /// performed by the UserRequestHandler, such as when creating RangeData for intents or when interpreting cache geometry.
+    /// The domain provides necessary context for understanding the range boundaries and how they relate to the underlying data.
+    /// Even though the UserRequestHandler does not perform complex range planning or decision-making,
+    /// it still needs the domain to correctly handle range data and to create accurate intents for the Rebalance Execution Path.
+    /// </param>
+    /// <param name="dataSource"> The data source to request missing data from.</param>
+    public UserRequestHandler(CacheState<TRange, TData, TDomain> state,
+        CacheDataExtensionService<TRange, TData, TDomain> cacheExtensionService,
+        IntentController<TRange, TData, TDomain> intentManager,
+        TDomain domain,
+        IDataSource<TRange, TData> dataSource
+    )
     {
         _state = state;
-        _cacheFetcher = cacheFetcher;
+        _cacheExtensionService = cacheExtensionService;
         _intentManager = intentManager;
+        _domain = domain;
+        _dataSource = dataSource;
     }
 
     /// <summary>
@@ -114,7 +130,10 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
         {
             // Scenario 1: Cold Start
             // Cache has never been populated - fetch data ONLY for requested range
-            assembledData = await _cacheFetcher.FetchDataAsync(requestedRange, cancellationToken);
+            CacheInstrumentationCounters.OnDataSourceFetchSingleRange();
+            assembledData =
+                (await _dataSource.FetchAsync(requestedRange, cancellationToken)).ToRangeData(requestedRange, _domain);
+
             CacheInstrumentationCounters.OnUserRequestFullCacheMiss();
         }
         else
@@ -126,12 +145,8 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
             {
                 // Scenario 2: Full Cache Hit
                 // All requested data is available in cache - read from cache (no IDataSource call)
-                var cachedData = _state.Cache.Read(requestedRange);
+                assembledData = _state.Cache.ToRangeData();
 
-                // Create RangeData from cached data for intent
-                // Note: We must materialize to array to create proper RangeData for intent
-                var array = cachedData.ToArray();
-                assembledData = new RangeData<TRange, TData, TDomain>(requestedRange, array, _state.Domain);
                 CacheInstrumentationCounters.OnUserRequestFullCacheHit();
             }
             else
@@ -143,10 +158,10 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
                     // Scenario 3: Partial Cache Hit
                     // RequestedRange intersects CurrentCacheRange - read from cache and fetch missing parts
                     // ExtendCacheAsync will compute missing ranges and fetch only those parts
-                    var extendedData = await _cacheFetcher.ExtendCacheAsync(currentCacheData, requestedRange, cancellationToken);
+                    assembledData =
+                        await _cacheExtensionService.ExtendCacheAsync(currentCacheData, requestedRange,
+                            cancellationToken);
 
-                    // Slice to requested range only (ExtendCacheAsync returns union of cache + requested)
-                    assembledData = extendedData[requestedRange];
                     CacheInstrumentationCounters.OnUserRequestPartialCacheHit();
                 }
                 else
@@ -154,7 +169,11 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
                     // Scenario 4: Full Cache Miss (Non-intersecting Jump)
                     // RequestedRange does NOT intersect CurrentCacheRange
                     // Fetch ONLY the requested range from IDataSource
-                    assembledData = await _cacheFetcher.FetchDataAsync(requestedRange, cancellationToken);
+                    CacheInstrumentationCounters.OnDataSourceFetchSingleRange();
+                    assembledData =
+                        (await _dataSource.FetchAsync(requestedRange, cancellationToken)).ToRangeData(requestedRange,
+                            _domain);
+
                     CacheInstrumentationCounters.OnUserRequestFullCacheMiss();
                 }
             }
@@ -165,21 +184,15 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
         // 1. Create ReadOnlyMemory<TData> to return to user
         // 2. Create RangeData<TRange,TData,TDomain> for intent
         // Note: assembledData.Data is IEnumerable, must materialize to array
-        var materializedArray = assembledData.Data.ToArray();
-
         // Create ReadOnlyMemory to return to user immediately
-        var result = new ReadOnlyMemory<TData>(materializedArray);
+        var result = new ReadOnlyMemory<TData>(assembledData[requestedRange].Data.ToArray());
 
-        // Create RangeData for intent using the same materialized array
-        var deliveredData = new RangeData<TRange, TData, TDomain>(
-            requestedRange,
-            materializedArray,
-            _state.Domain);
+        // Create new Intent
+        var intent = new Intent<TRange, TData, TDomain>(requestedRange, assembledData);
 
-        // Publish rebalance intent with delivered data (fire-and-forget)
-        // The intent contains both the requested range and the actual data delivered to the user
+        // Publish rebalance intent with assembled data range (fire-and-forget)
         // Rebalance Execution will use this as the authoritative source
-        _intentManager.PublishIntent(deliveredData);
+        _intentManager.PublishIntent(intent);
 
         CacheInstrumentationCounters.OnUserRequestServed();
 
