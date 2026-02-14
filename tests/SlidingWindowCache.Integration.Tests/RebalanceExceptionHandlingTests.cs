@@ -264,7 +264,7 @@ public class RebalanceExceptionHandlingTests : IDisposable
     private static IEnumerable<string> GenerateTestData(Intervals.NET.Range<int> range)
     {
         var data = new List<string>();
-        for (int i = range.Start.Value; i <= range.End.Value; i++)
+        for (var i = range.Start.Value; i <= range.End.Value; i++)
         {
             data.Add($"Item-{i}");
         }

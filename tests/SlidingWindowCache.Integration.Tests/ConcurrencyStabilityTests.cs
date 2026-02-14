@@ -69,7 +69,7 @@ public sealed class ConcurrencyStabilityTests : IAsyncDisposable
 
         // ACT - Execute requests concurrently
         var tasks = new List<Task<ReadOnlyMemory<int>>>();
-        for (int i = 0; i < concurrentRequests; i++)
+        for (var i = 0; i < concurrentRequests; i++)
         {
             var start = i * 100;
             var range = Intervals.NET.Factories.Range.Closed<int>(start, start + 20);
@@ -81,7 +81,7 @@ public sealed class ConcurrencyStabilityTests : IAsyncDisposable
         // ASSERT - All requests completed successfully
         Assert.Equal(concurrentRequests, results.Length);
 
-        for (int i = 0; i < results.Length; i++)
+        for (var i = 0; i < results.Length; i++)
         {
             Assert.Equal(21, results[i].Length); // Each range has 21 elements
         }
@@ -137,7 +137,7 @@ public sealed class ConcurrencyStabilityTests : IAsyncDisposable
 
         // ACT - Overlapping ranges around center point
         var tasks = new List<Task<ReadOnlyMemory<int>>>();
-        for (int i = 0; i < concurrentRequests; i++)
+        for (var i = 0; i < concurrentRequests; i++)
         {
             var offset = i * 5;
             var range = Intervals.NET.Factories.Range.Closed<int>(100 + offset, 150 + offset);
@@ -147,7 +147,7 @@ public sealed class ConcurrencyStabilityTests : IAsyncDisposable
         var results = await Task.WhenAll(tasks);
 
         // ASSERT - Verify each result
-        for (int i = 0; i < results.Length; i++)
+        for (var i = 0; i < results.Length; i++)
         {
             var offset = i * 5;
             var expected = 51; // [100+offset, 150+offset] = 51 elements
@@ -170,7 +170,7 @@ public sealed class ConcurrencyStabilityTests : IAsyncDisposable
         var exceptions = new List<Exception>();
 
         // ACT
-        for (int i = 0; i < requestCount; i++)
+        for (var i = 0; i < requestCount; i++)
         {
             try
             {
@@ -207,7 +207,7 @@ public sealed class ConcurrencyStabilityTests : IAsyncDisposable
 
         // ACT - Launch many concurrent requests
         var tasks = new List<Task<ReadOnlyMemory<int>>>();
-        for (int i = 0; i < burstSize; i++)
+        for (var i = 0; i < burstSize; i++)
         {
             var start = (i % 10) * 50; // Create some overlap
             var range = Intervals.NET.Factories.Range.Closed<int>(start, start + 25);
@@ -236,7 +236,7 @@ public sealed class ConcurrencyStabilityTests : IAsyncDisposable
         // ACT - Mix of random and sequential requests
         var tasks = new List<Task<ReadOnlyMemory<int>>>();
 
-        for (int i = 0; i < totalTasks; i++)
+        for (var i = 0; i < totalTasks; i++)
         {
             Range<int> range;
 
@@ -278,7 +278,7 @@ public sealed class ConcurrencyStabilityTests : IAsyncDisposable
         // ACT - Launch requests with delayed cancellations
         var tasks = new List<Task<bool>>();
 
-        for (int i = 0; i < requestCount; i++)
+        for (var i = 0; i < requestCount; i++)
         {
             var cts = new CancellationTokenSource();
             ctsList.Add(cts);
@@ -343,7 +343,7 @@ public sealed class ConcurrencyStabilityTests : IAsyncDisposable
         const int requestCount = 100;
 
         // ACT - Rapid sequential requests
-        for (int i = 0; i < requestCount; i++)
+        for (var i = 0; i < requestCount; i++)
         {
             var start = (i % 20) * 10; // Create overlap pattern
             var range = Intervals.NET.Factories.Range.Closed<int>(start, start + 20);
@@ -377,7 +377,7 @@ public sealed class ConcurrencyStabilityTests : IAsyncDisposable
         // ACT - Many concurrent reads of overlapping ranges
         var tasks = new List<Task<(int length, int firstValue, int expectedFirst)>>();
 
-        for (int i = 0; i < concurrentReaders; i++)
+        for (var i = 0; i < concurrentReaders; i++)
         {
             var offset = i * 4;
             var expectedFirst = 500 + offset;
@@ -427,7 +427,7 @@ public sealed class ConcurrencyStabilityTests : IAsyncDisposable
         using var cts = new CancellationTokenSource(timeout);
         var tasks = new List<Task>();
 
-        for (int i = 0; i < requestCount; i++)
+        for (var i = 0; i < requestCount; i++)
         {
             var start = i * 15;
             var range = Intervals.NET.Factories.Range.Closed<int>(start, start + 25);

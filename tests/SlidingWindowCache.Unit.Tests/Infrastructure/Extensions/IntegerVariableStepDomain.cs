@@ -23,7 +23,7 @@ internal class IntegerVariableStepDomain : IVariableStepDomain<int>
 
     public int? GetPreviousStep(int value)
     {
-        for (int i = _steps.Length - 1; i >= 0; i--)
+        for (var i = _steps.Length - 1; i >= 0; i--)
         {
             if (Comparer.Compare(_steps[i], value) < 0)
             {
@@ -82,7 +82,7 @@ internal class IntegerVariableStepDomain : IVariableStepDomain<int>
     public int Floor(int value)
     {
         // Find the largest step <= value
-        for (int i = _steps.Length - 1; i >= 0; i--)
+        for (var i = _steps.Length - 1; i >= 0; i--)
         {
             if (Comparer.Compare(_steps[i], value) <= 0)
             {

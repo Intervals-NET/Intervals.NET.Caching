@@ -76,7 +76,7 @@ public sealed class RandomRangeRobustnessTests : IAsyncDisposable
         var cache = CreateCache();
         const int iterations = 200;
 
-        for (int i = 0; i < iterations; i++)
+        for (var i = 0; i < iterations; i++)
         {
             var range = GenerateRandomRange();
             var data = await cache.GetDataAsync(range, CancellationToken.None);
@@ -102,7 +102,7 @@ public sealed class RandomRangeRobustnessTests : IAsyncDisposable
         var cache = CreateCache();
         const int iterations = 150;
 
-        for (int i = 0; i < iterations; i++)
+        for (var i = 0; i < iterations; i++)
         {
             var range = GenerateRandomRange();
             var data = await cache.GetDataAsync(range, CancellationToken.None);
@@ -110,7 +110,7 @@ public sealed class RandomRangeRobustnessTests : IAsyncDisposable
             var start = (int)range.Start;
             var array = data.ToArray(); // Convert to array to avoid ref struct in async
 
-            for (int j = 0; j < array.Length; j++)
+            for (var j = 0; j < array.Length; j++)
             {
                 Assert.Equal(start + j, array[j]);
             }
@@ -127,7 +127,7 @@ public sealed class RandomRangeRobustnessTests : IAsyncDisposable
         var baseRange = Intervals.NET.Factories.Range.Closed<int>(baseStart, baseStart + 50);
         await cache.GetDataAsync(baseRange, CancellationToken.None);
 
-        for (int i = 0; i < iterations; i++)
+        for (var i = 0; i < iterations; i++)
         {
             var overlapStart = baseStart + _random.Next(-25, 25);
             var overlapEnd = overlapStart + _random.Next(10, 40);
@@ -145,7 +145,7 @@ public sealed class RandomRangeRobustnessTests : IAsyncDisposable
         const int iterations = 150;
         var currentPosition = 5000;
 
-        for (int i = 0; i < iterations; i++)
+        for (var i = 0; i < iterations; i++)
         {
             var direction = _random.Next(0, 2) == 0 ? -1 : 1;
             var step = _random.Next(5, 20);
@@ -178,7 +178,7 @@ public sealed class RandomRangeRobustnessTests : IAsyncDisposable
 
         const int iterations = 500;
 
-        for (int i = 0; i < iterations; i++)
+        for (var i = 0; i < iterations; i++)
         {
             Range<int> range;
             var pattern = _random.Next(0, 10);

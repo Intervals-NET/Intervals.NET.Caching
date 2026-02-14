@@ -139,7 +139,7 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
 
         // DataSource may or may not be called depending on cache expansion
         // We verify behavior is correct regardless
-        for (int i = 0; i < array.Length; i++)
+        for (var i = 0; i < array.Length; i++)
         {
             Assert.Equal(105 + i, array[i]);
         }

@@ -147,7 +147,7 @@ public sealed class RangeSemanticsContractTests : IAsyncDisposable
 
         // ASSERT - Verify sequential data from start to end
         var array = data.ToArray();
-        for (int i = 0; i < array.Length; i++)
+        for (var i = 0; i < array.Length; i++)
         {
             Assert.Equal(1000 + i, array[i]);
         }
