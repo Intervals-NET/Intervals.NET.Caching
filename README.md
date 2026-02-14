@@ -315,6 +315,60 @@ For detailed architectural documentation, see:
 
 ---
 
+## CI/CD & Package Information
+
+### Continuous Integration
+
+This project uses GitHub Actions for automated testing and deployment:
+
+- **Build & Test**: Runs on every push and pull request
+  - Compiles entire solution in Release configuration
+  - Executes all test suites (Unit, Integration, Invariants) with code coverage
+  - Validates WebAssembly compatibility via `net8.0-browser` compilation
+  - Uploads coverage reports to Codecov
+
+- **NuGet Publishing**: Automatic on main branch pushes
+  - Packages library with symbols and source link
+  - Publishes to NuGet.org with skip-duplicate
+  - Stores package artifacts in workflow runs
+
+See [.github/workflows/README.md](.github/workflows/README.md) for detailed workflow documentation.
+
+### WebAssembly Support
+
+SlidingWindowCache is validated for WebAssembly compatibility:
+
+- **Target Framework**: `net8.0-browser` compilation validated in CI
+- **Validation Project**: `SlidingWindowCache.WasmValidation` ensures all public APIs work in browser environments
+- **Compatibility**: All library features available in Blazor WebAssembly and other WASM scenarios
+
+### NuGet Package
+
+**Package ID**: `SlidingWindowCache`  
+**Current Version**: 1.0.0
+
+```bash
+# Install via .NET CLI
+dotnet add package SlidingWindowCache
+
+# Install via Package Manager
+Install-Package SlidingWindowCache
+```
+
+**Package Contents**:
+- Main library assembly (`SlidingWindowCache.dll`)
+- Debug symbols (`.snupkg` for debugging)
+- Source Link (GitHub source integration for "Go to Definition")
+- README.md (this file)
+
+**Dependencies**:
+- Intervals.NET.Data (>= 0.0.1)
+- Intervals.NET.Domain.Default (>= 0.0.2)
+- Intervals.NET.Domain.Extensions (>= 0.0.3)
+- .NET 8.0 or higher
+
+---
+
 ## License
 
 MIT
