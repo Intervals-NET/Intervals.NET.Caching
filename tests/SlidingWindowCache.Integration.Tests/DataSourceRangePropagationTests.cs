@@ -205,7 +205,7 @@ public sealed class DataSourceRangePropagationTests : IAsyncDisposable
         Assert.Equal(290, data.Span[^1]);
 
         // ASSERT - IDataSource should fetch only missing left segment [280, 289)
-        _dataSource.AssertRangeRequested(Intervals.NET.Factories.Range.ClosedOpen<int>(280, 289));
+        _dataSource.AssertRangeRequested(Intervals.NET.Factories.Range.ClosedOpen(280, 289));
     }
 
     #endregion
@@ -237,7 +237,7 @@ public sealed class DataSourceRangePropagationTests : IAsyncDisposable
 
         // Rebalance should expand symmetrically
         // Left expansion: 11 * 1 = 11, so [89, 100)
-        _dataSource.AssertRangeRequested(Intervals.NET.Factories.Range.ClosedOpen<int>(89, 100));
+        _dataSource.AssertRangeRequested(Intervals.NET.Factories.Range.ClosedOpen(89, 100));
 
         // Right expansion: 11 * 2.0 = 22, so (110, 121]
         _dataSource.AssertRangeRequested(Intervals.NET.Factories.Range.OpenClosed<int>(110, 121));
@@ -311,11 +311,11 @@ public sealed class DataSourceRangePropagationTests : IAsyncDisposable
         Assert.NotEmpty(requestedRanges);
 
         // First fetch should be the missing segment
-        _dataSource.AssertRangeRequested(Intervals.NET.Factories.Range.ClosedOpen<int>(180, 189));
+        _dataSource.AssertRangeRequested(Intervals.NET.Factories.Range.ClosedOpen(180, 189));
 
         // Rebalance may trigger left expansion
         // Expected left expansion: 11 * 1 = 11, so [169, 180)
-        _dataSource.AssertRangeRequested(Intervals.NET.Factories.Range.ClosedOpen<int>(169, 180));
+        _dataSource.AssertRangeRequested(Intervals.NET.Factories.Range.ClosedOpen(169, 180));
     }
 
     #endregion
@@ -354,7 +354,7 @@ public sealed class DataSourceRangePropagationTests : IAsyncDisposable
         // May be fetched as 2 separate ranges or 1 consolidated range
         var requestedRanges = _dataSource.GetAllRequestedRanges();
         Assert.Equal(2, requestedRanges.Count); // Expecting 2 separate fetches for left and right missing segments
-        _dataSource.AssertRangeRequested(Intervals.NET.Factories.Range.ClosedOpen<int>(80, 89));
+        _dataSource.AssertRangeRequested(Intervals.NET.Factories.Range.ClosedOpen(80, 89));
         _dataSource.AssertRangeRequested(Intervals.NET.Factories.Range.OpenClosed<int>(121, 130));
     }
 
