@@ -42,7 +42,7 @@ public class UserFlowBenchmarks
         .ExpandByRatio(_domain, 1, 1);
 
     private Range<int> FullHitRange => InitialCacheRangeAfterRebalance
-        .ExpandByRatio(_domain, 0.2, 0.2); // 20% inside cached window
+        .ExpandByRatio(_domain, -0.2, -0.2); // 20% inside cached window
 
     private Range<int> FullMissRange => InitialCacheRangeAfterRebalance
         .Shift(_domain, InitialCacheRangeAfterRebalance.Span(_domain).Value * 3); // Shift far outside cached window

@@ -127,7 +127,7 @@ public class ScenarioBenchmarks
         // Create fresh caches for locality scenario
         var localitySnapshotOptions = new WindowCacheOptions(
             leftCacheSize: 1.0,
-            rightCacheSize: 9, // Aggressive prefetch for sequential access
+            rightCacheSize: 10, // Aggressive prefetch for sequential access
             UserCacheReadMode.Snapshot,
             leftThreshold: 0,
             rightThreshold: 0
@@ -141,10 +141,10 @@ public class ScenarioBenchmarks
 
         var localityCopyOnReadOptions = new WindowCacheOptions(
             leftCacheSize: 1.0,
-            rightCacheSize: 9, // Moderate prefetch for sequential access
+            rightCacheSize: 10, // Moderate prefetch for sequential access
             UserCacheReadMode.CopyOnRead,
-            leftThreshold: 0.2,
-            rightThreshold: 0.2
+            leftThreshold: 0,
+            rightThreshold: 0
         );
 
         _copyOnReadCache = new WindowCache<int, int, IntegerFixedStepDomain>(
