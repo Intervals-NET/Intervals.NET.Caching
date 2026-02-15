@@ -25,13 +25,13 @@ namespace SlidingWindowCache.Benchmarks.Benchmarks;
 [GroupBenchmarksBy(BenchmarkDotNet.Configs.BenchmarkLogicalGroupRule.ByCategory)]
 public class ScenarioBenchmarks
 {
-    private SynchronousDataSource _dataSource = default!;
-    private IntegerFixedStepDomain _domain = default!;
+    private SynchronousDataSource _dataSource = null!;
+    private IntegerFixedStepDomain _domain;
     private WindowCache<int, int, IntegerFixedStepDomain>? _snapshotCache;
     private WindowCache<int, int, IntegerFixedStepDomain>? _copyOnReadCache;
-    private WindowCacheOptions _snapshotOptions = default!;
-    private WindowCacheOptions _copyOnReadOptions = default!;
-    private List<Range<int>> _sequentialRanges = default!;
+    private WindowCacheOptions _snapshotOptions = null!;
+    private WindowCacheOptions _copyOnReadOptions = null!;
+    private List<Range<int>> _sequentialRanges = null!;
     private Range<int> _coldStartRange;
 
     /// <summary>
@@ -157,7 +157,7 @@ public class ScenarioBenchmarks
 
         var localityCopyOnReadOptions = new WindowCacheOptions(
             leftCacheSize: CacheCoefficientSize,
-            rightCacheSize: CacheCoefficientSize * 10, // Moderate prefetch for sequential access
+            rightCacheSize: CacheCoefficientSize * 10, // Aggressive prefetch for sequential access
             UserCacheReadMode.CopyOnRead,
             leftThreshold: 0,
             rightThreshold: 0

@@ -29,8 +29,8 @@ public class UserFlowBenchmarks
 {
     private WindowCache<int, int, IntegerFixedStepDomain>? _snapshotCache;
     private WindowCache<int, int, IntegerFixedStepDomain>? _copyOnReadCache;
-    private SynchronousDataSource _dataSource = default!;
-    private IntegerFixedStepDomain _domain = default!;
+    private SynchronousDataSource _dataSource = null!;
+    private IntegerFixedStepDomain _domain;
 
     /// <summary>
     /// Requested range size - varies from small (100) to very large (1,000,000) to test scaling behavior.

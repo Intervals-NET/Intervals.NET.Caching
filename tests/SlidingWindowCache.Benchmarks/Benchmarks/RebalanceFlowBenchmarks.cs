@@ -9,61 +9,131 @@ using SlidingWindowCache.Public.Configuration;
 namespace SlidingWindowCache.Benchmarks.Benchmarks;
 
 /// <summary>
-/// Rebalance/Maintenance Flow Benchmarks
-/// Measures ONLY window maintenance and rebalance operation costs.
-/// Uses zero-latency SynchronousDataSource to isolate cache mechanics from I/O.
+/// Rebalance Flow Benchmarks
+/// Behavior-driven benchmarking suite focused exclusively on rebalance mechanics and storage rematerialization cost.
 /// 
-/// EXECUTION FLOW: Trigger mutation → WaitForIdleAsync → Measure rebalance cost
+/// BENCHMARK PHILOSOPHY:
+/// This suite models system behavior through three orthogonal axes:
+/// ✔ RequestedRange Span Behavior (Fixed/Growing/Shrinking) - models requested range span dynamics
+/// ✔ Storage Strategy (Snapshot/CopyOnRead) - measures rematerialization tradeoffs
+/// ✔ Base RequestedRange Span Size (100/1000/10000) - tests scaling behavior
+/// 
+/// PERFORMANCE MODEL:
+/// Rebalance cost depends primarily on:
+/// ✔ Span stability/volatility (behavior axis)
+/// ✔ Buffer reuse feasibility (storage axis)
+/// ✔ Capacity growth patterns (size axis)
+/// 
+/// NOT on:
+/// ✖ Cache hit/miss classification (irrelevant for rebalance cost)
+/// ✖ DataSource performance (isolated via SynchronousDataSource)
+/// ✖ Decision logic (covered by tests, not benchmarked)
+/// 
+/// EXECUTION MODEL: Deterministic multi-request sequence → Measure cumulative rebalance cost
 /// 
 /// Methodology:
 /// - Fresh cache per iteration
-/// - SynchronousDataSource (zero latency) isolates cache mechanics
-/// - Trigger rebalance by moving outside thresholds
-/// - WaitForIdleAsync INSIDE benchmark methods (measuring rebalance)
-/// - Aggressive thresholds ensure rebalancing occurs
+/// - Zero-latency SynchronousDataSource isolates cache mechanics
+/// - Deterministic request sequence precomputed in IterationSetup (RequestsPerInvocation = 10)
+/// - Each request guarantees rebalance via range shift and aggressive thresholds
+/// - WaitForIdleAsync after EACH request (measuring rebalance completion)
+/// - Benchmark method contains ZERO workload logic, ZERO branching, ZERO allocations
+/// 
+/// Workload Generation:
+/// - ALL span calculations occur in BuildRequestSequence()
+/// - ALL branching occurs in BuildRequestSequence()
+/// - Benchmark method only iterates precomputed array and awaits results
+/// 
+/// EXPECTED BEHAVIOR:
+/// - Fixed RequestedRange Span: CopyOnRead optimal (buffer reuse), Snapshot consistent (always allocates)
+/// - Growing RequestedRange Span: CopyOnRead capacity growth penalty, Snapshot stable cost
+/// - Shrinking RequestedRange Span: Both strategies handle well, CopyOnRead may over-allocate
 /// </summary>
 [MemoryDiagnoser]
 [MarkdownExporter]
-[GroupBenchmarksBy(BenchmarkDotNet.Configs.BenchmarkLogicalGroupRule.ByCategory)]
 public class RebalanceFlowBenchmarks
 {
-    private WindowCache<int, int, IntegerFixedStepDomain>? _snapshotCache;
-    private WindowCache<int, int, IntegerFixedStepDomain>? _copyOnReadCache;
-    private SynchronousDataSource _dataSource = default!;
-    private IntegerFixedStepDomain _domain = default!;
+    /// <summary>
+    /// RequestedRange Span behavior model: Fixed (stable), Growing (increasing), Shrinking (decreasing)
+    /// </summary>
+    public enum SpanBehavior
+    {
+        Fixed,
+        Growing,
+        Shrinking
+    }
 
     /// <summary>
-    /// Requested range size - varies from small (100) to very large (1,000,000) to test rebalance scaling behavior.
+    /// Storage strategy: Snapshot (array-based) vs CopyOnRead (list-based)
+    /// </summary>
+    public enum StorageStrategy
+    {
+        Snapshot,
+        CopyOnRead
+    }
+
+    // Benchmark Parameters - 3 Orthogonal Axes
+
+    /// <summary>
+    /// RequestedRange Span behavior model determining how requested range span evolves across iterations
+    /// </summary>
+    [Params(SpanBehavior.Fixed, SpanBehavior.Growing, SpanBehavior.Shrinking)]
+    public SpanBehavior Behavior { get; set; }
+
+    /// <summary>
+    /// Storage strategy for cache rematerialization
+    /// </summary>
+    [Params(StorageStrategy.Snapshot, StorageStrategy.CopyOnRead)]
+    public StorageStrategy Strategy { get; set; }
+
+    /// <summary>
+    /// Base span size for requested ranges - tests scaling behavior from small to large data volumes
     /// </summary>
     [Params(100, 1_000, 10_000)]
-    public int RangeSpan { get; set; }
+    public int BaseSpanSize { get; set; }
+
+    // Configuration Constants
 
     /// <summary>
-    /// Cache coefficient size for left/right prefetch - varies from minimal (1) to aggressive (1,000).
-    /// Combined with RangeSpan, determines total materialized cache size during rebalance.
+    /// Cache coefficient for left/right prefetch - fixed to isolate span behavior effects
     /// </summary>
-    [Params(1, 10, 100)]
-    public int CacheCoefficientSize { get; set; }
+    private const int CacheCoefficientSize = 10;
 
-    private int InitialStart => 10000;
-    private int InitialEnd => InitialStart + RangeSpan;
+    /// <summary>
+    /// Growth factor per iteration for Growing RequestedRange span behavior
+    /// </summary>
+    private const int GrowthFactor = 100;
 
-    private Range<int> InitialCacheRange =>
-        Intervals.NET.Factories.Range.Closed<int>(InitialStart, InitialEnd);
+    /// <summary>
+    /// Shrink factor per iteration for Shrinking RequestedRange span behavior
+    /// </summary>
+    private const int ShrinkFactor = 100;
 
-    private Range<int> InitialCacheRangeAfterRebalance => InitialCacheRange
-        .ExpandByRatio(_domain, CacheCoefficientSize, CacheCoefficientSize);
+    /// <summary>
+    /// Initial range start position - arbitrary but consistent across all benchmarks
+    /// </summary>
+    private const int InitialStart = 10000;
 
-    private Range<int> PartialHitRange => InitialCacheRangeAfterRebalance
-        .Shift(_domain, InitialCacheRangeAfterRebalance.Span(_domain).Value / 2);
+    /// <summary>
+    /// Number of requests executed per benchmark invocation - deterministic workload size
+    /// </summary>
+    private const int RequestsPerInvocation = 10;
 
-    private Range<int> FullMissRange => InitialCacheRangeAfterRebalance
-        .Shift(_domain, InitialCacheRangeAfterRebalance.Span(_domain).Value * 3);
+    // Infrastructure
 
-    private Range<int> _partialHitRange;
-    private Range<int> _fullMissRange;
-    private WindowCacheOptions _snapshotOptions;
-    private WindowCacheOptions _copyOnReadOptions;
+    private WindowCache<int, int, IntegerFixedStepDomain>? _cache;
+    private SynchronousDataSource _dataSource = null!;
+    private IntegerFixedStepDomain _domain;
+    private WindowCacheOptions _options = null!;
+
+    // Deterministic Workload Storage
+
+    /// <summary>
+    /// Precomputed request sequence for current iteration - generated in IterationSetup.
+    /// Contains EXACTLY RequestsPerInvocation ranges with all span calculations completed.
+    /// Benchmark methods iterate through this array without any workload logic.
+    /// </summary>
+    private Range<int>[] _requestSequence = null!;
 
     [GlobalSetup]
     public void GlobalSetup()
@@ -71,24 +141,20 @@ public class RebalanceFlowBenchmarks
         _domain = new IntegerFixedStepDomain();
         _dataSource = new SynchronousDataSource(_domain);
 
-        // Pre-calculate rebalance triggering ranges
-        _partialHitRange = PartialHitRange;
+        // Configure cache with aggressive thresholds to guarantee rebalancing
+        // leftThreshold=0, rightThreshold=0 means any request outside current window triggers rebalance
+        var readMode = Strategy switch
+        {
+            StorageStrategy.Snapshot => UserCacheReadMode.Snapshot,
+            StorageStrategy.CopyOnRead => UserCacheReadMode.CopyOnRead,
+            _ => throw new ArgumentOutOfRangeException(nameof(Strategy))
+        };
 
-        _fullMissRange = FullMissRange;
-
-        _snapshotOptions = new WindowCacheOptions(
+        _options = new WindowCacheOptions(
             leftCacheSize: CacheCoefficientSize,
             rightCacheSize: CacheCoefficientSize,
-            UserCacheReadMode.Snapshot,
-            leftThreshold: 0,
-            rightThreshold: 0
-        );
-
-        _copyOnReadOptions = new WindowCacheOptions(
-            leftCacheSize: CacheCoefficientSize,
-            rightCacheSize: CacheCoefficientSize,
-            UserCacheReadMode.CopyOnRead,
-            leftThreshold: 0,
+            readMode: readMode,
+            leftThreshold: 1, // Set to 1 (100%) to ensure any request even the same range as previous triggers rebalance, isolating rebalance cost
             rightThreshold: 0
         );
     }
@@ -96,81 +162,95 @@ public class RebalanceFlowBenchmarks
     [IterationSetup]
     public void IterationSetup()
     {
-        _snapshotCache = new WindowCache<int, int, IntegerFixedStepDomain>(
+        // Create fresh cache for this iteration
+        _cache = new WindowCache<int, int, IntegerFixedStepDomain>(
             _dataSource,
             _domain,
-            _snapshotOptions
+            _options
         );
 
-        _copyOnReadCache = new WindowCache<int, int, IntegerFixedStepDomain>(
-            _dataSource,
-            _domain,
-            _copyOnReadOptions
-        );
+        // Compute initial range for priming the cache
+        var initialRange = Intervals.NET.Factories.Range.Closed<int>(InitialStart, InitialStart + BaseSpanSize - 1);
 
-        // Prime both caches with initial window
-        var initialRange = Intervals.NET.Factories.Range.Closed<int>(InitialStart, InitialEnd);
-        _snapshotCache.GetDataAsync(initialRange, CancellationToken.None).GetAwaiter().GetResult();
-        _copyOnReadCache.GetDataAsync(initialRange, CancellationToken.None).GetAwaiter().GetResult();
+        // Prime cache with initial window
+        _cache.GetDataAsync(initialRange, CancellationToken.None).GetAwaiter().GetResult();
+        _cache.WaitForIdleAsync().GetAwaiter().GetResult();
 
-        // Wait for initial rebalancing to complete
-        _snapshotCache.WaitForIdleAsync().GetAwaiter().GetResult();
-        _copyOnReadCache.WaitForIdleAsync().GetAwaiter().GetResult();
+        // Build deterministic request sequence with all workload logic
+        _requestSequence = BuildRequestSequence(initialRange);
+    }
+
+    /// <summary>
+    /// Builds a deterministic request sequence based on the configured span behavior.
+    /// This method contains ALL workload generation logic, span calculations, and branching.
+    /// The benchmark method will execute this precomputed sequence with zero overhead.
+    /// </summary>
+    /// <param name="initialRange">The initial primed range used to seed the sequence</param>
+    /// <returns>Array of EXACTLY RequestsPerInvocation ranges, precomputed and ready to execute</returns>
+    private Range<int>[] BuildRequestSequence(Range<int> initialRange)
+    {
+        var sequence = new Range<int>[RequestsPerInvocation];
+
+        for (var i = 0; i < RequestsPerInvocation; i++)
+        {
+            Range<int> requestRange;
+
+            switch (Behavior)
+            {
+                case SpanBehavior.Fixed:
+                    // Fixed: Span remains constant, position shifts by +1 each request
+                    requestRange = initialRange.Shift(_domain, i + 1);
+                    break;
+
+                case SpanBehavior.Growing:
+                    // Growing: Span increases deterministically, position shifts slightly
+                    var spanGrow = i * GrowthFactor;
+                    requestRange = initialRange.Shift(_domain, i + 1).Expand(_domain, 0, spanGrow);
+                    break;
+
+                case SpanBehavior.Shrinking:
+                    // Shrinking: Span decreases deterministically, respecting minimum
+                    var spanShrink = i * ShrinkFactor;
+                    var bigInitialRange = initialRange.Expand(_domain, 0, RequestsPerInvocation * ShrinkFactor); // Ensure we have room to shrink
+                    requestRange = bigInitialRange.Shift(_domain, i + 1).Expand(_domain, 0, -spanShrink);
+                    break;
+
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(Behavior), Behavior, "Unsupported span behavior");
+            }
+
+            sequence[i] = requestRange;
+        }
+
+        return sequence;
     }
 
     [IterationCleanup]
     public void IterationCleanup()
     {
-        // Final stabilization before next iteration
-        _snapshotCache?.WaitForIdleAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
-        _copyOnReadCache?.WaitForIdleAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+        // Ensure cache is idle before next iteration
+        _cache?.WaitForIdleAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
     }
 
-    [Benchmark(Baseline = true)]
-    [BenchmarkCategory("PartialHit")]
-    public async Task Rebalance_AfterPartialHit_Snapshot()
-    {
-        // Trigger rebalance with partial overlap [1500, 2500] vs cached [1000, 2000]
-        await _snapshotCache!.GetDataAsync(_partialHitRange, CancellationToken.None);
-
-        // Explicitly measure rebalance cycle completion
-        // This is the cost center we're measuring
-        await _snapshotCache.WaitForIdleAsync(timeout: TimeSpan.FromSeconds(10));
-    }
-
+    /// <summary>
+    /// Measures rebalance rematerialization cost for the configured span behavior and storage strategy.
+    /// Executes a deterministic sequence of requests, each followed by rebalance completion.
+    /// This benchmark measures ONLY the rebalance path - decision logic is excluded.
+    /// Contains ZERO workload logic, ZERO branching, ZERO span calculations.
+    /// </summary>
     [Benchmark]
-    [BenchmarkCategory("PartialHit")]
-    public async Task Rebalance_AfterPartialHit_CopyOnRead()
+    public async Task Rebalance()
     {
-        // Trigger rebalance with partial overlap [1500, 2500] vs cached [1000, 2000]
-        await _copyOnReadCache!.GetDataAsync(_partialHitRange, CancellationToken.None);
-
-        // Explicitly measure rebalance cycle completion
-        // This is the cost center we're measuring
-        await _copyOnReadCache.WaitForIdleAsync(timeout: TimeSpan.FromSeconds(10));
-    }
-
-    [Benchmark]
-    [BenchmarkCategory("FullMiss")]
-    public async Task Rebalance_AfterFullMiss_Snapshot()
-    {
-        // Trigger rebalance with no overlap [5000, 6000] vs cached [1000, 2000]
-        await _snapshotCache!.GetDataAsync(_fullMissRange, CancellationToken.None);
-
-        // Explicitly measure rebalance cycle completion
-        // Full cache replacement cost
-        await _snapshotCache.WaitForIdleAsync(timeout: TimeSpan.FromSeconds(10));
-    }
-
-    [Benchmark]
-    [BenchmarkCategory("FullMiss")]
-    public async Task Rebalance_AfterFullMiss_CopyOnRead()
-    {
-        // Trigger rebalance with no overlap [5000, 6000] vs cached [1000, 2000]
-        await _copyOnReadCache!.GetDataAsync(_fullMissRange, CancellationToken.None);
-
-        // Explicitly measure rebalance cycle completion
-        // Full cache replacement cost
-        await _copyOnReadCache.WaitForIdleAsync(timeout: TimeSpan.FromSeconds(10));
+        // Execute precomputed request sequence
+        // Each request triggers rebalance (guaranteed by leftThreshold=1 and range shift)
+        // Measure complete rebalance cycle for each request
+        foreach (var requestRange in _requestSequence)
+        {
+            await _cache!.GetDataAsync(requestRange, CancellationToken.None);
+            
+            // Explicitly measure rebalance cycle completion
+            // This captures the rematerialization cost we're benchmarking
+            await _cache.WaitForIdleAsync(timeout: TimeSpan.FromSeconds(10));
+        }
     }
 }
