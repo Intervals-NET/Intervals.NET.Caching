@@ -52,7 +52,7 @@ public class RebalanceFlowBenchmarks
         Intervals.NET.Factories.Range.Closed<int>(InitialStart, InitialEnd);
 
     private Range<int> InitialCacheRangeAfterRebalance => InitialCacheRange
-        .ExpandByRatio(_domain, 1, 1);
+        .ExpandByRatio(_domain, CacheCoefficientSize, CacheCoefficientSize);
 
     private Range<int> PartialHitRange => InitialCacheRangeAfterRebalance
         .Shift(_domain, InitialCacheRangeAfterRebalance.Span(_domain).Value / 2);
