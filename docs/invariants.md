@@ -173,8 +173,9 @@ deterministic, race-free synchronization without polling or timing dependencies.
    - User Path **NEVER** writes to `LastRequested`
    - User Path **NEVER** writes to `NoRebalanceRange`
    - All cache mutations are performed exclusively by Rebalance Execution (single-writer)
-- *Observable via*: DEBUG instrumentation counters (`CacheExpanded`, `CacheReplaced` remain 0 for User Path)
+- *Observable via*: Instrumentation counters (`CacheExpanded`, `CacheReplaced`) track when CacheDataExtensionService analyzes extension needs
 - *Test verifies*: User Path returns correct data without mutating cache; Rebalance Execution populates cache
+- *Note*: `CacheExpanded/Replaced` counters are incremented by shared service (`CacheDataExtensionService`) used by both paths during range analysis, not mutation. Tests verify User Path doesn't trigger these counters in specific scenarios where prior rebalance has already expanded cache sufficiently.
 
 **A.9** 🔵 **[Architectural]** Cache mutations are performed **exclusively by Rebalance Execution** (single-writer architecture).
 - *Enforced by*: Component encapsulation, internal setters on CacheState
@@ -352,7 +353,7 @@ deterministic, race-free synchronization without polling or timing dependencies.
 - *Architecture*: Can call `Rematerialize()` with any range
 
 **F.38** 🔵 **[Architectural]** Rebalance Execution requests data from `IDataSource` **only for missing subranges**.
-- *Enforced by*: `CacheDataFetcher.ExtendCacheAsync()` calculates missing ranges
+- *Enforced by*: `CacheDataExtensionService.ExtendCacheAsync()` calculates missing ranges
 - *Architecture*: Union logic preserves existing data
 
 **F.39** 🔵 **[Architectural]** Rebalance Execution **does not overwrite existing data** that intersects with `DesiredCacheRange`.
@@ -438,14 +439,3 @@ For conceptual invariants, the design rationale is explained.
 - **[Concurrency Model](concurrency-model.md)** - Single-consumer model and coordination
 - **[Scenario Model](scenario-model.md)** - Temporal behavior scenarios
 - **[Storage Strategies](storage-strategies.md)** - Staging buffer pattern and memory behavior
-
----
-
-**Document Version**: 2.1 (C.22/C.24 Clarification + C.22a Addition)  
-**Last Updated**: February 9, 2026  
-**Changes**: 
-- Clarified C.22 as convergence guarantee (best-effort), not absolute guarantee
-- Split C.24 into sub-invariants (C.24a-d) for clarity
-- Added C.22a documenting known race condition limitation with detailed explanation
-- Added cross-references from D.27, D.28, F.35 to C.24 sub-invariants
-- Updated total: 47 invariants (19 behavioral, 20 architectural, 8 conceptual)

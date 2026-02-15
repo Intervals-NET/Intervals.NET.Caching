@@ -1,4 +1,4 @@
-﻿~~~~# Sliding Window Cache - Complete Component Map
+﻿# Sliding Window Cache - Complete Component Map
 
 ## Document Purpose
 
@@ -95,7 +95,7 @@ This document provides a comprehensive map of all components in the Sliding Wind
     │   ├── owns → 🟩 ThresholdRebalancePolicy<TRange, TDomain>
     │   └── owns → 🟩 ProportionalRangePlanner<TRange, TDomain>
     ├── 🟦 RebalanceExecutor<TRange, TData, TDomain>
-    └── 🟦 CacheDataFetcher<TRange, TData, TDomain>
+    └── 🟦 CacheDataExtensionService<TRange, TData, TDomain>
         └── uses → 🟧 IDataSource<TRange, TData> (user-provided)
 ```
 
@@ -180,7 +180,7 @@ public interface IDataSource<TRangeType, TDataType>
 
 **Ownership**: User provides implementation
 
-**Used by**: CacheDataFetcher (calls to fetch external data)
+**Used by**: CacheDataExtensionService (calls to fetch external data)
 
 **Operations**: Read-only (fetches external data)
 
@@ -206,7 +206,7 @@ public record RangeChunk<TRangeType, TDataType>(Range<TRangeType> Range, IEnumer
 - `Range<TRangeType> Range` - The range covered by this chunk
 - `IEnumerable<TDataType> Data` - The data for this range
 
-**Ownership**: Created by IDataSource, consumed by CacheDataFetcher
+**Ownership**: Created by IDataSource, consumed by CacheDataExtensionService
 
 **Mutability**: Immutable
 
@@ -545,7 +545,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
 
 **Fields** (all readonly):
 - `CacheState<TRange, TData, TDomain> _state`
-- `CacheDataFetcher<TRange, TData, TDomain> _cacheFetcher`
+- `CacheDataExtensionService<TRange, TData, TDomain> _cacheExtensionService`
 - `IntentController<TRange, TData, TDomain> _intentManager`
 
 **Main Method**:
@@ -768,13 +768,11 @@ private async Task ExecutePipelineAsync(...)
 ```csharp
 public async Task WaitForIdleAsync(TimeSpan? timeout = null)
 {
-    // DEBUG builds: Observe-and-stabilize pattern
+    // Observe-and-stabilize pattern (all builds)
     // 1. Volatile.Read(_idleTask) → observe current Task
     // 2. await observedTask → wait for completion
     // 3. Re-check if _idleTask changed → detect new rebalance
     // 4. Loop until Task reference stabilizes
-    
-    // RELEASE builds: returns Task.CompletedTask immediately (zero overhead)
 }
 ```
 
@@ -1033,7 +1031,7 @@ internal sealed class RebalanceExecutor<TRange, TData, TDomain>
 
 **Fields** (all readonly):
 - `CacheState<TRange, TData, TDomain> _state`
-- `CacheDataFetcher<TRange, TData, TDomain> _cacheFetcher`
+- `CacheDataExtensionService<TRange, TData, TDomain> _cacheExtensionService`
 - `ThresholdRebalancePolicy<TRange, TDomain> _rebalancePolicy`
 
 **Key Method**:
@@ -1107,12 +1105,12 @@ public async Task ExecuteAsync(Range<TRange> desiredRange, CancellationToken can
 
 ---
 
-#### 🟦 CacheDataFetcher<TRange, TData, TDomain>
+#### 🟦 CacheDataExtensionService<TRange, TData, TDomain>
 ```csharp
-internal sealed class CacheDataFetcher<TRange, TData, TDomain>
+internal sealed class CacheDataExtensionService<TRange, TData, TDomain>
 ```
 
-**File**: `src/SlidingWindowCache/CacheRebalance/Executor/CacheDataFetcher.cs`
+**File**: `src/SlidingWindowCache/Core/Rebalance/Execution/CacheDataExtensionService.cs`
 
 **Type**: Class (sealed)
 
@@ -1198,7 +1196,7 @@ public WindowCache(
     
     var rebalancePolicy = new ThresholdRebalancePolicy<TRange, TDomain>(options, domain);
     var rangePlanner = new ProportionalRangePlanner<TRange, TDomain>(options, domain);
-    var cacheFetcher = new CacheDataFetcher<TRange, TData, TDomain>(dataSource, domain);
+    var cacheFetcher = new CacheDataExtensionService<TRange, TData, TDomain>(dataSource, domain, cacheDiagnostics);
     
     var decisionEngine = new RebalanceDecisionEngine<TRange, TDomain>(rebalancePolicy, rangePlanner);
     var executor = new RebalanceExecutor<TRange, TData, TDomain>(state, cacheFetcher, rebalancePolicy);
@@ -1270,7 +1268,7 @@ public Task WaitForIdleAsync(TimeSpan? timeout = null)
 │  Constructor creates and wires:                                     │
 │   ├─ 🟦 CacheState ──────────────────────────┐ (shared mutable)   │
 │   ├─ 🟦 UserRequestHandler ──────────────────┼───┐                 │
-│   ├─ 🟦 CacheDataFetcher ────────────────────┼───┼───┐             │
+│   ├─ 🟦 CacheDataExtensionService ───────────┼───┼───┐             │
 │   ├─ 🟦 RebalanceIntentManager ──────────────┼───┼───┼───┐         │
 │   │   └─ 🟦 RebalanceScheduler ──────────────┼───┼───┼───┼───┐     │
 │   ├─ 🟦 RebalanceDecisionEngine ─────────────┼───┼───┼───┼───┼───┐ │
@@ -1406,7 +1404,7 @@ public Task WaitForIdleAsync(TimeSpan? timeout = null)
 └──────────────────────────────────────────────────────────────────────┼──┘
                                                                        │
 ┌──────────────────────────────────────────────────────────────────────▼──┐
-│  CacheDataFetcher  [Data Fetcher]                                       │
+│  CacheDataExtensionService  [Data Fetcher]                              │
 │  🟦 CLASS (sealed)                                                       │
 │                                                                          │
 │  ExtendCacheAsync(current, requested, ct):                              │
@@ -1517,7 +1515,7 @@ public Task WaitForIdleAsync(TimeSpan? timeout = null)
   2. After `ExtendCacheAsync()`, before trim
   3. Before `Rematerialize()` (prevent applying obsolete results)
 
-**CacheDataFetcher**:
+**CacheDataExtensionService**:
 - 👁️ Receives token from caller (UserRequestHandler or RebalanceExecutor)
 - 👁️ Passes token to `IDataSource.FetchAsync()` (cancellable I/O)
 
@@ -1559,7 +1557,7 @@ The Sliding Window Cache follows a **single consumer model** as documented in `d
 | **RebalanceScheduler**            | 🔄 **Background** | ThreadPool, async                      |
 | **RebalanceDecisionEngine**       | 🔄 **Background** | ThreadPool, pure logic                 |
 | **RebalanceExecutor**             | 🔄 **Background** | ThreadPool, async, I/O                 |
-| **CacheDataFetcher**              | Both ⚡🔄          | User Thread OR Background              |
+| **CacheDataExtensionService**     | Both ⚡🔄          | User Thread OR Background              |
 | **CacheState**                    | Both ⚡🔄          | Shared mutable (no locks!)             |
 | **Storage (Snapshot/CopyOnRead)** | Both ⚡🔄          | Owned by CacheState                    |
 
@@ -1641,18 +1639,18 @@ var sharedCache = new WindowCache<int, Data, IntDomain>(...);
 
 ### Reference Types (Classes)
 
-| Component               | Mutability                                   | Shared State | Ownership                | Lifetime       |
-|-------------------------|----------------------------------------------|--------------|--------------------------|----------------|
-| WindowCache             | Immutable (after ctor)                       | No           | User creates             | App lifetime   |
-| UserRequestHandler      | Immutable                                    | No           | WindowCache owns         | Cache lifetime |
-| CacheState              | **Mutable**                                  | **Yes** ⚠️   | WindowCache owns, shared | Cache lifetime |
-| IntentController        | Mutable (_currentIntentCts)                  | No           | WindowCache owns         | Cache lifetime |
-| RebalanceScheduler      | Immutable                                    | No           | IntentController owns    | Cache lifetime |
-| RebalanceDecisionEngine | Immutable                                    | No           | WindowCache owns         | Cache lifetime |
-| RebalanceExecutor       | Immutable                                    | No           | WindowCache owns         | Cache lifetime |
-| CacheDataFetcher        | Immutable                                    | No           | WindowCache owns         | Cache lifetime |
-| SnapshotReadStorage     | **Mutable** (_storage array)                 | No           | CacheState owns          | Cache lifetime |
-| CopyOnReadStorage       | **Mutable** (_activeStorage, _stagingBuffer) | No           | CacheState owns          | Cache lifetime |
+| Component                 | Mutability                                   | Shared State | Ownership                | Lifetime       |
+|---------------------------|----------------------------------------------|--------------|--------------------------|----------------|
+| WindowCache               | Immutable (after ctor)                       | No           | User creates             | App lifetime   |
+| UserRequestHandler        | Immutable                                    | No           | WindowCache owns         | Cache lifetime |
+| CacheState                | **Mutable**                                  | **Yes** ⚠️   | WindowCache owns, shared | Cache lifetime |
+| IntentController          | Mutable (_currentIntentCts)                  | No           | WindowCache owns         | Cache lifetime |
+| RebalanceScheduler        | Immutable                                    | No           | IntentController owns    | Cache lifetime |
+| RebalanceDecisionEngine   | Immutable                                    | No           | WindowCache owns         | Cache lifetime |
+| RebalanceExecutor         | Immutable                                    | No           | WindowCache owns         | Cache lifetime |
+| CacheDataExtensionService | Immutable                                    | No           | WindowCache owns         | Cache lifetime |
+| SnapshotReadStorage       | **Mutable** (_storage array)                 | No           | CacheState owns          | Cache lifetime |
+| CopyOnReadStorage         | **Mutable** (_activeStorage, _stagingBuffer) | No           | CacheState owns          | Cache lifetime |
 
 ### Value Types (Structs)
 
@@ -1688,7 +1686,7 @@ var sharedCache = new WindowCache<int, Data, IntDomain>(...);
 - RebalanceExecutor - Cache normalization, I/O
 
 **Both Contexts**:
-- CacheDataFetcher - Data fetching (called by both paths)
+- CacheDataExtensionService - Data fetching (called by both paths)
 - CacheState - Shared mutable state (accessed by both)
 
 ### By Responsibility
@@ -1713,7 +1711,7 @@ var sharedCache = new WindowCache<int, Data, IntDomain>(...);
 - RebalanceExecutor (normalize: expand + trim)
 
 **Data Fetching**:
-- CacheDataFetcher (internal)
+- CacheDataExtensionService (internal)
 - IDataSource (external, user-provided)
 
 ---
@@ -1772,9 +1770,3 @@ The Sliding Window Cache is composed of **19 components** working together to pr
 The architecture follows a **single consumer model** with **no traditional synchronization primitives**, relying instead on **CancellationToken** for coordination between the fast User Path and the async Rebalance Path.
 
 All components are designed with **clear ownership**, **explicit read/write patterns**, and **well-defined responsibilities**, making the system predictable, testable, and maintainable.
-
----
-
-**Document Version**: 1.0  
-**Last Updated**: February 8, 2026  
-**Status**: Complete

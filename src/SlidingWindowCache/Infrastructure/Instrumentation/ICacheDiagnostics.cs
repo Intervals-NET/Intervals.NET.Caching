@@ -20,18 +20,22 @@ public interface ICacheDiagnostics
     void UserRequestServed();
 
     /// <summary>
-    /// Records a cache expansion operation during partial cache hit scenarios.
-    /// Called when RequestedRange intersects CurrentCacheRange and missing segments are fetched and merged with existing cache data.
-    /// Indicates cache growth while maintaining contiguity (User Scenario U4).
+    /// Records when cache extension analysis determines that expansion is needed (intersection exists).
+    /// Called during range analysis in CacheDataExtensionService.CalculateMissingRanges when determining
+    /// which segments need to be fetched. This indicates the cache WILL BE expanded, not that mutation occurred.
+    /// Note: This is called by the shared CacheDataExtensionService used by both User Path and Rebalance Path.
+    /// The actual cache mutation (Rematerialize) only happens in Rebalance Execution.
     /// Location: CacheDataExtensionService.CalculateMissingRanges (when intersection exists)
     /// Related: Invariant 9a (Cache Contiguity Rule)
     /// </summary>
     void CacheExpanded();
 
     /// <summary>
-    /// Records a cache replacement operation during non-intersecting jump scenarios.
-    /// Called when RequestedRange does NOT intersect CurrentCacheRange, requiring full cache replacement to maintain contiguity.
-    /// Indicates cache reset to prevent logical gaps (User Scenario U5).
+    /// Records when cache extension analysis determines that full replacement is needed (no intersection).
+    /// Called during range analysis in CacheDataExtensionService.CalculateMissingRanges when determining
+    /// that RequestedRange does NOT intersect CurrentCacheRange. This indicates cache WILL BE replaced,
+    /// not that mutation occurred. The actual cache mutation (Rematerialize) only happens in Rebalance Execution.
+    /// Note: This is called by the shared CacheDataExtensionService used by both User Path and Rebalance Path.
     /// Location: CacheDataExtensionService.CalculateMissingRanges (when no intersection exists)
     /// Related: Invariant 9a (Cache Contiguity Rule - forbids gaps)
     /// </summary>

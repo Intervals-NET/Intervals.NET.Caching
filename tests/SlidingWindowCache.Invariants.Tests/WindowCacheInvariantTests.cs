@@ -9,7 +9,7 @@ using SlidingWindowCache.Public.Configuration;
 namespace SlidingWindowCache.Invariants.Tests;
 
 /// <summary>
-/// Comprehensive test suite verifying all 46 system invariants for WindowCache.
+/// Comprehensive test suite verifying all 47 system invariants for WindowCache.
 /// Each test references its corresponding invariant number and description.
 /// Tests use DEBUG instrumentation counters to verify behavioral properties.
 /// Uses Intervals.NET for proper range handling and inclusivity considerations.
@@ -675,7 +675,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
 
     // NOTE: Invariant F.38, F.39: Requests data from IDataSource only for missing subranges,
     // does not overwrite existing data
-    // Requires instrumentation of CacheDataFetcher or mock data source tracking
+    // Requires instrumentation of CacheDataExtensionService or mock data source tracking
 
     #endregion
 

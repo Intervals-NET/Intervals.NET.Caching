@@ -328,8 +328,17 @@ public static class TestHelpers
     }
 
     /// <summary>
-    /// Asserts that User Path did not mutate cache (single-writer architecture).
+    /// Asserts that User Path did not trigger cache extension analysis (single-writer architecture).
     /// </summary>
+    /// <remarks>
+    /// Note: CacheExpanded and CacheReplaced counters are incremented by the shared CacheDataExtensionService
+    /// during range analysis (when determining what data needs to be fetched). They track planning, not actual
+    /// cache mutations. This assertion verifies that User Path didn't call ExtendCacheAsync, which would
+    /// increment these counters. Actual cache mutations (via Rematerialize) only occur in Rebalance Execution.
+    /// 
+    /// In test scenarios, prior rebalance operations typically expand the cache enough that subsequent
+    /// User Path requests are full hits, avoiding calls to ExtendCacheAsync entirely.
+    /// </remarks>
     public static void AssertNoUserPathMutations(EventCounterCacheDiagnostics cacheDiagnostics)
     {
         Assert.Equal(0, cacheDiagnostics.CacheExpanded);

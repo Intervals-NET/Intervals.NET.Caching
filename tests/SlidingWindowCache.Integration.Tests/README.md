@@ -294,7 +294,7 @@ dotnet test --configuration Debug --verbosity normal
 ### Integration with Existing Tests
 
 The new tests complement the existing `SlidingWindowCache.Invariants.Tests` suite:
-- **Invariants.Tests**: Validate 46 system invariants using DEBUG instrumentation
+- **Invariants.Tests**: Validate 47 system invariants using instrumentation
 - **Integration.Tests**: Validate external contracts and robustness assumptions
 
 Together, these provide comprehensive coverage of:

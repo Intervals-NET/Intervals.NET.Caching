@@ -47,8 +47,9 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
 
     /// <summary>
     /// Tracks the latest scheduled rebalance background Task for deterministic idle synchronization.
-    /// Used by WaitForIdleAsync() to provide race-free testing infrastructure.
-    /// This field exists only in DEBUG builds and has zero RELEASE overhead.
+    /// Used by WaitForIdleAsync() to provide race-free infrastructure API for testing, graceful shutdown,
+    /// and health checks. This field exists in all builds to support the public WaitForIdleAsync() API.
+    /// Memory overhead: one Task reference per cache instance.
     /// </summary>
     private Task _idleTask = Task.CompletedTask;
 
@@ -125,7 +126,8 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
         // NOTE: Do NOT pass intentToken to Task.Run ^ - it should only be used inside the lambda
         // to ensure the try-catch properly handles all OperationCanceledExceptions
 
-        // Track the latest background task for deterministic idle synchronization (DEBUG-only)
+        // Track the latest background task for deterministic idle synchronization
+        // This supports the public WaitForIdleAsync() infrastructure API
         _idleTask = backgroundTask;
     }
 

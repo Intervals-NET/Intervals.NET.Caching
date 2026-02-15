@@ -12,11 +12,12 @@ Comprehensive unit test suite for the WindowCache library verifying system invar
 
 ## Implementation Details
 
-### 1. DEBUG-Only Instrumentation Infrastructure
-- **Location**: `src/SlidingWindowCache/Instrumentation/`
-- **Files Created**:
-  - `CacheInstrumentationCounters.cs` - Static thread-safe counters with `[Conditional("DEBUG")]` attributes
-  - Each counter property includes XML documentation linking to specific invariants
+### 1. Instrumentation Infrastructure
+- **Location**: `src/SlidingWindowCache/Infrastructure/Instrumentation/`
+- **Files**:
+  - `ICacheDiagnostics.cs` - Public interface for cache event tracking
+  - `EventCounterCacheDiagnostics.cs` - Thread-safe counter implementation
+  - Each counter includes XML documentation linking to specific invariants and usage locations
   
 - **Instrumented Components**:
   - `WindowCache.cs` - No direct instrumentation (facade)
@@ -27,8 +28,8 @@ Comprehensive unit test suite for the WindowCache library verifying system invar
 
 - **Counter Types** (with Invariant References):
   - `UserRequestsServed` - User requests completed
-  - `CacheExpanded` - **DEPRECATED** - No longer incremented (User Path is read-only)
-  - `CacheReplaced` - **DEPRECATED** - No longer incremented (User Path is read-only)
+  - `CacheExpanded` - Range analysis determined expansion needed (called by shared CacheDataExtensionService)
+  - `CacheReplaced` - Range analysis determined replacement needed (called by shared CacheDataExtensionService)
   - `RebalanceIntentPublished` - Rebalance intent published (every user request with delivered data)
   - `RebalanceIntentCancelled` - Rebalance intent cancelled (new request supersedes old)
   - `RebalanceExecutionStarted` - Rebalance execution began
@@ -37,7 +38,9 @@ Comprehensive unit test suite for the WindowCache library verifying system invar
   - `RebalanceSkippedNoRebalanceRange` - **Policy-based skip** (Invariant D.27) - Request within NoRebalanceRange threshold
   - `RebalanceSkippedSameRange` - **Optimization-based skip** (Invariant D.28) - DesiredRange == CurrentRange
 
-**Note**: `CacheExpanded` and `CacheReplaced` counters remain in code for compatibility but are never incremented under the new single-writer architecture.
+**Note**: `CacheExpanded` and `CacheReplaced` are incremented during range analysis by the shared `CacheDataExtensionService` 
+(used by both User Path and Rebalance Path) when determining what data needs to be fetched. They track analysis/planning, 
+not actual cache mutations. Actual mutations only occur in Rebalance Execution via `Rematerialize()`.
 
 ### 2. Deterministic Synchronization Infrastructure
 - **Location**: `tests/SlidingWindowCache.Invariants.Tests/TestInfrastructure/`
@@ -54,13 +57,13 @@ Comprehensive unit test suite for the WindowCache library verifying system invar
     - ✅ Reliable: Works under concurrent intent cancellation and rescheduling
 
 - **Implementation Details**:
-  - **RebalanceScheduler** tracks latest background Task in DEBUG builds (`_idleTask` field)
+  - **RebalanceScheduler** tracks latest background Task (`_idleTask` field) to support public WaitForIdleAsync() API
   - **WaitForIdleAsync()** implements observe-and-stabilize loop:
     1. Read current `_idleTask` via `Volatile.Read` (ensures visibility)
     2. Await the observed Task
     3. Re-check if `_idleTask` changed (new rebalance scheduled)
     4. Loop until Task reference stabilizes and completes
-  - **RELEASE builds**: `WaitForIdleAsync()` returns `Task.CompletedTask` immediately (zero overhead)
+  - This implementation exists in all builds to support the public infrastructure API for testing, graceful shutdown, and health checks
 
 - **Old Approach (Removed)**:
   - Counter-based polling with stability windows

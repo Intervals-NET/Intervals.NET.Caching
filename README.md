@@ -233,8 +233,13 @@ Console.WriteLine($"Rebalances completed: {diagnostics.RebalanceExecutionComplet
 - `UserRequestFullCacheHit` - Requests served entirely from cache
 - `UserRequestPartialCacheHit` - Requests requiring partial fetch from data source
 - `UserRequestFullCacheMiss` - Requests requiring complete fetch (cold start or jump)
-- `CacheExpanded` - Cache expansion operations (partial hit optimization)
-- `CacheReplaced` - Cache replacement operations (non-intersecting jump)
+- `CacheExpanded` - Range analysis determined expansion needed (called by shared service during planning)
+- `CacheReplaced` - Range analysis determined replacement needed (called by shared service during planning)
+
+**Note**: `CacheExpanded` and `CacheReplaced` are incremented during range analysis by `CacheDataExtensionService` 
+(used by both User Path and Rebalance Path) when determining what data needs to be fetched. They indicate that 
+cache extension/replacement will occur, not that the actual mutation (via `Rematerialize`) has happened. 
+Actual cache mutations only occur in Rebalance Execution (single-writer architecture).
 
 **Data Source Interaction:**
 - `DataSourceFetchSingleRange` - Single-range fetches from data source
