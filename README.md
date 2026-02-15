@@ -1,10 +1,36 @@
 # Sliding Window Cache
 
-**A read-only, range-based, sequential-optimized cache with background rebalancing and cancellation-aware prefetching.**
+**A read-only, range-based, sequential-optimized cac~~~~he with background rebalancing and cancellation-aware prefetching.**
 
 ---
 
-## Overview
+[![CI/CD](https://github.com/blaze6950/SlidingWindowCache/actions/workflows/slidingwindowcache.yml/badge.svg)](https://github.com/blaze6950/SlidingWindowCache/actions/workflows/slidingwindowcache.yml)
+[![NuGet](https://img.shields.io/nuget/v/SlidingWindowCache.svg)](https://www.nuget.org/packages/SlidingWindowCache/)
+[![NuGet Downloads](https://img.shields.io/nuget/dt/SlidingWindowCache.svg)](https://www.nuget.org/packages/SlidingWindowCache/)
+[![codecov](https://codecov.io/gh/blaze6950/SlidingWindowCache/graph/badge.svg?token=RFQBNX7MMD)](https://codecov.io/gh/blaze6950/SlidingWindowCache)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![.NET 8.0](https://img.shields.io/badge/.NET-8.0-blue.svg)](https://dotnet.microsoft.com/download/dotnet/8.0)
+
+---
+
+## 📑 Table of Contents
+
+- [Overview](#-overview)
+- [Sliding Window Cache Concept](#-sliding-window-cache-concept)
+- [Understanding the Sliding Window](#-understanding-the-sliding-window)
+- [Materialization for Fast Access](#-materialization-for-fast-access)
+- [Usage Example](#-usage-example)
+- [Configuration](#-configuration)
+- [Optional Diagnostics](#-optional-diagnostics)
+- [Documentation](#-documentation)
+- [Performance Considerations](#-performance-considerations)
+- [CI/CD & Package Information](#-cicd--package-information)
+- [Contributing & Feedback](#-contributing--feedback)
+- [License](#license)
+
+---
+
+## 📦 Overview
 
 The Sliding Window Cache is a high-performance caching library designed for scenarios where data is accessed in sequential or predictable patterns across ranges. It automatically prefetches and maintains a "window" of data around the most recently requested range, significantly reducing the need for repeated data source queries.
 
@@ -19,7 +45,7 @@ The Sliding Window Cache is a high-performance caching library designed for scen
 
 ---
 
-## Sliding Window Cache Concept
+## 🎯 Sliding Window Cache Concept
 
 Traditional caches work with individual keys. A sliding window cache, in contrast, operates on **continuous ranges** of data:
 
@@ -29,6 +55,7 @@ Traditional caches work with individual keys. A sliding window cache, in contras
 4. **Window automatically rebalances** when the user moves outside threshold boundaries
 
 This pattern is ideal for:
+
 - Time-series data (sensor readings, logs, metrics)
 - Paginated datasets with forward/backward navigation
 - Sequential data processing (video frames, audio samples)
@@ -36,7 +63,66 @@ This pattern is ideal for:
 
 ---
 
-## Materialization for Fast Access
+## 🔍 Understanding the Sliding Window
+
+### Visual: Requested Range vs. Cache Window
+
+When you request a range, the cache actually fetches and stores a larger window:
+
+```
+Requested Range (what user asks for):
+                         [======== USER REQUEST ========]
+
+Actual Cache Window (what cache stores):
+    [=== LEFT BUFFER ===][======== USER REQUEST ========][=== RIGHT BUFFER ===]
+     ← leftCacheSize      requestedRange size              rightCacheSize →
+```
+
+The **left** and **right buffers** are calculated as multiples of the requested range size using the `leftCacheSize` and `rightCacheSize` coefficients.
+
+### Visual: Rebalance Trigger
+
+Rebalancing occurs when a new request moves outside the threshold boundaries:
+
+```
+Current Cache Window:
+[========*===================== CACHE ======================*=======]
+         ↑                                                  ↑
+ Left Threshold (20%)                              Right Threshold (20%)
+
+Scenario 1: Request within thresholds → No rebalance
+[========*===================== CACHE ======================*=======]
+              [---- new request ----]  ✓ Served from cache
+
+Scenario 2: Request outside threshold → Rebalance triggered
+[========*===================== CACHE ======================*=======]
+                                          [---- new request ----]
+                                                     ↓
+                            🔄 Rebalance: Shift window right
+```
+
+### Visual: Configuration Impact
+
+How coefficients control the cache window size:
+
+```
+Example: User requests range of size 100
+
+leftCacheSize = 1.0, rightCacheSize = 2.0
+[==== 100 ====][======= 100 =======][============ 200 ============]
+ Left Buffer    Requested Range       Right Buffer
+ 
+Total Cache Window = 100 + 100 + 200 = 400 items
+
+leftThreshold = 0.2 (20% of 400 = 80 items)
+rightThreshold = 0.2 (20% of 400 = 80 items)
+```
+
+**Key insight:** Threshold percentages are calculated based on the **total cache window size**, not individual buffer sizes.
+
+---
+
+## 💾 Materialization for Fast Access
 
 ### Why Materialization?
 
@@ -108,7 +194,7 @@ The cache supports two materialization strategies, configured at creation time v
 
 ---
 
-## Usage Example
+## 🚀 Usage Example
 
 ```csharp
 using SlidingWindowCache;
@@ -147,16 +233,87 @@ foreach (var item in data.Span)
 
 ---
 
-## Configuration
+## ⚙️ Configuration
 
-See `WindowCacheOptions` for detailed configuration parameters:
-- **Left/Right Cache Coefficients**: Control how much extra data to prefetch
-- **Threshold Policies**: Define when rebalancing should occur
-- **Debounce Delay**: Prevent thrashing during rapid access pattern changes
+The `WindowCacheOptions` class provides fine-grained control over cache behavior. Understanding these parameters is essential for optimal performance.
+
+### Configuration Parameters
+
+#### Cache Size Coefficients
+
+**`leftCacheSize`** (double, default: 1.0)
+- **Definition**: Multiplier applied to the requested range size to determine the left buffer size
+- **Practical meaning**: How much data to prefetch *before* the requested range
+- **Example**: If user requests 100 items and `leftCacheSize = 1.5`, the cache prefetches 150 items to the left
+- **Typical values**: 0.5 to 2.0 (depending on backward navigation patterns)
+
+**`rightCacheSize`** (double, default: 2.0)
+- **Definition**: Multiplier applied to the requested range size to determine the right buffer size
+- **Practical meaning**: How much data to prefetch *after* the requested range
+- **Example**: If user requests 100 items and `rightCacheSize = 2.0`, the cache prefetches 200 items to the right
+- **Typical values**: 1.0 to 3.0 (higher for forward-scrolling scenarios)
+
+#### Threshold Policies
+
+**`leftThreshold`** (double, default: 0.2)
+- **Definition**: Percentage of the **total cache window size** that triggers rebalancing when crossed on the left
+- **Calculation**: `leftThreshold × (Left Buffer + Requested Range + Right Buffer)`
+- **Example**: With total window of 400 items and `leftThreshold = 0.2`, rebalance triggers when user moves within 80 items of the left edge
+- **Typical values**: 0.15 to 0.3 (lower = more aggressive rebalancing)
+
+**`rightThreshold`** (double, default: 0.2)
+- **Definition**: Percentage of the **total cache window size** that triggers rebalancing when crossed on the right
+- **Calculation**: `rightThreshold × (Left Buffer + Requested Range + Right Buffer)`
+- **Example**: With total window of 400 items and `rightThreshold = 0.2`, rebalance triggers when user moves within 80 items of the right edge
+- **Typical values**: 0.15 to 0.3 (lower = more aggressive rebalancing)
+
+**⚠️ Critical Understanding**: Thresholds are **NOT** calculated against individual buffer sizes. They represent a percentage of the **entire cache window** (left buffer + requested range + right buffer). See [Understanding the Sliding Window](#-understanding-the-sliding-window) for visual examples.
+
+#### Debouncing
+
+**`debounceDelay`** (TimeSpan, default: 50ms)
+- **Definition**: Minimum time delay before executing a rebalance operation after it's triggered
+- **Purpose**: Prevents cache thrashing when user rapidly changes access patterns
+- **Behavior**: If multiple rebalance requests occur within the debounce window, only the last one executes
+- **Typical values**: 20ms to 200ms (depending on data source latency)
+- **Trade-off**: Higher values reduce rebalance frequency but may delay cache optimization
+
+### Configuration Examples
+
+**Forward-heavy scrolling** (e.g., log viewer, video player):
+```csharp
+var options = new WindowCacheOptions(
+    leftCacheSize: 0.5,    // Minimal backward buffer
+    rightCacheSize: 3.0,   // Aggressive forward prefetching
+    leftThreshold: 0.25,
+    rightThreshold: 0.15   // Trigger rebalance earlier when moving forward
+);
+```
+
+**Bidirectional navigation** (e.g., paginated data grid):
+```csharp
+var options = new WindowCacheOptions(
+    leftCacheSize: 1.5,    // Balanced backward buffer
+    rightCacheSize: 1.5,   // Balanced forward buffer
+    leftThreshold: 0.2,
+    rightThreshold: 0.2
+);
+```
+
+**Aggressive prefetching with stability** (e.g., high-latency data source):
+```csharp
+var options = new WindowCacheOptions(
+    leftCacheSize: 2.0,
+    rightCacheSize: 3.0,
+    leftThreshold: 0.1,    // Rebalance early to maintain large buffers
+    rightThreshold: 0.1,
+    debounceDelay: TimeSpan.FromMilliseconds(100)  // Wait for access pattern to stabilize
+);
+```
 
 ---
 
-## Optional Diagnostics
+## 📊 Optional Diagnostics
 
 The cache supports optional diagnostics for monitoring behavior, measuring performance, and validating system invariants. This is useful for:
 - **Testing and validation**: Verify cache behavior meets expected patterns
@@ -221,59 +378,23 @@ var cache = new WindowCache<int, string, IntegerFixedStepDomain>(
 
 // Access diagnostic counters
 Console.WriteLine($"Full cache hits: {diagnostics.UserRequestFullCacheHit}");
-Console.WriteLine($"Partial cache hits: {diagnostics.UserRequestPartialCacheHit}");
-Console.WriteLine($"Full cache misses: {diagnostics.UserRequestFullCacheMiss}");
 Console.WriteLine($"Rebalances completed: {diagnostics.RebalanceExecutionCompleted}");
 ```
-
-### Available Metrics
-
-**User Path Metrics:**
-- `UserRequestServed` - Total requests completed
-- `UserRequestFullCacheHit` - Requests served entirely from cache
-- `UserRequestPartialCacheHit` - Requests requiring partial fetch from data source
-- `UserRequestFullCacheMiss` - Requests requiring complete fetch (cold start or jump)
-- `CacheExpanded` - Range analysis determined expansion needed (called by shared service during planning)
-- `CacheReplaced` - Range analysis determined replacement needed (called by shared service during planning)
-
-**Note**: `CacheExpanded` and `CacheReplaced` are incremented during range analysis by `CacheDataExtensionService` 
-(used by both User Path and Rebalance Path) when determining what data needs to be fetched. They indicate that 
-cache extension/replacement will occur, not that the actual mutation (via `Rematerialize`) has happened. 
-Actual cache mutations only occur in Rebalance Execution (single-writer architecture).
-
-**Data Source Interaction:**
-- `DataSourceFetchSingleRange` - Single-range fetches from data source
-- `DataSourceFetchMissingSegments` - Multi-segment fetches (gap filling)
-
-**Rebalance Lifecycle:**
-- `RebalanceIntentPublished` - Rebalance intents published by User Path
-- `RebalanceIntentCancelled` - Intents cancelled due to new user requests
-- `RebalanceExecutionStarted` - Rebalance executions started
-- `RebalanceExecutionCompleted` - Rebalance executions completed successfully
-- `RebalanceExecutionCancelled` - Rebalance executions cancelled mid-flight
-- `RebalanceExecutionFailed` - **⚠️ CRITICAL**: Rebalance execution failures (MUST be logged)
-- `RebalanceSkippedNoRebalanceRange` - Rebalances skipped due to threshold policy
-- `RebalanceSkippedSameRange` - Rebalances skipped due to same-range optimization
 
 ### Zero-Cost Abstraction
 
 If no diagnostics instance is provided (default), the cache uses `NoOpDiagnostics` - a zero-overhead implementation with empty method bodies that the JIT compiler can optimize away completely. This ensures diagnostics add zero performance overhead when not used.
 
-```csharp
-// No diagnostics - zero overhead
-var cache = new WindowCache<int, string, IntegerFixedStepDomain>(
-    dataSource: myDataSource,
-    domain: new IntegerFixedStepDomain(),
-    options: options
-    // cacheDiagnostics parameter omitted - uses NoOpDiagnostics
-);
-```
+**For complete metric descriptions, custom implementations, and advanced patterns, see [Diagnostics Guide](docs/diagnostics.md).**
 
 ---
 
-## Documentation
+## 📚 Documentation
 
 For detailed architectural documentation, see:
+
+### Mathematical Foundations
+- **[Intervals.NET](https://github.com/blaze6950/Intervals.NET)** - Robust interval and range handling library that underpins cache logic. See README and documentation for core concepts like `Range`, `Domain`, `RangeData`, and interval operations.
 
 ### Core Architecture
 
@@ -315,7 +436,7 @@ For detailed architectural documentation, see:
 
 ---
 
-## Performance Considerations
+## ⚡ Performance Considerations
 
 - **Snapshot mode**: O(1) reads, but O(n) rebalance with array allocation
 - **CopyOnRead mode**: O(n) reads (copy cost), but cheaper rebalance operations
@@ -325,7 +446,7 @@ For detailed architectural documentation, see:
 
 ---
 
-## CI/CD & Package Information
+## 🔧 CI/CD & Package Information
 
 ### Continuous Integration
 
@@ -341,8 +462,6 @@ This project uses GitHub Actions for automated testing and deployment:
   - Packages library with symbols and source link
   - Publishes to NuGet.org with skip-duplicate
   - Stores package artifacts in workflow runs
-
-See [.github/workflows/README.md](.github/workflows/README.md) for detailed workflow documentation.
 
 ### WebAssembly Support
 
@@ -376,6 +495,29 @@ Install-Package SlidingWindowCache
 - Intervals.NET.Domain.Default (>= 0.0.2)
 - Intervals.NET.Domain.Extensions (>= 0.0.3)
 - .NET 8.0 or higher
+
+---
+
+## 🤝 Contributing & Feedback
+
+This project is a **personal R&D and engineering exploration** focused on cache design patterns, concurrent systems architecture, and performance optimization. While it's primarily a research endeavor, feedback and community input are highly valued and welcomed.
+
+### We Welcome
+
+- **Bug reports** - Found an issue? Please open a GitHub issue with reproduction steps
+- **Feature suggestions** - Have ideas for improvements? Start a discussion or open an issue
+- **Performance insights** - Benchmarked the cache in your scenario? Share your findings
+- **Architecture feedback** - Thoughts on the design patterns or implementation? Let's discuss
+- **Documentation improvements** - Found something unclear? Contributions to docs are appreciated
+- **Positive feedback** - If the library is useful to you, that's great to know!
+
+### How to Contribute
+
+- **Issues**: Use [GitHub Issues](https://github.com/blaze6950/SlidingWindowCache/issues) for bugs, feature requests, or questions
+- **Discussions**: Use [GitHub Discussions](https://github.com/blaze6950/SlidingWindowCache/discussions) for broader topics, ideas, or design conversations
+- **Pull Requests**: Code contributions are welcome, but please open an issue first to discuss significant changes
+
+This project benefits from community feedback while maintaining a focused research direction. All constructive input helps improve the library's design, implementation, and documentation.
 
 ---
 
