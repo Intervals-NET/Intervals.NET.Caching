@@ -277,6 +277,35 @@ This composition leverages the strengths of both strategies:
 *Returns lazy enumerable  
 **When capacity is sufficient
 
+### Measured Benchmark Results
+
+Real-world measurements from `RebalanceFlowBenchmarks` demonstrate the allocation tradeoffs:
+
+**Fixed Span Behavior (BaseSpanSize=100, 10 rebalance operations):**
+- Snapshot: ~224KB allocated
+- CopyOnRead: ~92KB allocated
+- **CopyOnRead advantage: 2.4x lower allocation**
+
+**Fixed Span Behavior (BaseSpanSize=10,000, 10 rebalance operations):**
+- Snapshot: ~16.5MB allocated (with Gen2 GC pressure)
+- CopyOnRead: ~2.5MB allocated
+- **CopyOnRead advantage: 6.6x lower allocation, reduced LOH pressure**
+
+**Growing Span Behavior (BaseSpanSize=100, span increases 100 per iteration):**
+- Snapshot: ~967KB allocated
+- CopyOnRead: ~560KB allocated
+- **CopyOnRead maintains 1.7x advantage even under dynamic growth**
+
+**Key Observations:**
+1. **Consistent allocation advantage**: CopyOnRead shows 2-6x lower allocations across all scenarios
+2. **Baseline execution time**: ~1.05-1.07s (dominated by 1s total SynchronousDataSource delay)
+3. **LOH impact**: Snapshot mode triggers Gen2 collections at BaseSpanSize=10,000
+4. **Buffer reuse**: CopyOnRead amortizes capacity growth, reducing steady-state allocations
+
+These results validate the design philosophy: CopyOnRead trades per-read allocation cost for dramatically reduced rematerialization overhead.
+
+For complete benchmark details, see [Benchmark Suite README](../benchmarks/SlidingWindowCache.Benchmarks/README.md).
+
 ---
 
 ## Implementation Details: Staging Buffer Pattern

@@ -34,27 +34,44 @@ SlidingWindowCache has **two independent cost centers**:
 
 ## Parameterization Strategy
 
-All benchmarks are **parameterized** to measure scaling behavior across different workload characteristics:
+Benchmarks are **parameterized** to measure scaling behavior across different workload characteristics. The parameter strategy differs by benchmark suite to target specific performance aspects:
 
-### Parameters
+### User Flow & Scenario Benchmarks Parameters
+
+These benchmarks use a 2-axis parameter matrix to explore cache sizing tradeoffs:
 
 1. **`RangeSpan`** - Requested range size
-   - Values: `[100, 1_000, 10_000, 100_000, 1_000_000]`
+   - Values: `[100, 1_000, 10_000]`
    - Purpose: Test how storage strategies scale with data volume
-   - Critical thresholds:
-     - **85KB (~21,000 integers)**: Large Object Heap (LOH) boundary
-     - **100,000+ elements**: Memory pressure scenarios
+   - Range: Small to large data volumes
 
 2. **`CacheCoefficientSize`** - Left/right prefetch multipliers
-   - Values: `[1, 10, 100, 1_000]`
+   - Values: `[1, 10, 100]`
    - Purpose: Test rebalance cost vs cache size tradeoff
    - Total cache size = `RangeSpan × (1 + leftCoeff + rightCoeff)`
 
-### Parameter Matrix
+**Parameter Matrix**: 3 range sizes × 3 cache coefficients = **9 parameter combinations per benchmark method**
 
-- **5 range sizes** × **4 cache coefficients** = **20 parameter combinations**
-- Each benchmark method runs across all 20 combinations
-- Results grouped by category for easier comparison
+### Rebalance Flow Benchmarks Parameters
+
+These benchmarks use a 3-axis orthogonal design to isolate rebalance behavior:
+
+1. **`Behavior`** - Range span evolution pattern
+   - Values: `[Fixed, Growing, Shrinking]`
+   - Purpose: Models how requested range span changes over time
+   - Fixed: Constant span, position shifts
+   - Growing: Span increases each iteration
+   - Shrinking: Span decreases each iteration
+
+2. **`Strategy`** - Storage rematerialization approach
+   - Values: `[Snapshot, CopyOnRead]`
+   - Purpose: Compare array-based vs list-based storage under different dynamics
+
+3. **`BaseSpanSize`** - Initial requested range size
+   - Values: `[100, 1_000, 10_000]`
+   - Purpose: Test scaling behavior from small to large data volumes
+
+**Parameter Matrix**: 3 behaviors × 2 strategies × 3 sizes = **18 parameter combinations**
 
 ### Expected Scaling Insights
 
@@ -62,48 +79,48 @@ All benchmarks are **parameterized** to measure scaling behavior across differen
 - ✅ **Advantage at small-to-medium sizes** (RangeSpan < 10,000)
   - Zero-allocation reads dominate
   - Rebalance cost acceptable
-- ⚠️ **LOH pressure at large sizes** (RangeSpan > 21,000)
+- ⚠️ **LOH pressure at large sizes** (RangeSpan ≥ 10,000)
   - Array allocations go to LOH (no compaction)
-  - GC pressure increases
-- ❌ **Disadvantage at very large sizes** (RangeSpan > 100,000)
-  - Rebalance always allocates multi-MB arrays
-  - Memory spikes during rebalance
+  - GC pressure increases with Gen2 collections visible
+- 📊 **Observed**: ~224KB allocation for Fixed/Snapshot at BaseSpanSize=100 vs ~92KB for CopyOnRead
 
 **CopyOnRead Mode:**
 - ❌ **Disadvantage at small sizes** (RangeSpan < 1,000)
   - Per-read allocation overhead visible
   - List overhead not amortized
-- ✅ **Competitive at medium sizes** (RangeSpan 10,000-100,000)
+- ✅ **Competitive at medium-to-large sizes** (RangeSpan ≥ 1,000)
   - List growth amortizes allocation cost
   - Reduced LOH pressure
-- ✅ **Advantage at very large sizes** (RangeSpan > 100,000)
-  - Incremental list operations cheaper than full array allocation
-  - Stable memory usage
-
-**Cache Coefficient Impact:**
-- **Coefficient 1-10**: Minimal difference between modes
-- **Coefficient 100-1000**: Rebalance cost dominates
-  - CopyOnRead advantage becomes significant
-  - Snapshot mode shows memory spikes
+- ✅ **Consistent allocation advantage**
+  - 2-3x lower allocations across most scenarios
+  - Buffer reuse shows in steady-state operations
+- 📊 **Observed**: Allocation differences scale with BaseSpanSize (e.g., ~2.5MB vs ~16MB at BaseSpanSize=10,000)
 
 ### Interpretation Guide
 
 When analyzing results, look for:
 
-1. **Crossover points**: Where CopyOnRead becomes faster than Snapshot
-   - Expected around RangeSpan=10,000-100,000 depending on coefficient
-   
-2. **Allocation patterns**: 
+1. **Allocation patterns**: 
    - Snapshot: Zero on read, large on rebalance
    - CopyOnRead: Constant on read, incremental on rebalance
+   - **Actual measurements show 2-3x allocation reduction for CopyOnRead**
 
-3. **Memory usage trends**:
-   - Watch for Gen2 collections (LOH pressure indicator)
+2. **Memory usage trends**:
+   - Watch for Gen2 collections (LOH pressure indicator at BaseSpanSize=10,000)
    - Compare total allocated bytes across modes
+   - CopyOnRead consistently shows lower memory footprint
 
-4. **Latency stability**:
-   - Snapshot should show consistent read latency
-   - CopyOnRead should show linear growth with RangeSpan
+3. **Execution time patterns**:
+   - **Rebalance benchmarks cluster around ~1 second baseline** across all parameters
+   - This isolation reveals pure rebalance cost without I/O variance
+   - User flow benchmarks show microsecond-level latencies for cache hits
+   - Cold start scenarios show ~97-98ms for initial population
+
+4. **Behavior-driven insights (RebalanceFlowBenchmarks)**:
+   - Fixed span: Predictable, stable costs
+   - Growing span: Storage strategy differences become visible
+   - Shrinking span: Both strategies handle gracefully
+   - CopyOnRead shows more stable allocation patterns across behaviors
 
 ---
 
@@ -142,7 +159,9 @@ Benchmarks are organized by **execution flow** to clearly separate user-facing c
 
 **Goal**: Measure ONLY user-facing request latency. Rebalance/background activity is EXCLUDED from measurements.
 
-**Parameters**: `RangeSpan` × `CacheCoefficientSize` (20 combinations)
+**Parameters**: `RangeSpan` × `CacheCoefficientSize` = **9 combinations**
+- RangeSpan: `[100, 1_000, 10_000]`
+- CacheCoefficientSize: `[1, 10, 100]`
 
 **Contract**:
 - Benchmark methods measure ONLY `GetDataAsync` cost
@@ -164,44 +183,57 @@ Benchmarks are organized by **execution flow** to clearly separate user-facing c
 | **FullMiss** | `User_FullMiss_CopyOnRead` | Full cache miss (CopyOnRead) |
 
 **Expected Results**:
-- Full hit: Snapshot ~0 allocations, CopyOnRead allocates proportional to RangeSpan
+- Full hit: Snapshot ~25-30µs (minimal allocation), CopyOnRead scales with cache size
 - Partial hit: Both modes serve request immediately, rebalance deferred to cleanup
 - Full miss: Request served from data source, rebalance deferred to cleanup
-- **Scaling**: Snapshot advantage increases with RangeSpan for full hits
+- **Scaling**: CopyOnRead allocation grows linearly with `CacheCoefficientSize`
 
 ---
 
-### ⚙️ Rebalance/Maintenance Flow Benchmarks
+### ⚙️ Rebalance Flow Benchmarks
 
 **File**: `RebalanceFlowBenchmarks.cs`
 
-**Goal**: Measure ONLY window maintenance and rebalance operation costs, isolated from I/O latency.
+**Goal**: Measure rebalance mechanics and storage rematerialization cost through behavior-driven modeling. This suite isolates how storage strategies handle different range span evolution patterns.
 
-**Parameters**: `RangeSpan` × `CacheCoefficientSize` (20 combinations)
+**Philosophy**: Models system behavior through three orthogonal axes:
+- ✔ **Span Behavior** (Fixed/Growing/Shrinking) - How requested range span evolves
+- ✔ **Storage Strategy** (Snapshot/CopyOnRead) - Rematerialization approach
+- ✔ **Base Span Size** (100/1,000/10,000) - Scaling behavior
+
+**Parameters**: `Behavior` × `Strategy` × `BaseSpanSize` = **18 combinations**
+- Behavior: `[Fixed, Growing, Shrinking]`
+- Strategy: `[Snapshot, CopyOnRead]`
+- BaseSpanSize: `[100, 1_000, 10_000]`
 
 **Contract**:
-- Uses `SynchronousDataSource` (zero latency) to isolate cache mechanics
-- `WaitForIdleAsync` INSIDE benchmark methods (measuring rebalance)
-- Trigger mutation → explicitly wait for stabilization
-- Aggressive thresholds ensure rebalancing occurs
+- Uses `SynchronousDataSource` (zero latency) to isolate cache mechanics from I/O
+- `WaitForIdleAsync` INSIDE benchmark methods (measuring rebalance completion)
+- Deterministic request sequence generated in `IterationSetup`
+- Each request triggers rebalance via aggressive thresholds
+- Executes 10 requests per invocation, measuring cumulative rebalance cost
 
-**Benchmark Methods** (grouped by category):
+**Benchmark Method**:
 
-| Category | Method | Purpose |
-|----------|--------|---------|
-| **PartialHit** | `Rebalance_AfterPartialHit_Snapshot` | Baseline: Rebalance cost after partial hit (Snapshot) |
-| **PartialHit** | `Rebalance_AfterPartialHit_CopyOnRead` | Rebalance cost after partial hit (CopyOnRead) |
-| **FullMiss** | `Rebalance_AfterFullMiss_Snapshot` | Rebalance cost after full miss (Snapshot) |
-| **FullMiss** | `Rebalance_AfterFullMiss_CopyOnRead` | Rebalance cost after full miss (CopyOnRead) |
+| Method | Purpose |
+|--------|---------|
+| `Rebalance` | Measures complete rebalance cycle cost for the configured span behavior and storage strategy |
+
+**Span Behaviors Explained**:
+- **Fixed**: Span remains constant, position shifts by +1 each request (models stable sliding window)
+- **Growing**: Span increases by 100 elements per request (models expanding data requirements)
+- **Shrinking**: Span decreases by 100 elements per request (models contracting data requirements)
 
 **Expected Results**:
-- Snapshot: Higher rebalance cost (full array allocation)
-  - **Scaling**: Cost increases linearly with (RangeSpan × CacheCoefficientSize)
-  - **LOH impact**: Significant slowdown above RangeSpan=21,000
-- CopyOnRead: Lower rebalance cost (incremental list operations)
-  - **Scaling**: Amortized cost, plateaus as capacity stabilizes
-  - **Memory**: More predictable, less GC pressure
-- **Crossover point**: CopyOnRead becomes faster around RangeSpan=10,000+
+- **Execution time**: Clusters around ~1.05-1.07 seconds across all parameters
+  - Baseline dominated by 10 × 100ms `SynchronousDataSource` delay (1 second)
+  - Pure rebalance overhead is ~50-70ms cumulative
+- **Allocation patterns**:
+  - Fixed/Snapshot: ~224KB (BaseSpanSize=100) → ~16MB (BaseSpanSize=10,000)
+  - Fixed/CopyOnRead: ~92KB (BaseSpanSize=100) → ~2.5MB (BaseSpanSize=10,000)
+  - **CopyOnRead shows 2-3x allocation reduction** through buffer reuse
+- **GC pressure**: Gen2 collections visible at BaseSpanSize=10,000 for Snapshot mode
+- **Behavior impact**: Growing span slightly increases allocation for CopyOnRead (~560KB vs ~92KB at BaseSpanSize=100)
 
 ---
 
@@ -209,14 +241,16 @@ Benchmarks are organized by **execution flow** to clearly separate user-facing c
 
 **File**: `ScenarioBenchmarks.cs`
 
-**Goal**: End-to-end scenario testing including cold start and locality patterns. NOT microbenchmarks.
+**Goal**: End-to-end scenario testing focusing on cold start performance. NOT microbenchmarks - measures complete workflows.
 
-**Parameters**: `RangeSpan` × `CacheCoefficientSize` (20 combinations)
+**Parameters**: `RangeSpan` × `CacheCoefficientSize` = **9 combinations**
+- RangeSpan: `[100, 1_000, 10_000]`
+- CacheCoefficientSize: `[1, 10, 100]`
 
 **Contract**:
 - Fresh cache per iteration
 - Cold start: Measures complete initialization including rebalance
-- Locality: Simulates sequential access patterns (10 requests), cleanup handles stabilization
+- `WaitForIdleAsync` is PART of the measured cold start cost
 
 **Benchmark Methods** (grouped by category):
 
@@ -224,17 +258,18 @@ Benchmarks are organized by **execution flow** to clearly separate user-facing c
 |----------|---------|---------|
 | **ColdStart** | `ColdStart_Rebalance_Snapshot` | Baseline: Initial cache population (Snapshot) |
 | **ColdStart** | `ColdStart_Rebalance_CopyOnRead` | Initial cache population (CopyOnRead) |
-| **Locality** | `User_LocalityScenario_DirectDataSource` | Baseline: No caching (direct data source) |
-| **Locality** | `User_LocalityScenario_Snapshot` | Sequential access with Snapshot mode |
-| **Locality** | `User_LocalityScenario_CopyOnRead` | Sequential access with CopyOnRead mode |
 
 **Expected Results**:
-- Cold start: Allocation patterns differ between modes
-  - Snapshot: Large upfront allocation
-  - CopyOnRead: Incremental allocation, less memory spike
-- Locality: 70-80% reduction in data source calls vs direct access
-  - **Scaling**: Cache advantage increases with RangeSpan (amortizes prefetch cost)
-  - **Coefficient impact**: Higher coefficients = better hit rate but higher memory
+- Cold start: ~97-98ms for initial population (dominated by 100ms `SynchronousDataSource` delay)
+- Allocation patterns differ between modes:
+  - Snapshot: Single upfront array allocation
+  - CopyOnRead: List-based incremental allocation, less memory spike
+- **Scaling**: Both modes show similar execution time (~97-150ms)
+- **Memory differences**: 
+  - Small ranges (RangeSpan=100, CacheCoefficientSize=1): Minimal difference (~7KB vs ~9KB)
+  - Large ranges (RangeSpan=10,000, CacheCoefficientSize=100): Snapshot ~15.8MB, CopyOnRead ~16.5MB
+  - CopyOnRead allocation ratio: 1.04-1.72x depending on cache size
+- **GC impact**: Gen2 collections visible at largest parameter combination
 
 ---
 
@@ -243,27 +278,29 @@ Benchmarks are organized by **execution flow** to clearly separate user-facing c
 ### Quick Start
 
 ```bash
-# Run all benchmarks (WARNING: This will take 6-12 hours with parameterization)
-dotnet run -c Release --project tests/SlidingWindowCache.Benchmarks
+# Run all benchmarks (WARNING: This will take 2-4 hours with current parameterization)
+dotnet run -c Release --project benchmarks/SlidingWindowCache.Benchmarks
 
 # Run specific benchmark class
-dotnet run -c Release --project tests/SlidingWindowCache.Benchmarks --filter "*UserFlowBenchmarks*"
-
-# Run specific parameter combination (e.g., RangeSpan=1000)
-dotnet run -c Release --project tests/SlidingWindowCache.Benchmarks --filter "*" --job short -- --filter "*RangeSpan_1000*"
+dotnet run -c Release --project benchmarks/SlidingWindowCache.Benchmarks --filter "*UserFlowBenchmarks*"
+dotnet run -c Release --project benchmarks/SlidingWindowCache.Benchmarks --filter "*RebalanceFlowBenchmarks*"
+dotnet run -c Release --project benchmarks/SlidingWindowCache.Benchmarks --filter "*ScenarioBenchmarks*"
 ```
 
 ### Filtering Options
 
 ```bash
-# Run only FullHit category across all parameters
-dotnet run -c Release --project tests/SlidingWindowCache.Benchmarks --filter "*FullHit*"
+# Run only FullHit category (UserFlowBenchmarks)
+dotnet run -c Release --project benchmarks/SlidingWindowCache.Benchmarks --filter "*FullHit*"
 
 # Run only Rebalance benchmarks
-dotnet run -c Release --project tests/SlidingWindowCache.Benchmarks --filter "*RebalanceFlowBenchmarks*"
+dotnet run -c Release --project benchmarks/SlidingWindowCache.Benchmarks --filter "*RebalanceFlowBenchmarks*"
 
 # Run specific method
-dotnet run -c Release --project tests/SlidingWindowCache.Benchmarks --filter "*User_FullHit_Snapshot*"
+dotnet run -c Release --project benchmarks/SlidingWindowCache.Benchmarks --filter "*User_FullHit_Snapshot*"
+
+# Run specific parameter combination (e.g., BaseSpanSize=1000)
+dotnet run -c Release --project benchmarks/SlidingWindowCache.Benchmarks --filter "*" -- --filter "*BaseSpanSize_1000*"
 ```
 
 ### Managing Execution Time
@@ -271,26 +308,35 @@ dotnet run -c Release --project tests/SlidingWindowCache.Benchmarks --filter "*U
 With parameterization, total execution time can be significant:
 
 **Default configuration:**
-- 20 parameter combinations × 8 methods × 2 modes = 320+ individual benchmarks
-- Estimated time: 6-12 hours
+- UserFlowBenchmarks: 9 parameters × 8 methods = 72 benchmarks
+- RebalanceFlowBenchmarks: 18 parameters × 1 method = 18 benchmarks  
+- ScenarioBenchmarks: 9 parameters × 2 methods = 18 benchmarks
+- **Total: ~108 individual benchmarks**
+- **Estimated time: 2-4 hours** (depending on hardware)
 
 **Faster turnaround options:**
 
 1. **Use SimpleJob for development:**
 ```csharp
-[SimpleJob(warmupCount: 3, targetCount: 5)]  // Add to class attributes
+[SimpleJob(warmupCount: 3, iterationCount: 5)]  // Add to class attributes
 ```
 
 2. **Run subset of parameters:**
 ```bash
 # Comment out larger parameter values in code temporarily
-[Params(100, 1_000)]  // Instead of all 5 values
+[Params(100, 1_000)]  // Instead of all 3 values
 ```
 
 3. **Run by category:**
 ```bash
 # Focus on one flow at a time
-dotnet run -c Release --project tests/SlidingWindowCache.Benchmarks --filter "*FullHit*"
+dotnet run -c Release --project benchmarks/SlidingWindowCache.Benchmarks --filter "*FullHit*"
+```
+
+4. **Run single benchmark class:**
+```bash
+# Test specific aspect
+dotnet run -c Release --project benchmarks/SlidingWindowCache.Benchmarks --filter "*ScenarioBenchmarks*"
 ```
 
 ---
@@ -414,60 +460,48 @@ Every iteration starts from a clean, deterministic cache state via `[IterationSe
 
 ---
 
-## Deprecated Benchmarks
-
-### ⚠️ Old Benchmark Files (DEPRECATED - REPLACED BY EXECUTION FLOW MODEL)
-
-The following benchmark files have been replaced by the new execution flow model:
-
-**Issues with Old Organization**:
-- Mixed user-facing costs with maintenance costs
-- Unclear separation between execution flows
-- Difficult to interpret which costs are user-visible
-- Inconsistent handling of WaitForIdleAsync
-
-**Old Files → New Files Mapping**:
-
-| Old File | Replaced By | New Method Names |
-|----------|-------------|------------------|
-| `FullHitBenchmarks.cs` | `UserFlowBenchmarks.cs` | `User_FullHit_Snapshot`, `User_FullHit_CopyOnRead` |
-| `PartialHitBenchmarks.cs` | `UserFlowBenchmarks.cs` | `User_PartialHit_ForwardShift_*`, `User_PartialHit_BackwardShift_*` |
-| `FullMissBenchmarks.cs` | `UserFlowBenchmarks.cs` | `User_FullMiss_Snapshot`, `User_FullMiss_CopyOnRead` |
-| `RebalanceCostBenchmarks.cs` | `RebalanceFlowBenchmarks.cs` | `Rebalance_AfterPartialHit_*`, `Rebalance_AfterFullMiss_*` |
-| `LocalityAdvantageBenchmarks.cs` | `ScenarioBenchmarks.cs` | `User_LocalityScenario_*` |
-| `ColdStartBenchmarks.cs` | `ScenarioBenchmarks.cs` | `ColdStart_Rebalance_*` |
-
-**Action**: The old files can be safely deleted. All functionality is preserved in the new execution flow model with improved clarity and semantic naming.
-
----
-
 ## Architecture Goals
 
 These benchmarks validate:
-1. **User request flow isolation** (measured without rebalance contamination in `UserFlowBenchmarks`)
-2. **Rebalance cost tradeoffs** (Snapshot vs CopyOnRead, isolated in `RebalanceFlowBenchmarks`)
-3. **Sequential locality optimization** (vs direct data source, validated in `ScenarioBenchmarks`)
-4. **Memory pressure characteristics** (allocations, GC, LOH across all flows)
-5. **Deterministic partial-hit behavior** (`UserFlowBenchmarks` with guaranteed overlap)
-6. **Cold start performance** (end-to-end initialization in `ScenarioBenchmarks`)
+1. **User request flow isolation** - User-facing latency measured without rebalance contamination (`UserFlowBenchmarks`)
+2. **Behavior-driven rebalance analysis** - How storage strategies handle Fixed/Growing/Shrinking span dynamics (`RebalanceFlowBenchmarks`)
+3. **Storage strategy tradeoffs** - Snapshot vs CopyOnRead across all workload patterns with measured allocation differences
+4. **Cold start characteristics** - Complete initialization cost including first rebalance (`ScenarioBenchmarks`)
+5. **Memory pressure patterns** - Allocations, GC pressure, LOH impact across parameter ranges
+6. **Scaling behavior** - Performance characteristics from small (100) to large (10,000) data volumes
+7. **Deterministic reproducibility** - Zero-latency `SynchronousDataSource` isolates cache mechanics from I/O variance
 
 ---
 
 ## Output Files
 
-After running benchmarks, find results in:
+After running benchmarks, results are generated in two locations:
+
+### Results Directory (Committed to Repository)
+```
+benchmarks/SlidingWindowCache.Benchmarks/Results/
+├── SlidingWindowCache.Benchmarks.Benchmarks.UserFlowBenchmarks-report-github.md
+├── SlidingWindowCache.Benchmarks.Benchmarks.RebalanceFlowBenchmarks-report-github.md
+└── SlidingWindowCache.Benchmarks.Benchmarks.ScenarioBenchmarks-report-github.md
+```
+
+These markdown reports are checked into version control for:
+- Performance regression tracking
+- Historical comparison
+- Documentation of expected performance characteristics
+
+### BenchmarkDotNet Artifacts (Local Only)
 ```
 BenchmarkDotNet.Artifacts/
 ├── results/
-│   ├── SlidingWindowCache.Benchmarks.UserFlowBenchmarks-report.html
-│   ├── SlidingWindowCache.Benchmarks.UserFlowBenchmarks-report.md
-│   ├── SlidingWindowCache.Benchmarks.RebalanceFlowBenchmarks-report.html
-│   ├── SlidingWindowCache.Benchmarks.RebalanceFlowBenchmarks-report.md
-│   ├── SlidingWindowCache.Benchmarks.ScenarioBenchmarks-report.html
-│   └── SlidingWindowCache.Benchmarks.ScenarioBenchmarks-report.md
+│   ├── *.html (HTML reports)
+│   ├── *.md (Markdown reports)
+│   └── *.csv (Raw data)
 └── logs/
-    └── ... (detailed logs)
+    └── ... (detailed execution logs)
 ```
+
+These files are generated locally and excluded from version control (`.gitignore`).
 
 ---
 

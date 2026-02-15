@@ -33,13 +33,13 @@ public class ScenarioBenchmarks
     private Range<int> _coldStartRange;
 
     /// <summary>
-    /// Requested range size - varies from small (100) to very large (1,000,000) to test scenario scaling behavior.
+    /// Requested range size - varies from small (100) to large (10,000) to test scenario scaling behavior.
     /// </summary>
     [Params(100, 1_000, 10_000)]
     public int RangeSpan { get; set; }
 
     /// <summary>
-    /// Cache coefficient size for left/right prefetch - varies from minimal (1) to aggressive (1,000).
+    /// Cache coefficient size for left/right prefetch - varies from minimal (1) to aggressive (100).
     /// Combined with RangeSpan, determines total materialized cache size in scenarios.
     /// </summary>
     [Params(1, 10, 100)]

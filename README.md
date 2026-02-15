@@ -294,13 +294,11 @@ For detailed architectural documentation, see:
   - **RangeSemanticsContractTests** - Validates range behavior assumptions
   - **RandomRangeRobustnessTests** - Property-based testing with 850+ randomized scenarios
   - **ConcurrencyStabilityTests** - Concurrent load and stability validation
-- **[Benchmark Suite README](tests/SlidingWindowCache.Benchmarks/README.md)** - BenchmarkDotNet performance benchmarks
-  - **ReadPerformanceBenchmarks** - Zero-allocation read performance (Snapshot vs CopyOnRead)
-  - **ColdStartBenchmarks** - Initial cache population and materialization costs
-  - **PartialHitBenchmarks** - Sequential forward/backward shift performance
-  - **RebalanceCostBenchmarks** - Full rebalance cycle cost measurement
-  - **CacheEffectivenessBenchmarks** - Full hit, partial hit, and full miss scenarios
-  - **LocalityAdvantageBenchmarks** - Sequential access advantage vs direct data source
+- **[Benchmark Suite README](benchmarks/SlidingWindowCache.Benchmarks/README.md)** - BenchmarkDotNet performance benchmarks
+  - **RebalanceFlowBenchmarks** - Behavior-driven rebalance cost analysis (Fixed/Growing/Shrinking span patterns)
+  - **UserFlowBenchmarks** - User-facing API latency (Full hit, Partial hit, Full miss scenarios)
+  - **ScenarioBenchmarks** - End-to-end cold start performance
+  - **Storage Strategy Comparison** - Snapshot vs CopyOnRead allocation and performance tradeoffs across all suites
 - **Deterministic Testing**: `WaitForIdleAsync()` API provides race-free synchronization with background rebalance operations for testing, graceful shutdown, health checks, and integration scenarios
 
 ### Key Architectural Principles

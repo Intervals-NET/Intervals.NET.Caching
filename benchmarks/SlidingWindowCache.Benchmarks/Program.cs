@@ -13,6 +13,6 @@ public class Program
         var summary = BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
 
         // Alternative: Run specific benchmark
-        // var summary = BenchmarkRunner.Run<ReadPerformanceBenchmarks>();
+        // var summary = BenchmarkRunner.Run<RebalanceFlowBenchmarks>();
     }
 }
