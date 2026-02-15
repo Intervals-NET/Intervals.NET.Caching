@@ -22,6 +22,7 @@ namespace SlidingWindowCache.Benchmarks.Benchmarks;
 /// </summary>
 [MemoryDiagnoser]
 [MarkdownExporter]
+[GroupBenchmarksBy(BenchmarkDotNet.Configs.BenchmarkLogicalGroupRule.ByCategory)]
 public class ScenarioBenchmarks
 {
     private SynchronousDataSource _dataSource = default!;
@@ -33,10 +34,23 @@ public class ScenarioBenchmarks
     private List<Range<int>> _sequentialRanges = default!;
     private Range<int> _coldStartRange;
 
-    private const int ColdStartRangeStart = 1000;
-    private const int ColdStartRangeEnd = 2000;
-    private const int LocalityStartPosition = 1000;
-    private const int LocalityRangeSize = 100;
+    /// <summary>
+    /// Requested range size - varies from small (100) to very large (1,000,000) to test scenario scaling behavior.
+    /// </summary>
+    [Params(100, 1_000, 10_000, 100_000, 1_000_000)]
+    public int RangeSpan { get; set; }
+
+    /// <summary>
+    /// Cache coefficient size for left/right prefetch - varies from minimal (1) to aggressive (1,000).
+    /// Combined with RangeSpan, determines total materialized cache size in scenarios.
+    /// </summary>
+    [Params(1, 10, 100, 1_000)]
+    public int CacheCoefficientSize { get; set; }
+
+    private int ColdStartRangeStart => 10000;
+    private int ColdStartRangeEnd => ColdStartRangeStart + RangeSpan;
+    private int LocalityStartPosition => 10000;
+    private int LocalityRangeSize => RangeSpan / 10;  // 10% of range span for locality tests
     private const int LocalityNumberOfRequests = 10;
 
     [GlobalSetup]
@@ -52,16 +66,16 @@ public class ScenarioBenchmarks
         );
 
         _snapshotOptions = new WindowCacheOptions(
-            leftCacheSize: 1.0,
-            rightCacheSize: 1.0,
+            leftCacheSize: CacheCoefficientSize,
+            rightCacheSize: CacheCoefficientSize,
             UserCacheReadMode.Snapshot,
             leftThreshold: 0.2,
             rightThreshold: 0.2
         );
 
         _copyOnReadOptions = new WindowCacheOptions(
-            leftCacheSize: 1.0,
-            rightCacheSize: 1.0,
+            leftCacheSize: CacheCoefficientSize,
+            rightCacheSize: CacheCoefficientSize,
             UserCacheReadMode.CopyOnRead,
             leftThreshold: 0.2,
             rightThreshold: 0.2
@@ -98,6 +112,7 @@ public class ScenarioBenchmarks
     }
 
     [Benchmark(Baseline = true)]
+    [BenchmarkCategory("ColdStart")]
     public async Task ColdStart_Rebalance_Snapshot()
     {
         // Measure complete cold start: initial fetch + rebalance
@@ -107,6 +122,7 @@ public class ScenarioBenchmarks
     }
 
     [Benchmark]
+    [BenchmarkCategory("ColdStart")]
     public async Task ColdStart_Rebalance_CopyOnRead()
     {
         // Measure complete cold start: initial fetch + rebalance
@@ -126,8 +142,8 @@ public class ScenarioBenchmarks
     {
         // Create fresh caches for locality scenario
         var localitySnapshotOptions = new WindowCacheOptions(
-            leftCacheSize: 1.0,
-            rightCacheSize: 10, // Aggressive prefetch for sequential access
+            leftCacheSize: CacheCoefficientSize,
+            rightCacheSize: CacheCoefficientSize * 10, // Aggressive prefetch for sequential access
             UserCacheReadMode.Snapshot,
             leftThreshold: 0,
             rightThreshold: 0
@@ -140,8 +156,8 @@ public class ScenarioBenchmarks
         );
 
         var localityCopyOnReadOptions = new WindowCacheOptions(
-            leftCacheSize: 1.0,
-            rightCacheSize: 10, // Moderate prefetch for sequential access
+            leftCacheSize: CacheCoefficientSize,
+            rightCacheSize: CacheCoefficientSize * 10, // Moderate prefetch for sequential access
             UserCacheReadMode.CopyOnRead,
             leftThreshold: 0,
             rightThreshold: 0
@@ -174,6 +190,7 @@ public class ScenarioBenchmarks
     }
 
     [Benchmark]
+    [BenchmarkCategory("Locality")]
     public async Task User_LocalityScenario_DirectDataSource()
     {
         // Baseline: Direct data source access - no caching
@@ -185,6 +202,7 @@ public class ScenarioBenchmarks
     }
 
     [Benchmark]
+    [BenchmarkCategory("Locality")]
     public async Task User_LocalityScenario_Snapshot()
     {
         // Cached sequential access with Snapshot mode
@@ -197,6 +215,7 @@ public class ScenarioBenchmarks
     }
 
     [Benchmark]
+    [BenchmarkCategory("Locality")]
     public async Task User_LocalityScenario_CopyOnRead()
     {
         // Cached sequential access with CopyOnRead mode

@@ -24,6 +24,7 @@ namespace SlidingWindowCache.Benchmarks.Benchmarks;
 /// </summary>
 [MemoryDiagnoser]
 [MarkdownExporter]
+[GroupBenchmarksBy(BenchmarkDotNet.Configs.BenchmarkLogicalGroupRule.ByCategory)]
 public class RebalanceFlowBenchmarks
 {
     private WindowCache<int, int, IntegerFixedStepDomain>? _snapshotCache;
@@ -31,8 +32,21 @@ public class RebalanceFlowBenchmarks
     private SynchronousDataSource _dataSource = default!;
     private IntegerFixedStepDomain _domain = default!;
 
-    private const int InitialStart = 1000;
-    private const int InitialEnd = 2000;
+    /// <summary>
+    /// Requested range size - varies from small (100) to very large (1,000,000) to test rebalance scaling behavior.
+    /// </summary>
+    [Params(100, 1_000, 10_000, 100_000, 1_000_000)]
+    public int RangeSpan { get; set; }
+
+    /// <summary>
+    /// Cache coefficient size for left/right prefetch - varies from minimal (1) to aggressive (1,000).
+    /// Combined with RangeSpan, determines total materialized cache size during rebalance.
+    /// </summary>
+    [Params(1, 10, 100, 1_000)]
+    public int CacheCoefficientSize { get; set; }
+
+    private int InitialStart => 10000;
+    private int InitialEnd => InitialStart + RangeSpan;
 
     private Range<int> InitialCacheRange =>
         Intervals.NET.Factories.Range.Closed<int>(InitialStart, InitialEnd);
@@ -63,16 +77,16 @@ public class RebalanceFlowBenchmarks
         _fullMissRange = FullMissRange;
 
         _snapshotOptions = new WindowCacheOptions(
-            leftCacheSize: 1,
-            rightCacheSize: 1,
+            leftCacheSize: CacheCoefficientSize,
+            rightCacheSize: CacheCoefficientSize,
             UserCacheReadMode.Snapshot,
             leftThreshold: 0,
             rightThreshold: 0
         );
 
         _copyOnReadOptions = new WindowCacheOptions(
-            leftCacheSize: 1,
-            rightCacheSize: 1,
+            leftCacheSize: CacheCoefficientSize,
+            rightCacheSize: CacheCoefficientSize,
             UserCacheReadMode.CopyOnRead,
             leftThreshold: 0,
             rightThreshold: 0
@@ -113,6 +127,7 @@ public class RebalanceFlowBenchmarks
     }
 
     [Benchmark(Baseline = true)]
+    [BenchmarkCategory("PartialHit")]
     public async Task Rebalance_AfterPartialHit_Snapshot()
     {
         // Trigger rebalance with partial overlap [1500, 2500] vs cached [1000, 2000]
@@ -124,6 +139,7 @@ public class RebalanceFlowBenchmarks
     }
 
     [Benchmark]
+    [BenchmarkCategory("PartialHit")]
     public async Task Rebalance_AfterPartialHit_CopyOnRead()
     {
         // Trigger rebalance with partial overlap [1500, 2500] vs cached [1000, 2000]
@@ -135,6 +151,7 @@ public class RebalanceFlowBenchmarks
     }
 
     [Benchmark]
+    [BenchmarkCategory("FullMiss")]
     public async Task Rebalance_AfterFullMiss_Snapshot()
     {
         // Trigger rebalance with no overlap [5000, 6000] vs cached [1000, 2000]
@@ -146,6 +163,7 @@ public class RebalanceFlowBenchmarks
     }
 
     [Benchmark]
+    [BenchmarkCategory("FullMiss")]
     public async Task Rebalance_AfterFullMiss_CopyOnRead()
     {
         // Trigger rebalance with no overlap [5000, 6000] vs cached [1000, 2000]

@@ -24,6 +24,7 @@ namespace SlidingWindowCache.Benchmarks.Benchmarks;
 /// </summary>
 [MemoryDiagnoser]
 [MarkdownExporter]
+[GroupBenchmarksBy(BenchmarkDotNet.Configs.BenchmarkLogicalGroupRule.ByCategory)]
 public class UserFlowBenchmarks
 {
     private WindowCache<int, int, IntegerFixedStepDomain>? _snapshotCache;
@@ -31,9 +32,22 @@ public class UserFlowBenchmarks
     private SynchronousDataSource _dataSource = default!;
     private IntegerFixedStepDomain _domain = default!;
 
-    // Range constants
-    private const int CachedStart = 1000;
-    private const int CachedEnd = 2000;
+    /// <summary>
+    /// Requested range size - varies from small (100) to very large (1,000,000) to test scaling behavior.
+    /// </summary>
+    [Params(100, 1_000, 10_000, 100_000, 1_000_000)]
+    public int RangeSpan { get; set; }
+
+    /// <summary>
+    /// Cache coefficient size for left/right prefetch - varies from minimal (1) to aggressive (1,000).
+    /// Combined with RangeSpan, determines total materialized cache size.
+    /// </summary>
+    [Params(1, 10, 100, 1_000)]
+    public int CacheCoefficientSize { get; set; }
+
+    // Range will be calculated based on RangeSpan parameter
+    private int CachedStart => 10000;
+    private int CachedEnd => CachedStart + RangeSpan;
 
     private Range<int> InitialCacheRange =>
         Intervals.NET.Factories.Range.Closed<int>(CachedStart, CachedEnd);
@@ -83,16 +97,16 @@ public class UserFlowBenchmarks
 
         // Configure cache options
         _snapshotOptions = new WindowCacheOptions(
-            leftCacheSize: 1,
-            rightCacheSize: 1,
+            leftCacheSize: CacheCoefficientSize,
+            rightCacheSize: CacheCoefficientSize,
             UserCacheReadMode.Snapshot,
             leftThreshold: 0,
             rightThreshold: 0
         );
 
         _copyOnReadOptions = new WindowCacheOptions(
-            leftCacheSize: 1,
-            rightCacheSize: 1,
+            leftCacheSize: CacheCoefficientSize,
+            rightCacheSize: CacheCoefficientSize,
             UserCacheReadMode.CopyOnRead,
             leftThreshold: 0,
             rightThreshold: 0
@@ -137,6 +151,7 @@ public class UserFlowBenchmarks
     #region Full Hit Benchmarks
 
     [Benchmark(Baseline = true)]
+    [BenchmarkCategory("FullHit")]
     public async Task<ReadOnlyMemory<int>> User_FullHit_Snapshot()
     {
         // No rebalance triggered
@@ -144,6 +159,7 @@ public class UserFlowBenchmarks
     }
 
     [Benchmark]
+    [BenchmarkCategory("FullHit")]
     public async Task<ReadOnlyMemory<int>> User_FullHit_CopyOnRead()
     {
         // No rebalance triggered
@@ -155,6 +171,7 @@ public class UserFlowBenchmarks
     #region Partial Hit Benchmarks
 
     [Benchmark]
+    [BenchmarkCategory("PartialHit")]
     public async Task<ReadOnlyMemory<int>> User_PartialHit_ForwardShift_Snapshot()
     {
         // Rebalance triggered, handled in cleanup
@@ -162,6 +179,7 @@ public class UserFlowBenchmarks
     }
 
     [Benchmark]
+    [BenchmarkCategory("PartialHit")]
     public async Task<ReadOnlyMemory<int>> User_PartialHit_ForwardShift_CopyOnRead()
     {
         // Rebalance triggered, handled in cleanup
@@ -169,6 +187,7 @@ public class UserFlowBenchmarks
     }
 
     [Benchmark]
+    [BenchmarkCategory("PartialHit")]
     public async Task<ReadOnlyMemory<int>> User_PartialHit_BackwardShift_Snapshot()
     {
         // Rebalance triggered, handled in cleanup
@@ -176,6 +195,7 @@ public class UserFlowBenchmarks
     }
 
     [Benchmark]
+    [BenchmarkCategory("PartialHit")]
     public async Task<ReadOnlyMemory<int>> User_PartialHit_BackwardShift_CopyOnRead()
     {
         // Rebalance triggered, handled in cleanup
@@ -187,6 +207,7 @@ public class UserFlowBenchmarks
     #region Full Miss Benchmarks
 
     [Benchmark]
+    [BenchmarkCategory("FullMiss")]
     public async Task<ReadOnlyMemory<int>> User_FullMiss_Snapshot()
     {
         // No overlap - full cache replacement
@@ -195,6 +216,7 @@ public class UserFlowBenchmarks
     }
 
     [Benchmark]
+    [BenchmarkCategory("FullMiss")]
     public async Task<ReadOnlyMemory<int>> User_FullMiss_CopyOnRead()
     {
         // No overlap - full cache replacement

@@ -28,6 +28,82 @@ SlidingWindowCache has **two independent cost centers**:
 - **User Request Flow**: Full hit, partial hit, full miss scenarios
 - **Rebalance Flow**: Maintenance costs after partial hit and full miss
 - **Scenario Testing**: Cold start performance and sequential locality advantages
+- **Scaling Behavior**: Performance across varying data volumes and cache sizes
+
+---
+
+## Parameterization Strategy
+
+All benchmarks are **parameterized** to measure scaling behavior across different workload characteristics:
+
+### Parameters
+
+1. **`RangeSpan`** - Requested range size
+   - Values: `[100, 1_000, 10_000, 100_000, 1_000_000]`
+   - Purpose: Test how storage strategies scale with data volume
+   - Critical thresholds:
+     - **85KB (~21,000 integers)**: Large Object Heap (LOH) boundary
+     - **100,000+ elements**: Memory pressure scenarios
+
+2. **`CacheCoefficientSize`** - Left/right prefetch multipliers
+   - Values: `[1, 10, 100, 1_000]`
+   - Purpose: Test rebalance cost vs cache size tradeoff
+   - Total cache size = `RangeSpan × (1 + leftCoeff + rightCoeff)`
+
+### Parameter Matrix
+
+- **5 range sizes** × **4 cache coefficients** = **20 parameter combinations**
+- Each benchmark method runs across all 20 combinations
+- Results grouped by category for easier comparison
+
+### Expected Scaling Insights
+
+**Snapshot Mode:**
+- ✅ **Advantage at small-to-medium sizes** (RangeSpan < 10,000)
+  - Zero-allocation reads dominate
+  - Rebalance cost acceptable
+- ⚠️ **LOH pressure at large sizes** (RangeSpan > 21,000)
+  - Array allocations go to LOH (no compaction)
+  - GC pressure increases
+- ❌ **Disadvantage at very large sizes** (RangeSpan > 100,000)
+  - Rebalance always allocates multi-MB arrays
+  - Memory spikes during rebalance
+
+**CopyOnRead Mode:**
+- ❌ **Disadvantage at small sizes** (RangeSpan < 1,000)
+  - Per-read allocation overhead visible
+  - List overhead not amortized
+- ✅ **Competitive at medium sizes** (RangeSpan 10,000-100,000)
+  - List growth amortizes allocation cost
+  - Reduced LOH pressure
+- ✅ **Advantage at very large sizes** (RangeSpan > 100,000)
+  - Incremental list operations cheaper than full array allocation
+  - Stable memory usage
+
+**Cache Coefficient Impact:**
+- **Coefficient 1-10**: Minimal difference between modes
+- **Coefficient 100-1000**: Rebalance cost dominates
+  - CopyOnRead advantage becomes significant
+  - Snapshot mode shows memory spikes
+
+### Interpretation Guide
+
+When analyzing results, look for:
+
+1. **Crossover points**: Where CopyOnRead becomes faster than Snapshot
+   - Expected around RangeSpan=10,000-100,000 depending on coefficient
+   
+2. **Allocation patterns**: 
+   - Snapshot: Zero on read, large on rebalance
+   - CopyOnRead: Constant on read, incremental on rebalance
+
+3. **Memory usage trends**:
+   - Watch for Gen2 collections (LOH pressure indicator)
+   - Compare total allocated bytes across modes
+
+4. **Latency stability**:
+   - Snapshot should show consistent read latency
+   - CopyOnRead should show linear growth with RangeSpan
 
 ---
 
@@ -52,6 +128,7 @@ SlidingWindowCache has **two independent cost centers**:
 - ✅ **Isolation**: Each benchmark measures ONE thing
 - ✅ **MemoryDiagnoser** for allocation tracking
 - ✅ **MarkdownExporter** for report generation
+- ✅ **Parameterization**: Comprehensive scaling analysis
 
 ---
 
@@ -65,29 +142,32 @@ Benchmarks are organized by **execution flow** to clearly separate user-facing c
 
 **Goal**: Measure ONLY user-facing request latency. Rebalance/background activity is EXCLUDED from measurements.
 
+**Parameters**: `RangeSpan` × `CacheCoefficientSize` (20 combinations)
+
 **Contract**:
 - Benchmark methods measure ONLY `GetDataAsync` cost
 - `WaitForIdleAsync` moved to `[IterationCleanup]`
 - Fresh cache per iteration
 - Deterministic overlap patterns (no randomness)
 
-**Benchmark Methods**:
+**Benchmark Methods** (grouped by category):
 
-| Method | Purpose | Range Pattern |
-|--------|---------|---------------|
-| `User_FullHit_Snapshot` | Baseline: Full cache hit with Snapshot mode | [1100, 1900] ⊂ [1000, 2000] |
-| `User_FullHit_CopyOnRead` | Full cache hit with CopyOnRead mode | [1100, 1900] ⊂ [1000, 2000] |
-| `User_PartialHit_ForwardShift_Snapshot` | Partial hit moving right (Snapshot) | [1500, 2500] ∩ [1000, 2000] (50% overlap) |
-| `User_PartialHit_ForwardShift_CopyOnRead` | Partial hit moving right (CopyOnRead) | [1500, 2500] ∩ [1000, 2000] (50% overlap) |
-| `User_PartialHit_BackwardShift_Snapshot` | Partial hit moving left (Snapshot) | [500, 1500] ∩ [1000, 2000] (50% overlap) |
-| `User_PartialHit_BackwardShift_CopyOnRead` | Partial hit moving left (CopyOnRead) | [500, 1500] ∩ [1000, 2000] (50% overlap) |
-| `User_FullMiss_Snapshot` | Full cache miss (Snapshot) | [5000, 6000] ⊄ [1000, 2000] (no overlap) |
-| `User_FullMiss_CopyOnRead` | Full cache miss (CopyOnRead) | [5000, 6000] ⊄ [1000, 2000] (no overlap) |
+| Category | Method | Purpose |
+|----------|--------|---------|
+| **FullHit** | `User_FullHit_Snapshot` | Baseline: Full cache hit with Snapshot mode |
+| **FullHit** | `User_FullHit_CopyOnRead` | Full cache hit with CopyOnRead mode |
+| **PartialHit** | `User_PartialHit_ForwardShift_Snapshot` | Partial hit moving right (Snapshot) |
+| **PartialHit** | `User_PartialHit_ForwardShift_CopyOnRead` | Partial hit moving right (CopyOnRead) |
+| **PartialHit** | `User_PartialHit_BackwardShift_Snapshot` | Partial hit moving left (Snapshot) |
+| **PartialHit** | `User_PartialHit_BackwardShift_CopyOnRead` | Partial hit moving left (CopyOnRead) |
+| **FullMiss** | `User_FullMiss_Snapshot` | Full cache miss (Snapshot) |
+| **FullMiss** | `User_FullMiss_CopyOnRead` | Full cache miss (CopyOnRead) |
 
 **Expected Results**:
-- Full hit: Snapshot ~0 allocations, CopyOnRead allocates per read
+- Full hit: Snapshot ~0 allocations, CopyOnRead allocates proportional to RangeSpan
 - Partial hit: Both modes serve request immediately, rebalance deferred to cleanup
 - Full miss: Request served from data source, rebalance deferred to cleanup
+- **Scaling**: Snapshot advantage increases with RangeSpan for full hits
 
 ---
 
@@ -97,25 +177,31 @@ Benchmarks are organized by **execution flow** to clearly separate user-facing c
 
 **Goal**: Measure ONLY window maintenance and rebalance operation costs, isolated from I/O latency.
 
+**Parameters**: `RangeSpan` × `CacheCoefficientSize` (20 combinations)
+
 **Contract**:
 - Uses `SynchronousDataSource` (zero latency) to isolate cache mechanics
 - `WaitForIdleAsync` INSIDE benchmark methods (measuring rebalance)
 - Trigger mutation → explicitly wait for stabilization
 - Aggressive thresholds ensure rebalancing occurs
 
-**Benchmark Methods**:
+**Benchmark Methods** (grouped by category):
 
-| Method | Purpose | Trigger Pattern |
-|--------|---------|-----------------|
-| `Rebalance_AfterPartialHit_Snapshot` | Baseline: Rebalance cost after partial hit (Snapshot) | [1500, 2500] → triggers rebalance |
-| `Rebalance_AfterPartialHit_CopyOnRead` | Rebalance cost after partial hit (CopyOnRead) | [1500, 2500] → triggers rebalance |
-| `Rebalance_AfterFullMiss_Snapshot` | Rebalance cost after full miss (Snapshot) | [5000, 6000] → full replacement |
-| `Rebalance_AfterFullMiss_CopyOnRead` | Rebalance cost after full miss (CopyOnRead) | [5000, 6000] → full replacement |
+| Category | Method | Purpose |
+|----------|--------|---------|
+| **PartialHit** | `Rebalance_AfterPartialHit_Snapshot` | Baseline: Rebalance cost after partial hit (Snapshot) |
+| **PartialHit** | `Rebalance_AfterPartialHit_CopyOnRead` | Rebalance cost after partial hit (CopyOnRead) |
+| **FullMiss** | `Rebalance_AfterFullMiss_Snapshot` | Rebalance cost after full miss (Snapshot) |
+| **FullMiss** | `Rebalance_AfterFullMiss_CopyOnRead` | Rebalance cost after full miss (CopyOnRead) |
 
 **Expected Results**:
-- Snapshot: Higher rebalance cost (full array allocation, potential LOH pressure)
+- Snapshot: Higher rebalance cost (full array allocation)
+  - **Scaling**: Cost increases linearly with (RangeSpan × CacheCoefficientSize)
+  - **LOH impact**: Significant slowdown above RangeSpan=21,000
 - CopyOnRead: Lower rebalance cost (incremental list operations)
-- Clear architectural tradeoff: fast reads vs fast maintenance
+  - **Scaling**: Amortized cost, plateaus as capacity stabilizes
+  - **Memory**: More predictable, less GC pressure
+- **Crossover point**: CopyOnRead becomes faster around RangeSpan=10,000+
 
 ---
 
@@ -125,24 +211,87 @@ Benchmarks are organized by **execution flow** to clearly separate user-facing c
 
 **Goal**: End-to-end scenario testing including cold start and locality patterns. NOT microbenchmarks.
 
+**Parameters**: `RangeSpan` × `CacheCoefficientSize` (20 combinations)
+
 **Contract**:
 - Fresh cache per iteration
 - Cold start: Measures complete initialization including rebalance
-- Locality: Simulates sequential access patterns, cleanup handles stabilization
+- Locality: Simulates sequential access patterns (10 requests), cleanup handles stabilization
 
-**Benchmark Methods**:
+**Benchmark Methods** (grouped by category):
 
-| Method | Purpose | Pattern |
-|--------|---------|---------|
-| `ColdStart_Rebalance_Snapshot` | Baseline: Initial cache population (Snapshot) | Empty → [1000, 2000] + WaitForIdleAsync |
-| `ColdStart_Rebalance_CopyOnRead` | Initial cache population (CopyOnRead) | Empty → [1000, 2000] + WaitForIdleAsync |
-| `User_LocalityScenario_DirectDataSource` | Baseline: No caching (direct data source) | 10 sequential requests |
-| `User_LocalityScenario_Snapshot` | Sequential access with Snapshot mode | 10 sequential requests with prefetch |
-| `User_LocalityScenario_CopyOnRead` | Sequential access with CopyOnRead mode | 10 sequential requests with prefetch |
+| Category | Method | Purpose |
+|----------|---------|---------|
+| **ColdStart** | `ColdStart_Rebalance_Snapshot` | Baseline: Initial cache population (Snapshot) |
+| **ColdStart** | `ColdStart_Rebalance_CopyOnRead` | Initial cache population (CopyOnRead) |
+| **Locality** | `User_LocalityScenario_DirectDataSource` | Baseline: No caching (direct data source) |
+| **Locality** | `User_LocalityScenario_Snapshot` | Sequential access with Snapshot mode |
+| **Locality** | `User_LocalityScenario_CopyOnRead` | Sequential access with CopyOnRead mode |
 
 **Expected Results**:
 - Cold start: Allocation patterns differ between modes
+  - Snapshot: Large upfront allocation
+  - CopyOnRead: Incremental allocation, less memory spike
 - Locality: 70-80% reduction in data source calls vs direct access
+  - **Scaling**: Cache advantage increases with RangeSpan (amortizes prefetch cost)
+  - **Coefficient impact**: Higher coefficients = better hit rate but higher memory
+
+---
+
+## Running Benchmarks
+
+### Quick Start
+
+```bash
+# Run all benchmarks (WARNING: This will take 6-12 hours with parameterization)
+dotnet run -c Release --project tests/SlidingWindowCache.Benchmarks
+
+# Run specific benchmark class
+dotnet run -c Release --project tests/SlidingWindowCache.Benchmarks --filter "*UserFlowBenchmarks*"
+
+# Run specific parameter combination (e.g., RangeSpan=1000)
+dotnet run -c Release --project tests/SlidingWindowCache.Benchmarks --filter "*" --job short -- --filter "*RangeSpan_1000*"
+```
+
+### Filtering Options
+
+```bash
+# Run only FullHit category across all parameters
+dotnet run -c Release --project tests/SlidingWindowCache.Benchmarks --filter "*FullHit*"
+
+# Run only Rebalance benchmarks
+dotnet run -c Release --project tests/SlidingWindowCache.Benchmarks --filter "*RebalanceFlowBenchmarks*"
+
+# Run specific method
+dotnet run -c Release --project tests/SlidingWindowCache.Benchmarks --filter "*User_FullHit_Snapshot*"
+```
+
+### Managing Execution Time
+
+With parameterization, total execution time can be significant:
+
+**Default configuration:**
+- 20 parameter combinations × 8 methods × 2 modes = 320+ individual benchmarks
+- Estimated time: 6-12 hours
+
+**Faster turnaround options:**
+
+1. **Use SimpleJob for development:**
+```csharp
+[SimpleJob(warmupCount: 3, targetCount: 5)]  // Add to class attributes
+```
+
+2. **Run subset of parameters:**
+```bash
+# Comment out larger parameter values in code temporarily
+[Params(100, 1_000)]  // Instead of all 5 values
+```
+
+3. **Run by category:**
+```bash
+# Focus on one flow at a time
+dotnet run -c Release --project tests/SlidingWindowCache.Benchmarks --filter "*FullHit*"
+```
 
 ---
 
