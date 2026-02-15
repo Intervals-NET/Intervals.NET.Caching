@@ -31,7 +31,6 @@ public class ScenarioBenchmarks
     private WindowCache<int, int, IntegerFixedStepDomain>? _copyOnReadCache;
     private WindowCacheOptions _snapshotOptions = null!;
     private WindowCacheOptions _copyOnReadOptions = null!;
-    private List<Range<int>> _sequentialRanges = null!;
     private Range<int> _coldStartRange;
 
     /// <summary>
@@ -48,10 +47,7 @@ public class ScenarioBenchmarks
     public int CacheCoefficientSize { get; set; }
 
     private int ColdStartRangeStart => 10000;
-    private int ColdStartRangeEnd => ColdStartRangeStart + RangeSpan;
-    private int LocalityStartPosition => 10000;
-    private int LocalityRangeSize => RangeSpan / 10;  // 10% of range span for locality tests
-    private const int LocalityNumberOfRequests = 10;
+    private int ColdStartRangeEnd => ColdStartRangeStart + RangeSpan - 1;
 
     [GlobalSetup]
     public void GlobalSetup()
@@ -80,16 +76,6 @@ public class ScenarioBenchmarks
             leftThreshold: 0.2,
             rightThreshold: 0.2
         );
-
-        // Generate sequential ranges for locality simulation
-        // Simulates forward pagination pattern
-        _sequentialRanges = new List<Range<int>>(LocalityNumberOfRequests);
-        for (var i = 0; i < LocalityNumberOfRequests; i++)
-        {
-            var start = LocalityStartPosition + (i * LocalityRangeSize);
-            var end = start + LocalityRangeSize - 1;
-            _sequentialRanges.Add(Intervals.NET.Factories.Range.Closed<int>(start, end));
-        }
     }
 
     #region Cold Start Benchmarks
@@ -129,102 +115,6 @@ public class ScenarioBenchmarks
         // WaitForIdleAsync is PART of cold start cost
         await _copyOnReadCache!.GetDataAsync(_coldStartRange, CancellationToken.None);
         await _copyOnReadCache.WaitForIdleAsync(timeout: TimeSpan.FromSeconds(5));
-    }
-
-    #endregion
-
-    #region Locality Scenario Benchmarks
-
-    [IterationSetup(Target = nameof(User_LocalityScenario_DirectDataSource) + "," + 
-                            nameof(User_LocalityScenario_Snapshot) + "," + 
-                            nameof(User_LocalityScenario_CopyOnRead))]
-    public void LocalityIterationSetup()
-    {
-        // Create fresh caches for locality scenario
-        var localitySnapshotOptions = new WindowCacheOptions(
-            leftCacheSize: CacheCoefficientSize,
-            rightCacheSize: CacheCoefficientSize * 10, // Aggressive prefetch for sequential access
-            UserCacheReadMode.Snapshot,
-            leftThreshold: 0,
-            rightThreshold: 0
-        );
-
-        _snapshotCache = new WindowCache<int, int, IntegerFixedStepDomain>(
-            _dataSource,
-            _domain,
-            localitySnapshotOptions
-        );
-
-        var localityCopyOnReadOptions = new WindowCacheOptions(
-            leftCacheSize: CacheCoefficientSize,
-            rightCacheSize: CacheCoefficientSize * 10, // Aggressive prefetch for sequential access
-            UserCacheReadMode.CopyOnRead,
-            leftThreshold: 0,
-            rightThreshold: 0
-        );
-
-        _copyOnReadCache = new WindowCache<int, int, IntegerFixedStepDomain>(
-            _dataSource,
-            _domain,
-            localityCopyOnReadOptions
-        );
-
-        // Prime initial window in setup phase
-        var firstRange = _sequentialRanges[0];
-        _snapshotCache.GetDataAsync(firstRange, CancellationToken.None).GetAwaiter().GetResult();
-        _copyOnReadCache.GetDataAsync(firstRange, CancellationToken.None).GetAwaiter().GetResult();
-
-        // Wait for initial priming to complete
-        _snapshotCache.WaitForIdleAsync().GetAwaiter().GetResult();
-        _copyOnReadCache.WaitForIdleAsync().GetAwaiter().GetResult();
-    }
-
-    [IterationCleanup(Target = nameof(User_LocalityScenario_DirectDataSource) + "," + 
-                              nameof(User_LocalityScenario_Snapshot) + "," + 
-                              nameof(User_LocalityScenario_CopyOnRead))]
-    public void LocalityIterationCleanup()
-    {
-        // Wait for final rebalancing to complete after scenario
-        _snapshotCache?.WaitForIdleAsync(timeout: TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
-        _copyOnReadCache?.WaitForIdleAsync(timeout: TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
-    }
-
-    [Benchmark]
-    [BenchmarkCategory("Locality")]
-    public async Task User_LocalityScenario_DirectDataSource()
-    {
-        // Baseline: Direct data source access - no caching
-        // Every request hits data source (10x calls)
-        foreach (var range in _sequentialRanges)
-        {
-            await _dataSource.FetchAsync(range, CancellationToken.None);
-        }
-    }
-
-    [Benchmark]
-    [BenchmarkCategory("Locality")]
-    public async Task User_LocalityScenario_Snapshot()
-    {
-        // Cached sequential access with Snapshot mode
-        // NO WaitForIdleAsync in loop - measures user-facing latency only
-        // Prefetching should reduce data source calls significantly
-        foreach (var range in _sequentialRanges)
-        {
-            await _snapshotCache!.GetDataAsync(range, CancellationToken.None);
-        }
-    }
-
-    [Benchmark]
-    [BenchmarkCategory("Locality")]
-    public async Task User_LocalityScenario_CopyOnRead()
-    {
-        // Cached sequential access with CopyOnRead mode
-        // NO WaitForIdleAsync in loop - measures user-facing latency only
-        // Prefetching should reduce data source calls significantly
-        foreach (var range in _sequentialRanges)
-        {
-            await _copyOnReadCache!.GetDataAsync(range, CancellationToken.None);
-        }
     }
 
     #endregion
