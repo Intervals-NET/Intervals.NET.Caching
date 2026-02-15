@@ -35,14 +35,14 @@ public class UserFlowBenchmarks
     /// <summary>
     /// Requested range size - varies from small (100) to very large (1,000,000) to test scaling behavior.
     /// </summary>
-    [Params(100, 1_000, 10_000, 100_000, 1_000_000)]
+    [Params(100, 1_000, 10_000)]
     public int RangeSpan { get; set; }
 
     /// <summary>
     /// Cache coefficient size for left/right prefetch - varies from minimal (1) to aggressive (1,000).
     /// Combined with RangeSpan, determines total materialized cache size.
     /// </summary>
-    [Params(1, 10, 100, 1_000)]
+    [Params(1, 10, 100)]
     public int CacheCoefficientSize { get; set; }
 
     // Range will be calculated based on RangeSpan parameter
