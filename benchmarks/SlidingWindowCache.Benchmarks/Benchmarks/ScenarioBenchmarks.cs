@@ -17,7 +17,6 @@ namespace SlidingWindowCache.Benchmarks.Benchmarks;
 /// Methodology:
 /// - Fresh cache per iteration
 /// - Cold start: Measures initial cache population (includes WaitForIdleAsync)
-/// - Locality: Simulates sequential access patterns (cleanup handles stabilization)
 /// - Compares cached vs uncached approaches
 /// </summary>
 [MemoryDiagnoser]
