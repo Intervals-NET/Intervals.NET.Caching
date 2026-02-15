@@ -115,81 +115,81 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
         _intentManager.CancelPendingRebalance();
 
         // Check if cache is cold (never used) - use ToRangeData to detect empty cache
-        var currentCacheData = _state.Cache.ToRangeData();
+        var cacheStorage = _state.Cache;
         var isColdStart = !_state.LastRequested.HasValue;
 
-        RangeData<TRange, TData, TDomain> assembledData;
+        RangeData<TRange, TData, TDomain>? assembledData = null;
 
-        if (isColdStart)
+        try
         {
-            // Scenario 1: Cold Start
-            // Cache has never been populated - fetch data ONLY for requested range
-            _cacheDiagnostics.DataSourceFetchSingleRange();
-            assembledData = (await _dataSource.FetchAsync(requestedRange, cancellationToken))
-                .ToRangeData(requestedRange, _state.Domain);
+            if (isColdStart)
+            {
+                // Scenario 1: Cold Start
+                // Cache has never been populated - fetch data ONLY for requested range
+                _cacheDiagnostics.DataSourceFetchSingleRange();
+                assembledData = (await _dataSource.FetchAsync(requestedRange, cancellationToken))
+                    .ToRangeData(requestedRange, _state.Domain);
 
-            _cacheDiagnostics.UserRequestFullCacheMiss();
-        }
-        else
-        {
-            var currentCacheRange = _state.Cache.Range;
-            var fullyInCache = currentCacheRange.Contains(requestedRange);
+                _cacheDiagnostics.UserRequestFullCacheMiss();
+
+                return new ReadOnlyMemory<TData>(assembledData.Data.ToArray());
+            }
+
+            var fullyInCache = cacheStorage.Range.Contains(requestedRange);
 
             if (fullyInCache)
             {
                 // Scenario 2: Full Cache Hit
                 // All requested data is available in cache - read from cache (no IDataSource call)
-                assembledData = _state.Cache.ToRangeData();
+                assembledData = cacheStorage.ToRangeData();
 
                 _cacheDiagnostics.UserRequestFullCacheHit();
+
+                // Return a requested range data using the cache storage's Read method, which may return a view or a copy depending on the strategy
+                return cacheStorage.Read(requestedRange);
             }
-            else
+
+            var hasOverlap = cacheStorage.Range.Overlaps(requestedRange);
+
+            if (hasOverlap)
             {
-                var hasIntersection = currentCacheData.Range.Intersect(requestedRange).HasValue;
+                // Scenario 3: Partial Cache Hit
+                // RequestedRange intersects CurrentCacheRange - read from cache and fetch missing parts
+                // ExtendCacheAsync will compute missing ranges and fetch only those parts
+                // NOTE: The usage of storage.Read doesn't make sense here because we need to assemble a contiguous range that may require concatenating multiple segments (cached + fetched)
+                assembledData = await _cacheExtensionService.ExtendCacheAsync(
+                    cacheStorage.ToRangeData(),
+                    requestedRange,
+                    cancellationToken
+                );
 
-                if (hasIntersection)
-                {
-                    // Scenario 3: Partial Cache Hit
-                    // RequestedRange intersects CurrentCacheRange - read from cache and fetch missing parts
-                    // ExtendCacheAsync will compute missing ranges and fetch only those parts
-                    assembledData =
-                        await _cacheExtensionService.ExtendCacheAsync(currentCacheData, requestedRange,
-                            cancellationToken);
+                _cacheDiagnostics.UserRequestPartialCacheHit();
 
-                    _cacheDiagnostics.UserRequestPartialCacheHit();
-                }
-                else
-                {
-                    // Scenario 4: Full Cache Miss (Non-intersecting Jump)
-                    // RequestedRange does NOT intersect CurrentCacheRange
-                    // Fetch ONLY the requested range from IDataSource
-                    _cacheDiagnostics.DataSourceFetchSingleRange();
-                    assembledData = (await _dataSource.FetchAsync(requestedRange, cancellationToken))
-                        .ToRangeData(requestedRange, _state.Domain);
-
-                    _cacheDiagnostics.UserRequestFullCacheMiss();
-                }
+                return new ReadOnlyMemory<TData>(assembledData[requestedRange].Data.ToArray());
             }
+
+            // Scenario 4: Full Cache Miss (Non-intersecting Jump)
+            // RequestedRange does NOT intersect CurrentCacheRange
+            // Fetch ONLY the requested range from IDataSource
+            // NOTE: The logic is similar to cold start
+            _cacheDiagnostics.DataSourceFetchSingleRange();
+            assembledData = (await _dataSource.FetchAsync(requestedRange, cancellationToken))
+                .ToRangeData(requestedRange, _state.Domain);
+
+            _cacheDiagnostics.UserRequestFullCacheMiss();
+
+            return new ReadOnlyMemory<TData>(assembledData.Data.ToArray());
         }
+        finally
+        {
+            // Create new Intent
+            var intent = new Intent<TRange, TData, TDomain>(requestedRange, assembledData!);
 
-        // CRITICAL: Materialize assembled data to array
-        // This serves two purposes:
-        // 1. Create ReadOnlyMemory<TData> to return to user
-        // 2. Create RangeData<TRange,TData,TDomain> for intent
-        // Note: assembledData.Data is IEnumerable, must materialize to array
-        // Create ReadOnlyMemory to return to user immediately
-        var result = new ReadOnlyMemory<TData>(assembledData[requestedRange].Data.ToArray());
+            // Publish rebalance intent with assembled data range (fire-and-forget)
+            // Rebalance Execution will use this as the authoritative source
+            _intentManager.PublishIntent(intent);
 
-        // Create new Intent
-        var intent = new Intent<TRange, TData, TDomain>(requestedRange, assembledData);
-
-        // Publish rebalance intent with assembled data range (fire-and-forget)
-        // Rebalance Execution will use this as the authoritative source
-        _intentManager.PublishIntent(intent);
-
-        _cacheDiagnostics.UserRequestServed();
-
-        // Return the data immediately (User Path never waits for rebalance)
-        return result;
+            _cacheDiagnostics.UserRequestServed();
+        }
     }
 }
