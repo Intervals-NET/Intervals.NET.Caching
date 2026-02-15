@@ -223,7 +223,7 @@ public class IntervalsNetDomainExtensionsTests
         var range = Intervals.NET.Factories.Range.Closed<int>(10, 20);
 
         // ACT & ASSERT
-        var exception = Assert.Throws<NotSupportedException>(() => 
+        var exception = Assert.Throws<NotSupportedException>(() =>
             range.Expand(mockDomain.Object, left: 5, right: 5));
         Assert.Contains("must implement either IFixedStepDomain<T> or IVariableStepDomain<T>", exception.Message);
     }
@@ -361,7 +361,7 @@ public class IntervalsNetDomainExtensionsTests
         var range = Intervals.NET.Factories.Range.Closed<int>(10, 20);
 
         // ACT & ASSERT
-        var exception = Assert.Throws<NotSupportedException>(() => 
+        var exception = Assert.Throws<NotSupportedException>(() =>
             range.ExpandByRatio(mockDomain.Object, leftRatio: 0.5, rightRatio: 0.5));
         Assert.Contains("must implement either IFixedStepDomain<T> or IVariableStepDomain<T>", exception.Message);
     }

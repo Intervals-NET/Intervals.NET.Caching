@@ -14,7 +14,7 @@ internal class IntegerVariableStepDomain : IVariableStepDomain<int>
     {
         if (steps == null || steps.Length == 0)
             throw new ArgumentException("Steps array cannot be null or empty.", nameof(steps));
-        
+
         // Ensure steps are sorted
         _steps = steps.OrderBy(s => s).ToArray();
     }
@@ -49,7 +49,7 @@ internal class IntegerVariableStepDomain : IVariableStepDomain<int>
     public int Add(int value, long steps)
     {
         if (steps == 0) return value;
-        
+
         var current = value;
         if (steps > 0)
         {
@@ -111,13 +111,13 @@ internal class IntegerVariableStepDomain : IVariableStepDomain<int>
     {
         var comparison = Comparer.Compare(from, to);
         if (comparison == 0) return 0;
-        
+
         var start = comparison < 0 ? from : to;
         var end = comparison < 0 ? to : from;
-        
+
         long count = 0;
         var current = start;
-        
+
         while (Comparer.Compare(current, end) < 0)
         {
             var next = GetNextStep(current);
@@ -126,7 +126,7 @@ internal class IntegerVariableStepDomain : IVariableStepDomain<int>
             current = next.Value;
             count++;
         }
-        
+
         return comparison < 0 ? count : -count;
     }
 }

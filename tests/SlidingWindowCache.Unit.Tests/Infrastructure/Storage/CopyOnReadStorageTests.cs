@@ -100,7 +100,7 @@ public class CopyOnReadStorageTests
         // ARRANGE
         var domain = CreateFixedStepDomain();
         var storage = new CopyOnReadStorage<int, int, IntegerFixedStepDomain>(domain);
-        
+
         // First rematerialization
         var firstData = CreateRangeData(0, 10, domain);
         storage.Rematerialize(firstData);
@@ -122,7 +122,7 @@ public class CopyOnReadStorageTests
         // ARRANGE
         var domain = CreateFixedStepDomain();
         var storage = new CopyOnReadStorage<int, int, IntegerFixedStepDomain>(domain);
-        
+
         storage.Rematerialize(CreateRangeData(0, 10, domain));
 
         // ACT - Same size, different values
@@ -139,7 +139,7 @@ public class CopyOnReadStorageTests
         // ARRANGE
         var domain = CreateFixedStepDomain();
         var storage = new CopyOnReadStorage<int, int, IntegerFixedStepDomain>(domain);
-        
+
         storage.Rematerialize(CreateRangeData(0, 5, domain));
 
         // ACT - Larger size
@@ -156,7 +156,7 @@ public class CopyOnReadStorageTests
         // ARRANGE
         var domain = CreateFixedStepDomain();
         var storage = new CopyOnReadStorage<int, int, IntegerFixedStepDomain>(domain);
-        
+
         storage.Rematerialize(CreateRangeData(0, 20, domain));
 
         // ACT - Smaller size
@@ -180,7 +180,7 @@ public class CopyOnReadStorageTests
             var start = i * 10;
             var end = start + 10;
             storage.Rematerialize(CreateRangeData(start, end, domain));
-            
+
             var result = storage.Read(CreateRange(start, end));
             VerifyDataMatchesRange(result, start, end);
         }
@@ -291,7 +291,7 @@ public class CopyOnReadStorageTests
         // ARRANGE
         var domain = CreateFixedStepDomain();
         var storage = new CopyOnReadStorage<int, int, IntegerFixedStepDomain>(domain);
-        
+
         storage.Rematerialize(CreateRangeData(0, 10, domain));
         storage.Rematerialize(CreateRangeData(50, 60, domain));
         storage.Rematerialize(CreateRangeData(100, 110, domain));
@@ -312,7 +312,7 @@ public class CopyOnReadStorageTests
         storage.Rematerialize(CreateRangeData(10, 20, domain));
 
         // ACT & ASSERT - Read beyond stored range
-        Assert.Throws<ArgumentOutOfRangeException>(() => 
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             storage.Read(CreateRange(25, 30)));
     }
 
@@ -325,7 +325,7 @@ public class CopyOnReadStorageTests
         storage.Rematerialize(CreateRangeData(10, 20, domain));
 
         // ACT & ASSERT - Read overlapping but extending beyond range
-        Assert.Throws<ArgumentOutOfRangeException>(() => 
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             storage.Read(CreateRange(15, 25)));
     }
 
@@ -338,7 +338,7 @@ public class CopyOnReadStorageTests
         storage.Rematerialize(CreateRangeData(10, 20, domain));
 
         // ACT & ASSERT - Read before stored range
-        Assert.Throws<ArgumentOutOfRangeException>(() => 
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
             storage.Read(CreateRange(0, 5)));
     }
 
@@ -388,7 +388,7 @@ public class CopyOnReadStorageTests
         // ARRANGE
         var domain = CreateFixedStepDomain();
         var storage = new CopyOnReadStorage<int, int, IntegerFixedStepDomain>(domain);
-        
+
         storage.Rematerialize(CreateRangeData(0, 10, domain));
         storage.Rematerialize(CreateRangeData(20, 30, domain));
         var finalData = CreateRangeData(100, 120, domain);
@@ -479,7 +479,7 @@ public class CopyOnReadStorageTests
         var extendedData = currentData.Data.Concat(Enumerable.Range(11, 10)).ToArray();
         var extendedRange = CreateRange(0, 20);
         var extendedRangeData = extendedData.ToRangeData(extendedRange, domain);
-        
+
         storage.Rematerialize(extendedRangeData);
 
         // ASSERT - Data should be correct despite being derived from current storage
@@ -534,7 +534,7 @@ public class CopyOnReadStorageTests
         var steps = new[] { 1, 2, 5, 10, 20, 50, 100 };
         var domain = new IntegerVariableStepDomain(steps);
         var storage = new CopyOnReadStorage<int, int, IntegerVariableStepDomain>(domain);
-        
+
         var range = CreateRange(2, 50);
         var data = new[] { 2, 5, 10, 20, 50 };
         var rangeData = data.ToRangeData(range, domain);

@@ -100,7 +100,7 @@ public class SnapshotReadStorageTests
         // ARRANGE
         var domain = CreateFixedStepDomain();
         var storage = new SnapshotReadStorage<int, int, IntegerFixedStepDomain>(domain);
-        
+
         // First rematerialization
         var firstData = CreateRangeData(0, 10, domain);
         storage.Rematerialize(firstData);
@@ -122,7 +122,7 @@ public class SnapshotReadStorageTests
         // ARRANGE
         var domain = CreateFixedStepDomain();
         var storage = new SnapshotReadStorage<int, int, IntegerFixedStepDomain>(domain);
-        
+
         storage.Rematerialize(CreateRangeData(0, 10, domain));
 
         // ACT - Same size, different values
@@ -139,7 +139,7 @@ public class SnapshotReadStorageTests
         // ARRANGE
         var domain = CreateFixedStepDomain();
         var storage = new SnapshotReadStorage<int, int, IntegerFixedStepDomain>(domain);
-        
+
         storage.Rematerialize(CreateRangeData(0, 5, domain));
 
         // ACT - Larger size
@@ -156,7 +156,7 @@ public class SnapshotReadStorageTests
         // ARRANGE
         var domain = CreateFixedStepDomain();
         var storage = new SnapshotReadStorage<int, int, IntegerFixedStepDomain>(domain);
-        
+
         storage.Rematerialize(CreateRangeData(0, 20, domain));
 
         // ACT - Smaller size
@@ -272,7 +272,7 @@ public class SnapshotReadStorageTests
         // ARRANGE
         var domain = CreateFixedStepDomain();
         var storage = new SnapshotReadStorage<int, int, IntegerFixedStepDomain>(domain);
-        
+
         storage.Rematerialize(CreateRangeData(0, 10, domain));
         storage.Rematerialize(CreateRangeData(50, 60, domain));
         storage.Rematerialize(CreateRangeData(100, 110, domain));
@@ -330,7 +330,7 @@ public class SnapshotReadStorageTests
         // ARRANGE
         var domain = CreateFixedStepDomain();
         var storage = new SnapshotReadStorage<int, int, IntegerFixedStepDomain>(domain);
-        
+
         storage.Rematerialize(CreateRangeData(0, 10, domain));
         storage.Rematerialize(CreateRangeData(20, 30, domain));
         var finalData = CreateRangeData(100, 120, domain);
@@ -431,7 +431,7 @@ public class SnapshotReadStorageTests
         var steps = new[] { 1, 2, 5, 10, 20, 50, 100 };
         var domain = new IntegerVariableStepDomain(steps);
         var storage = new SnapshotReadStorage<int, int, IntegerVariableStepDomain>(domain);
-        
+
         var range = CreateRange(2, 50);
         var data = new[] { 2, 5, 10, 20, 50 };
         var rangeData = data.ToRangeData(range, domain);

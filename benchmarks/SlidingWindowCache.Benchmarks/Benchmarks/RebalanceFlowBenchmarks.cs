@@ -247,7 +247,7 @@ public class RebalanceFlowBenchmarks
         foreach (var requestRange in _requestSequence)
         {
             await _cache!.GetDataAsync(requestRange, CancellationToken.None);
-            
+
             // Explicitly measure rebalance cycle completion
             // This captures the rematerialization cost we're benchmarking
             await _cache.WaitForIdleAsync(timeout: TimeSpan.FromSeconds(10));
