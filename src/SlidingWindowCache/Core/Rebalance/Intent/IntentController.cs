@@ -50,6 +50,8 @@ internal sealed class IntentController<TRange, TData, TDomain>
     where TDomain : IRangeDomain<TRange>
 {
     private readonly RebalanceScheduler<TRange, TData, TDomain> _scheduler;
+    private readonly RebalanceDecisionEngine<TRange, TDomain> _decisionEngine;
+    private readonly CacheState<TRange, TData, TDomain> _state;
     private readonly ICacheDiagnostics _cacheDiagnostics;
 
     /// <summary>
@@ -57,6 +59,12 @@ internal sealed class IntentController<TRange, TData, TDomain>
     /// Represents the identity and lifecycle of the latest rebalance intent.
     /// </summary>
     private CancellationTokenSource? _currentIntentCts;
+
+    /// <summary>
+    /// Snapshot of the pending rebalance's target state, used for Stage 2 stability validation.
+    /// Updated atomically when a new rebalance is scheduled.
+    /// </summary>
+    private PendingRebalance<TRange>? _pendingRebalance;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="IntentController{TRange,TData,TDomain}"/> class.
@@ -78,11 +86,11 @@ internal sealed class IntentController<TRange, TData, TDomain>
         ICacheDiagnostics cacheDiagnostics
     )
     {
+        _state = state;
+        _decisionEngine = decisionEngine;
         _cacheDiagnostics = cacheDiagnostics;
         // Compose with scheduler component
         _scheduler = new RebalanceScheduler<TRange, TData, TDomain>(
-            state,
-            decisionEngine,
             executor,
             debounceDelay,
             cacheDiagnostics
@@ -126,6 +134,9 @@ internal sealed class IntentController<TRange, TData, TDomain>
 
         cancellationTokenSource.Cancel();
         cancellationTokenSource.Dispose();
+
+        // Clear pending rebalance snapshot since no rebalance is scheduled
+        Volatile.Write(ref _pendingRebalance, null);
     }
 
     /// <summary>
@@ -136,9 +147,10 @@ internal sealed class IntentController<TRange, TData, TDomain>
     /// <remarks>
     /// <para>
     /// Every user access produces a rebalance intent. This method implements the
-    /// Intent Controller pattern by:
+    /// decision-driven Intent Controller pattern by:
     /// <list type="bullet">
-    /// <item><description>Invalidating the previous intent (if any)</description></item>
+    /// <item><description>Evaluating rebalance necessity via DecisionEngine</description></item>
+    /// <item><description>Conditionally canceling previous intent only if new rebalance should schedule</description></item>
     /// <item><description>Creating a new intent with unique identity (CancellationTokenSource)</description></item>
     /// <item><description>Delegating to scheduler for debounce and execution</description></item>
     /// </list>
@@ -149,36 +161,84 @@ internal sealed class IntentController<TRange, TData, TDomain>
     /// avoiding duplicate fetches and ensuring consistency.
     /// </para>
     /// <para>
-    /// This implements Invariant C.18: "Any previously created rebalance intent is obsolete
-    /// after a new intent is generated."
+    /// This implements the decision-driven model: Intent → Decision → Scheduling → Execution.
+    /// No implicit triggers, no blind cancellations, no decision leakage across components.
     /// </para>
     /// <para>
-    /// Responsibility separation: Intent lifecycle management is handled here,
-    /// while scheduling/execution is delegated to RebalanceScheduler.
+    /// Responsibility separation: Decision logic in DecisionEngine, intent lifecycle here,
+    /// scheduling/execution delegated to RebalanceScheduler.
     /// </para>
     /// </remarks>
     public void PublishIntent(Intent<TRange, TData, TDomain> intent)
     {
+        // Step 1: Evaluate rebalance necessity (Decision Engine is SOLE AUTHORITY)
+        // Capture pending rebalance state for Stage 2 validation (atomic read)
+        var pendingSnapshot = Volatile.Read(ref _pendingRebalance);
+        
+        var decision = _decisionEngine.Evaluate(
+            requestedRange: intent.RequestedRange,
+            currentCacheState: _state,
+            pendingRebalance: pendingSnapshot
+        );
+
+        // Track skip reason for observability
+        RecordReason(decision.Reason);
+
+        // Step 2: If decision says skip, publish diagnostic and return early
+        if (!decision.ShouldSchedule)
+        {
+            return;
+        }
+
+        // Step 3: Decision confirmed rebalance is necessary - create new intent identity
         var newCts = new CancellationTokenSource();
         var intentToken = newCts.Token;
 
-        // SAFE PATH - 
-        // Atomically replace the current intent with the new one and capture the old one for cancellation
+        // Step 4: Cancel pending rebalance (mechanical safeguard for state transition)
+        // This is NOT a blind cancellation - it only happens when DecisionEngine validated necessity
         var oldCts = Interlocked.Exchange(ref _currentIntentCts, newCts);
-
-        // Invalidate previous intent (Invariant C.18: "Any previously created rebalance intent is obsolete")
         if (oldCts is not null)
         {
             oldCts.Cancel();
             oldCts.Dispose();
         }
-        // SAFE PATH END
 
-        // Delegate to scheduler for debounce and execution
-        // The scheduler owns timing, debounce, and pipeline orchestration
-        _scheduler.ScheduleRebalance(intent, intentToken);
+        // Step 5: Update pending rebalance snapshot for next Stage 2 validation
+        // todo make this object as a return result of the _scheduler.ScheduleRebalance(). Let's scheduler be a keeper of rebalance execution infrastructure like threading, debounle delay, catching and handling exceptions, cancellations
+        var newPending = new PendingRebalance<TRange>(
+            decision.DesiredRange!.Value,
+            decision.DesiredNoRebalanceRange
+        );
+        Volatile.Write(ref _pendingRebalance, newPending);
+
+        // Step 6: Delegate to scheduler with decision for debounce and execution
+        _scheduler.ScheduleRebalance(intent, decision, intentToken);
 
         _cacheDiagnostics.RebalanceIntentPublished();
+    }
+
+    /// <summary>
+    /// Records the skip reason for diagnostic and observability purposes.
+    /// Maps decision reasons to diagnostic events.
+    /// </summary>
+    private void RecordReason(RebalanceReason reason)
+    {
+        switch (reason)
+        {
+            case RebalanceReason.WithinCurrentNoRebalanceRange:
+                // todo add specific log for this reason
+            case RebalanceReason.WithinPendingNoRebalanceRange:
+                _cacheDiagnostics.RebalanceSkippedNoRebalanceRange();
+                break;
+            case RebalanceReason.DesiredEqualsCurrent:
+                _cacheDiagnostics.RebalanceSkippedSameRange();
+                break;
+            case RebalanceReason.RebalanceRequired:
+                // todo add specific log for this reason
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(reason), reason, null);
+        }
     }
 
     /// <summary>

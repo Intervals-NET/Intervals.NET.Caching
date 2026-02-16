@@ -1,7 +1,6 @@
 ﻿using Intervals.NET.Domain.Abstractions;
 using SlidingWindowCache.Core.Rebalance.Decision;
 using SlidingWindowCache.Core.Rebalance.Execution;
-using SlidingWindowCache.Core.State;
 using SlidingWindowCache.Infrastructure.Instrumentation;
 
 namespace SlidingWindowCache.Core.Rebalance.Intent;
@@ -39,8 +38,6 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
     where TRange : IComparable<TRange>
     where TDomain : IRangeDomain<TRange>
 {
-    private readonly CacheState<TRange, TData, TDomain> _state;
-    private readonly RebalanceDecisionEngine<TRange, TDomain> _decisionEngine;
     private readonly RebalanceExecutor<TRange, TData, TDomain> _executor;
     private readonly TimeSpan _debounceDelay;
     private readonly ICacheDiagnostics _cacheDiagnostics;
@@ -56,21 +53,15 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
     /// <summary>
     /// Initializes a new instance of the <see cref="RebalanceScheduler{TRange,TData,TDomain}"/> class.
     /// </summary>
-    /// <param name="state">The cache state.</param>
-    /// <param name="decisionEngine">The decision engine for rebalance logic.</param>
     /// <param name="executor">The executor for performing rebalance operations.</param>
     /// <param name="debounceDelay">The debounce delay before executing rebalance.</param>
     /// <param name="cacheDiagnostics">The diagnostics interface for recording rebalance-related metrics and events.</param>
     public RebalanceScheduler(
-        CacheState<TRange, TData, TDomain> state,
-        RebalanceDecisionEngine<TRange, TDomain> decisionEngine,
         RebalanceExecutor<TRange, TData, TDomain> executor,
         TimeSpan debounceDelay,
         ICacheDiagnostics cacheDiagnostics
     )
     {
-        _state = state;
-        _decisionEngine = decisionEngine;
         _executor = executor;
         _debounceDelay = debounceDelay;
         _cacheDiagnostics = cacheDiagnostics;
@@ -81,7 +72,8 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
     /// Checks intent validity before starting execution.
     /// </summary>
     /// <param name="intent">The intent with data that was actually assembled in UserPath and the requested range.</param>
-    /// <param name="intentToken">Cancellation token for this specific intent (owned by IntentManager).</param>
+    /// <param name="decision">The pre-validated rebalance decision from DecisionEngine.</param>
+    /// <param name="intentToken">Cancellation token for this specific intent (owned by IntentController).</param>
     /// <remarks>
     /// <para>
     /// This method is fire-and-forget. It schedules execution in the background thread pool
@@ -92,8 +84,15 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
     /// When a new intent arrives, the Intent Controller cancels the previous token, causing
     /// any pending or executing rebalance to be cancelled.
     /// </para>
+    /// <para>
+    /// Decision logic has already been evaluated by IntentController. This method performs
+    /// mechanical scheduling and execution orchestration only.
+    /// </para>
     /// </remarks>
-    public void ScheduleRebalance(Intent<TRange, TData, TDomain> intent, CancellationToken intentToken)
+    public void ScheduleRebalance(
+        Intent<TRange, TData, TDomain> intent,
+        RebalanceDecision<TRange> decision,
+        CancellationToken intentToken)
     {
         // Fire-and-forget: schedule execution in background thread pool
         // Fixing ambiguous invocation by explicitly specifying the type for Task.Run
@@ -102,7 +101,7 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
             try
             {
                 await ExecuteAfterAsync(
-                    executePipelineAsync: () => ExecutePipelineAsync(intent, intentToken),
+                    executePipelineAsync: () => ExecutePipelineAsync(intent, decision, intentToken),
                     intentToken: intentToken
                 );
             }
@@ -159,22 +158,27 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
     }
 
     /// <summary>
-    /// Executes the decision-execution pipeline in the background.
+    /// Executes the mechanical rebalance pipeline in the background.
     /// </summary>
     /// <param name="intent">The intent with data that was actually assembled in UserPath and the requested range.</param>
+    /// <param name="decision">The pre-validated rebalance decision with target ranges.</param>
     /// <param name="cancellationToken">Cancellation token to support cancellation.</param>
     /// <remarks>
     /// <para><strong>Pipeline Flow:</strong></para>
     /// <list type="number">
     /// <item><description>Check if intent is still valid (cancellation check)</description></item>
-    /// <item><description>Invoke DecisionEngine to determine if rebalance is needed</description></item>
-    /// <item><description>If needed, invoke Executor to perform rebalance using delivered data</description></item>
+    /// <item><description>Invoke Executor with decision parameters (DesiredRange, DesiredNoRebalanceRange)</description></item>
     /// </list>
+    /// <para>
+    /// Decision logic has already been evaluated. This method performs mechanical execution only.
+    /// </para>
     /// </remarks>
-    private async Task ExecutePipelineAsync(Intent<TRange, TData, TDomain> intent,
+    private async Task ExecutePipelineAsync(
+        Intent<TRange, TData, TDomain> intent,
+        RebalanceDecision<TRange> decision,
         CancellationToken cancellationToken)
     {
-        // Final cancellation check before decision logic
+        // Final cancellation check before execution
         // Ensures we don't do work for an obsolete intent
         if (cancellationToken.IsCancellationRequested)
         {
@@ -182,28 +186,17 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
             return;
         }
 
-        // Step 1: Invoke DecisionEngine (pure decision logic)
-        // This checks NoRebalanceRange and computes DesiredCacheRange
-        var decision = _decisionEngine.ShouldExecuteRebalance(
-            requestedRange: intent.RequestedRange,
-            noRebalanceRange: _state.NoRebalanceRange
-        );
-
-        // Step 2: If decision says skip, return early (no-op)
-        if (!decision.ShouldExecute)
-        {
-            _cacheDiagnostics.RebalanceSkippedNoRebalanceRange();
-            return;
-        }
-
         _cacheDiagnostics.RebalanceExecutionStarted();
 
-        // Step 3: If execution is allowed, invoke Executor with delivered data
-        // The executor will use delivered data as authoritative source, merge with existing cache,
-        // expand to desired range, trim excess, and update cache state
+        // Invoke Executor with pre-validated decision parameters
+        // Executor performs mechanical mutations without decision logic
         try
         {
-            await _executor.ExecuteAsync(intent, decision.DesiredRange!.Value, cancellationToken);
+            await _executor.ExecuteAsync(
+                intent,
+                decision.DesiredRange!.Value,
+                decision.DesiredNoRebalanceRange,
+                cancellationToken);
         }
         catch (OperationCanceledException)
         {

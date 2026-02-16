@@ -124,7 +124,7 @@ public sealed class WindowCache<TRange, TData, TDomain>
 
         var decisionEngine = new RebalanceDecisionEngine<TRange, TDomain>(rebalancePolicy, rangePlanner);
         var executor =
-            new RebalanceExecutor<TRange, TData, TDomain>(state, cacheFetcher, rebalancePolicy, cacheDiagnostics);
+            new RebalanceExecutor<TRange, TData, TDomain>(state, cacheFetcher, cacheDiagnostics);
 
         // IntentController composes with Execution Scheduler to form the Rebalance Intent Manager actor
         _intentController = new IntentController<TRange, TData, TDomain>(
