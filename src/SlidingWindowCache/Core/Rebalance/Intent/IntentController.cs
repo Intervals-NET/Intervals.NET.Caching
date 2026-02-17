@@ -210,7 +210,7 @@ internal sealed class IntentController<TRange, TData, TDomain>
                 _cacheDiagnostics.RebalanceScheduled();
                 break;
             default:
-                throw new ArgumentOutOfRangeException(nameof(reason), reason, null);
+                throw new ArgumentOutOfRangeException(nameof(reason), reason, "Unhandled rebalance reason");
         }
     }
 
