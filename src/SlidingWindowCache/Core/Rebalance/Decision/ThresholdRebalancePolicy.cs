@@ -1,7 +1,7 @@
 ﻿using Intervals.NET;
 using Intervals.NET.Extensions;
 
-namespace SlidingWindowCache.Core.Rebalance.Intent;
+namespace SlidingWindowCache.Core.Rebalance.Decision;
 
 /// <summary>
 /// Evaluates whether rebalancing should occur based on no-rebalance range containment.

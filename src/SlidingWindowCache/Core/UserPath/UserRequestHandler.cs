@@ -4,7 +4,7 @@ using Intervals.NET.Data.Extensions;
 using Intervals.NET.Domain.Abstractions;
 using Intervals.NET.Extensions;
 using SlidingWindowCache.Core.Rebalance.Execution;
-using SlidingWindowCache.Core.Rebalance.Intent;
+using SlidingWindowCache.Core.Rebalance.Decision;
 using SlidingWindowCache.Core.State;
 using SlidingWindowCache.Infrastructure.Instrumentation;
 using SlidingWindowCache.Public;

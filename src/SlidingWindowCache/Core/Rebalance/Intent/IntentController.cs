@@ -6,7 +6,7 @@ using SlidingWindowCache.Core.Rebalance.Execution;
 using SlidingWindowCache.Core.State;
 using SlidingWindowCache.Infrastructure.Instrumentation;
 
-namespace SlidingWindowCache.Core.Rebalance.Intent;
+namespace SlidingWindowCache.Core.Rebalance.Decision;
 
 /// <summary>
 /// Represents the intent to rebalance the cache based on a requested range and the currently available range data.

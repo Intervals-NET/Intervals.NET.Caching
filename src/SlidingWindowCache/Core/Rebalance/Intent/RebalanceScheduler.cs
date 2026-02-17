@@ -3,7 +3,7 @@ using SlidingWindowCache.Core.Rebalance.Decision;
 using SlidingWindowCache.Core.Rebalance.Execution;
 using SlidingWindowCache.Infrastructure.Instrumentation;
 
-namespace SlidingWindowCache.Core.Rebalance.Intent;
+namespace SlidingWindowCache.Core.Rebalance.Decision;
 
 /// <summary>
 /// Responsible for scheduling and executing rebalance operations in the background.

@@ -1,6 +1,6 @@
 ﻿using Intervals.NET;
 
-namespace SlidingWindowCache.Core.Rebalance.Intent;
+namespace SlidingWindowCache.Core.Rebalance.Decision;
 
 /// <summary>
 /// Represents an immutable snapshot of a pending rebalance operation's target state.
