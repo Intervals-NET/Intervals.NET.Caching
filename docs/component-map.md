@@ -140,10 +140,10 @@ The system uses a **multi-stage rebalance decision pipeline**, not a cancellatio
    - Note: May be implemented via cancellation timing optimization
 
 3. **Stage 3: DesiredCacheRange vs CurrentCacheRange Equality**
-   - Component: `RebalanceExecutor.ExecuteAsync()` (early exit optimization)
+   - Component: `RebalanceDecisionEngine.Evaluate` (pre-scheduling analytical check)
    - Check: Does computed DesiredCacheRange == CurrentCacheRange?
    - Purpose: Avoid no-op mutations
-   - Result: Skip if cache already in optimal configuration
+   - Result: Skip scheduling if cache already in optimal configuration
 
 **Execution Rule**: Rebalance executes ONLY if ALL stages confirm necessity.
 
