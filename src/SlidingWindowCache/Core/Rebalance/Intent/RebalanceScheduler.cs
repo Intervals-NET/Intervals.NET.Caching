@@ -149,7 +149,8 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
         //
         // ═══════════════════════════════════════════════════════════════════════════════════
 
-        var backgroundTask = Task.Delay(_debounceDelay, intentToken)
+        // Set execution task on PendingRebalance for direct await scenarios
+        pendingRebalance.ExecutionTask = Task.Delay(_debounceDelay, intentToken)
             .ContinueWith(async delayTask =>
             {
                 try
@@ -189,9 +190,6 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
             TaskContinuationOptions.ExecuteSynchronously, // Run on timer thread (already ThreadPool)
             TaskScheduler.Default)
             .Unwrap(); // Unwrap Task<Task> to Task (continuation is async)
-
-        // Set execution task on PendingRebalance for direct await scenarios
-        pendingRebalance.ExecutionTask = backgroundTask;
 
         return pendingRebalance;
     }
