@@ -19,9 +19,12 @@ namespace SlidingWindowCache.Core.Rebalance.Intent;
 /// Created when a rebalance is scheduled, captured atomically by IntentController,
 /// and passed to DecisionEngine for subsequent decision evaluations.
 /// </para>
+/// <para><strong>DDD Enhancement:</strong></para>
+/// <para>
+/// Includes encapsulated cancellation token and execution task tracking,
+/// enabling direct cancellation and wait-for-idle scenarios without proxy methods.
+/// </para>
 /// </remarks>
-/// todo add ct here in ordr to call .Cancel() on this object - cancels actually pending rebalance. I guess it will be more DDD like
-/// todo also define rebalance execution task property here, so using it we can wait for idle in blocking rebalance scenarious.
 internal sealed class PendingRebalance<TRange>
     where TRange : IComparable<TRange>
 {
@@ -37,13 +40,48 @@ internal sealed class PendingRebalance<TRange>
     public Range<TRange>? DesiredNoRebalanceRange { get; }
 
     /// <summary>
+    /// Gets the cancellation token for this pending rebalance operation.
+    /// External callers can monitor this token for cancellation status.
+    /// </summary>
+    public CancellationToken CancellationToken { get; }
+
+    /// <summary>
+    /// Gets the execution task for this pending rebalance operation.
+    /// External callers can await this task to wait for rebalance completion.
+    /// Set by scheduler after scheduling background execution.
+    /// </summary>
+    public Task? ExecutionTask { get; internal set; }
+
+    private readonly CancellationTokenSource? _cts;
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="PendingRebalance{TRange}"/> class.
     /// </summary>
     /// <param name="desiredRange">The desired cache range for the pending rebalance.</param>
     /// <param name="desiredNoRebalanceRange">The no-rebalance range for the target state.</param>
-    public PendingRebalance(Range<TRange> desiredRange, Range<TRange>? desiredNoRebalanceRange)
+    /// <param name="cancellationTokenSource">Optional cancellation token source for this rebalance.</param>
+    public PendingRebalance(
+        Range<TRange> desiredRange,
+        Range<TRange>? desiredNoRebalanceRange,
+        CancellationTokenSource? cancellationTokenSource = null)
     {
         DesiredRange = desiredRange;
         DesiredNoRebalanceRange = desiredNoRebalanceRange;
+        _cts = cancellationTokenSource;
+        CancellationToken = cancellationTokenSource?.Token ?? CancellationToken.None;
+    }
+
+    /// <summary>
+    /// Cancels this pending rebalance operation.
+    /// DDD-style behavior encapsulation for direct cancellation.
+    /// </summary>
+    /// <remarks>
+    /// This method provides a more DDD-aligned approach where the domain object
+    /// encapsulates its own behavior (cancellation) rather than requiring external
+    /// management through the IntentController.
+    /// </remarks>
+    public void Cancel()
+    {
+        _cts?.Cancel();
     }
 }

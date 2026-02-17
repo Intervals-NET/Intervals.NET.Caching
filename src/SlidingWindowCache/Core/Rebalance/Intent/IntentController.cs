@@ -26,12 +26,14 @@ namespace SlidingWindowCache.Core.Rebalance.Intent;
 /// <para><strong>Intent Controller Responsibilities:</strong></para>
 /// <list type="bullet">
 /// <item><description>Receives rebalance intents on every user access</description></item>
-/// <item><description>Owns intent identity and versioning (CancellationTokenSource)</description></item>
-/// <item><description>Cancels and invalidates obsolete intents</description></item>
+/// <item><description>Evaluates rebalance necessity via DecisionEngine</description></item>
+/// <item><description>Cancels obsolete pending rebalances via PendingRebalance.Cancel()</description></item>
+/// <item><description>Delegates scheduling to RebalanceScheduler</description></item>
 /// <item><description>Exposes cancellation interface to User Path</description></item>
 /// </list>
 /// <para><strong>Explicit Non-Responsibilities:</strong></para>
 /// <list type="bullet">
+/// <item><description>❌ Does NOT manage CancellationTokenSource lifecycle (Scheduler's responsibility)</description></item>
 /// <item><description>❌ Does NOT perform scheduling or timing logic (Scheduler's responsibility)</description></item>
 /// <item><description>❌ Does NOT decide whether rebalance is logically required (DecisionEngine's job)</description></item>
 /// <item><description>❌ Does NOT orchestrate execution pipeline (Scheduler's responsibility)</description></item>
@@ -53,12 +55,6 @@ internal sealed class IntentController<TRange, TData, TDomain>
     private readonly RebalanceDecisionEngine<TRange, TDomain> _decisionEngine;
     private readonly CacheState<TRange, TData, TDomain> _state;
     private readonly ICacheDiagnostics _cacheDiagnostics;
-
-    /// <summary>
-    /// The current rebalance cancellation token source.
-    /// Represents the identity and lifecycle of the latest rebalance intent.
-    /// </summary>
-    private CancellationTokenSource? _currentIntentCts;
 
     /// <summary>
     /// Snapshot of the pending rebalance's target state, used for Stage 2 stability validation.
@@ -111,29 +107,24 @@ internal sealed class IntentController<TRange, TData, TDomain>
     /// User Path never waits for rebalance to fully complete - it just ensures
     /// the cancellation signal is sent before proceeding with its own mutations.
     /// </para>
-    /// <para><strong>Lock-Free Implementation:</strong></para>
+    /// <para><strong>DDD-Style Cancellation:</strong></para>
     /// <para>
-    /// Uses <see cref="System.Threading.Interlocked"/> atomic exchange to clear the current intent
-    /// without requiring locks. This ensures thread-safety and prevents race conditions
-    /// while maintaining non-blocking semantics.
+    /// Uses the PendingRebalance domain object's Cancel() method rather than directly
+    /// managing CancellationTokenSource. This provides better encapsulation and aligns
+    /// with domain-driven design principles.
     /// </para>
     /// </remarks>
     public void CancelPendingRebalance()
     {
-        var cancellationTokenSource = Interlocked.Exchange(ref _currentIntentCts, null);
+        var pending = Volatile.Read(ref _pendingRebalance);
 
-        if (cancellationTokenSource == null)
+        if (pending == null)
         {
             return;
         }
 
-        if (cancellationTokenSource.IsCancellationRequested)
-        {
-            return;
-        }
-
-        cancellationTokenSource.Cancel();
-        cancellationTokenSource.Dispose();
+        // DDD-style cancellation through domain object
+        pending.Cancel();
 
         // Clear pending rebalance snapshot since no rebalance is scheduled
         Volatile.Write(ref _pendingRebalance, null);
@@ -171,10 +162,12 @@ internal sealed class IntentController<TRange, TData, TDomain>
     /// </remarks>
     public void PublishIntent(Intent<TRange, TData, TDomain> intent)
     {
+        _cacheDiagnostics.RebalanceIntentPublished();
+
         // Step 1: Evaluate rebalance necessity (Decision Engine is SOLE AUTHORITY)
         // Capture pending rebalance state for Stage 2 validation (atomic read)
         var pendingSnapshot = Volatile.Read(ref _pendingRebalance);
-        
+
         var decision = _decisionEngine.Evaluate(
             requestedRange: intent.RequestedRange,
             currentCacheState: _state,
@@ -190,31 +183,18 @@ internal sealed class IntentController<TRange, TData, TDomain>
             return;
         }
 
-        // Step 3: Decision confirmed rebalance is necessary - create new intent identity
-        var newCts = new CancellationTokenSource();
-        var intentToken = newCts.Token;
-
-        // Step 4: Cancel pending rebalance (mechanical safeguard for state transition)
+        // Step 3: Cancel pending rebalance (mechanical safeguard for state transition)
+        // Use DDD-style cancellation through PendingRebalance domain object
         // This is NOT a blind cancellation - it only happens when DecisionEngine validated necessity
-        var oldCts = Interlocked.Exchange(ref _currentIntentCts, newCts);
-        if (oldCts is not null)
-        {
-            oldCts.Cancel();
-            oldCts.Dispose();
-        }
+        var oldPending = Volatile.Read(ref _pendingRebalance);
+        oldPending?.Cancel();
+
+        // Step 4: Delegate to scheduler and capture returned PendingRebalance
+        // Scheduler fully owns execution infrastructure (CTS, Task, debounce, exceptions)
+        var newPending = _scheduler.ScheduleRebalance(intent, decision);
 
         // Step 5: Update pending rebalance snapshot for next Stage 2 validation
-        // todo make this object as a return result of the _scheduler.ScheduleRebalance(). Let's scheduler be a keeper of rebalance execution infrastructure like threading, debounle delay, catching and handling exceptions, cancellations
-        var newPending = new PendingRebalance<TRange>(
-            decision.DesiredRange!.Value,
-            decision.DesiredNoRebalanceRange
-        );
         Volatile.Write(ref _pendingRebalance, newPending);
-
-        // Step 6: Delegate to scheduler with decision for debounce and execution
-        _scheduler.ScheduleRebalance(intent, decision, intentToken);
-
-        _cacheDiagnostics.RebalanceIntentPublished();
     }
 
     /// <summary>
@@ -226,15 +206,16 @@ internal sealed class IntentController<TRange, TData, TDomain>
         switch (reason)
         {
             case RebalanceReason.WithinCurrentNoRebalanceRange:
-                // todo add specific log for this reason
+                _cacheDiagnostics.RebalanceSkippedCurrentNoRebalanceRange();
+                break;
             case RebalanceReason.WithinPendingNoRebalanceRange:
-                _cacheDiagnostics.RebalanceSkippedNoRebalanceRange();
+                _cacheDiagnostics.RebalanceSkippedPendingNoRebalanceRange();
                 break;
             case RebalanceReason.DesiredEqualsCurrent:
                 _cacheDiagnostics.RebalanceSkippedSameRange();
                 break;
             case RebalanceReason.RebalanceRequired:
-                // todo add specific log for this reason
+                _cacheDiagnostics.RebalanceScheduled();
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(reason), reason, null);
@@ -247,20 +228,73 @@ internal sealed class IntentController<TRange, TData, TDomain>
     /// </summary>
     /// <param name="timeout">
     /// Maximum time to wait for idle state. Defaults to 30 seconds.
+    /// Throws <see cref="TimeoutException"/> if the Task does not stabilize within this period.
     /// </param>
     /// <returns>A Task that completes when the background rebalance has finished.</returns>
     /// <remarks>
-    /// <para><strong>Idle Proxy Responsibility:</strong></para>
+    /// <para><strong>Infrastructure API:</strong></para>
     /// <para>
-    /// This method delegates to <see cref="RebalanceScheduler{TRange,TData,TDomain}"/> which owns
-    /// the background Task lifecycle. IntentController acts as a proxy, exposing the idle
-    /// synchronization mechanism without implementing Task tracking itself.
+    /// This method provides deterministic synchronization with background rebalance operations.
+    /// It is useful for testing, graceful shutdown, health checks, integration scenarios,
+    /// and any situation requiring coordination with cache background work.
     /// </para>
+    /// <para><strong>Observe-and-Stabilize Pattern:</strong></para>
+    /// <list type="number">
+    /// <item><description>Read current _pendingRebalance via Volatile.Read (safe observation)</description></item>
+    /// <item><description>Await the ExecutionTask from the snapshot</description></item>
+    /// <item><description>Re-check if _pendingRebalance changed (new rebalance scheduled)</description></item>
+    /// <item><description>Loop until snapshot stabilizes and task completes</description></item>
+    /// </list>
     /// <para>
-    /// This is an infrastructure API useful for testing, graceful shutdown, health checks,
-    /// and other scenarios requiring synchronization with background rebalance operations.
-    /// Intent lifecycle and cancellation logic remain unchanged.
+    /// This ensures that no rebalance execution is running when the method returns,
+    /// even under concurrent intent cancellation and rescheduling.
+    /// </para>
+    /// <para><strong>Implementation Note:</strong></para>
+    /// <para>
+    /// Uses PendingRebalance.ExecutionTask directly rather than maintaining a separate _idleTask field.
+    /// This eliminates duplication and aligns with the DDD approach where the domain object
+    /// (PendingRebalance) is the single source of truth for execution state.
     /// </para>
     /// </remarks>
-    public Task WaitForIdleAsync(TimeSpan? timeout = null) => _scheduler.WaitForIdleAsync(timeout);
+    /// <exception cref="TimeoutException">
+    /// Thrown if the background Task does not stabilize within the specified timeout.
+    /// </exception>
+    public async Task WaitForIdleAsync(TimeSpan? timeout = null)
+    {
+        var maxWait = timeout ?? TimeSpan.FromSeconds(30);
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        while (stopwatch.Elapsed < maxWait)
+        {
+            // Observe current pending rebalance (Volatile.Read ensures visibility)
+            var observedPending = Volatile.Read(ref _pendingRebalance);
+
+            // If no pending rebalance, we're idle
+            if (observedPending?.ExecutionTask == null)
+            {
+                return;
+            }
+
+            // Await the observed task
+            await observedPending.ExecutionTask;
+
+            // Check if _pendingRebalance changed while we were waiting
+            var currentPending = Volatile.Read(ref _pendingRebalance);
+
+            if (ReferenceEquals(observedPending, currentPending))
+            {
+                // Snapshot stabilized and task completed - we're idle
+                return;
+            }
+
+            // Snapshot changed - a new rebalance was scheduled, loop again
+        }
+
+        // Timeout - provide diagnostic information
+        var finalPending = Volatile.Read(ref _pendingRebalance);
+        var finalTask = finalPending?.ExecutionTask;
+        throw new TimeoutException(
+            $"WaitForIdleAsync() timed out after {maxWait.TotalSeconds:F1}s. " +
+            $"Final task state: {finalTask?.Status.ToString() ?? "null"}");
+    }
 }

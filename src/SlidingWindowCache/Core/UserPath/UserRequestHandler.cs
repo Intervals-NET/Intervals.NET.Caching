@@ -110,10 +110,6 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
         Range<TRange> requestedRange,
         CancellationToken cancellationToken)
     {
-        // CRITICAL: Cancel any pending/ongoing rebalance FIRST (Invariant A.0: User Path priority)
-        // This ensures rebalance execution doesn't interfere even though User Path no longer mutates
-        _intentManager.CancelPendingRebalance();
-
         // Check if cache is cold (never used) - use ToRangeData to detect empty cache
         var cacheStorage = _state.Cache;
         var isColdStart = !_state.LastRequested.HasValue;

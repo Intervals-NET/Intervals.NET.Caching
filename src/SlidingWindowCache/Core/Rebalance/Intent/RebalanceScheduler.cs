@@ -43,14 +43,6 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
     private readonly ICacheDiagnostics _cacheDiagnostics;
 
     /// <summary>
-    /// Tracks the latest scheduled rebalance background Task for deterministic idle synchronization.
-    /// Used by WaitForIdleAsync() to provide race-free infrastructure API for testing, graceful shutdown,
-    /// and health checks. This field exists in all builds to support the public WaitForIdleAsync() API.
-    /// Memory overhead: one Task reference per cache instance.
-    /// </summary>
-    private Task _idleTask = Task.CompletedTask;
-
-    /// <summary>
     /// Initializes a new instance of the <see cref="RebalanceScheduler{TRange,TData,TDomain}"/> class.
     /// </summary>
     /// <param name="executor">The executor for performing rebalance operations.</param>
@@ -73,29 +65,42 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
     /// </summary>
     /// <param name="intent">The intent with data that was actually assembled in UserPath and the requested range.</param>
     /// <param name="decision">The pre-validated rebalance decision from DecisionEngine.</param>
-    /// <param name="intentToken">Cancellation token for this specific intent (owned by IntentController).</param>
+    /// <returns>A PendingRebalance snapshot representing the scheduled rebalance operation.</returns>
     /// <remarks>
     /// <para>
     /// This method is fire-and-forget. It schedules execution in the background thread pool
-    /// and returns immediately.
+    /// and returns immediately with a snapshot of the pending rebalance state.
     /// </para>
+    /// <para><strong>Complete Infrastructure Ownership:</strong></para>
     /// <para>
-    /// The scheduler ensures single-flight execution through the intent cancellation token.
-    /// When a new intent arrives, the Intent Controller cancels the previous token, causing
-    /// any pending or executing rebalance to be cancelled.
+    /// The scheduler now owns the COMPLETE execution infrastructure:
+    /// - Creates and manages CancellationTokenSource internally
+    /// - Manages background Task lifecycle
+    /// - Handles debounce timing
+    /// - Orchestrates exception handling
+    /// IntentController only works with the returned PendingRebalance domain object.
     /// </para>
     /// <para>
     /// Decision logic has already been evaluated by IntentController. This method performs
     /// mechanical scheduling and execution orchestration only.
     /// </para>
     /// </remarks>
-    public void ScheduleRebalance(
+    public PendingRebalance<TRange> ScheduleRebalance(
         Intent<TRange, TData, TDomain> intent,
-        RebalanceDecision<TRange> decision,
-        CancellationToken intentToken)
+        RebalanceDecision<TRange> decision)
     {
+        // Create CancellationTokenSource - scheduler owns complete execution infrastructure
+        var pendingCts = new CancellationTokenSource();
+        var intentToken = pendingCts.Token;
+        
+        // Create PendingRebalance snapshot with encapsulated CTS
+        var pendingRebalance = new PendingRebalance<TRange>(
+            decision.DesiredRange!.Value,
+            decision.DesiredNoRebalanceRange,
+            pendingCts
+        );
+
         // Fire-and-forget: schedule execution in background thread pool
-        // Fixing ambiguous invocation by explicitly specifying the type for Task.Run
         var backgroundTask = Task.Run(async () =>
         {
             try
@@ -125,9 +130,10 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
         // NOTE: Do NOT pass intentToken to Task.Run ^ - it should only be used inside the lambda
         // to ensure the try-catch properly handles all OperationCanceledExceptions
 
-        // Track the latest background task for deterministic idle synchronization
-        // This supports the public WaitForIdleAsync() infrastructure API
-        _idleTask = backgroundTask;
+        // Set execution task on PendingRebalance for direct await scenarios
+        pendingRebalance.ExecutionTask = backgroundTask;
+
+        return pendingRebalance;
     }
 
     /// <summary>
@@ -212,68 +218,5 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
             _cacheDiagnostics.RebalanceExecutionFailed(ex);
             throw;
         }
-    }
-
-    /// <summary>
-    /// Waits for the latest scheduled rebalance background Task to complete.
-    /// Provides deterministic synchronization without relying on instrumentation counters.
-    /// </summary>
-    /// <param name="timeout">
-    /// Maximum time to wait for idle state. Defaults to 30 seconds.
-    /// Throws <see cref="TimeoutException"/> if the Task does not stabilize within this period.
-    /// </param>
-    /// <returns>A Task that completes when the background rebalance has finished.</returns>
-    /// <remarks>
-    /// <para><strong>Infrastructure API:</strong></para>
-    /// <para>
-    /// This method provides deterministic synchronization with background rebalance operations.
-    /// It is useful for testing, graceful shutdown, health checks, integration scenarios,
-    /// and any situation requiring coordination with cache background work.
-    /// </para>
-    /// <para><strong>Observe-and-Stabilize Pattern:</strong></para>
-    /// <list type="number">
-    /// <item><description>Read current _idleTask via Volatile.Read (safe observation)</description></item>
-    /// <item><description>Await the observed Task</description></item>
-    /// <item><description>Re-check if _idleTask changed (new rebalance scheduled)</description></item>
-    /// <item><description>Loop until Task reference stabilizes and completes</description></item>
-    /// </list>
-    /// <para>
-    /// This ensures that no rebalance execution is running when the method returns,
-    /// even under concurrent intent cancellation and rescheduling.
-    /// </para>
-    /// </remarks>
-    /// <exception cref="TimeoutException">
-    /// Thrown if the background Task does not stabilize within the specified timeout.
-    /// </exception>
-    public async Task WaitForIdleAsync(TimeSpan? timeout = null)
-    {
-        var maxWait = timeout ?? TimeSpan.FromSeconds(30);
-        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-
-        while (stopwatch.Elapsed < maxWait)
-        {
-            // Observe current idle task (Volatile.Read ensures visibility)
-            var observedTask = Volatile.Read(ref _idleTask);
-
-            // Await the observed task
-            await observedTask;
-
-            // Check if _idleTask changed while we were waiting
-            var currentTask = Volatile.Read(ref _idleTask);
-
-            if (ReferenceEquals(observedTask, currentTask))
-            {
-                // Task reference stabilized and completed - we're idle
-                return;
-            }
-
-            // Task changed - a new rebalance was scheduled, loop again
-        }
-
-        // Timeout - provide diagnostic information
-        var finalTask = Volatile.Read(ref _idleTask);
-        throw new TimeoutException(
-            $"WaitForIdleAsync() timed out after {maxWait.TotalSeconds:F1}s. " +
-            $"Final task state: {finalTask.Status}");
     }
 }
