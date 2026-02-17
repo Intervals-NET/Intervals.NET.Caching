@@ -79,10 +79,10 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         // Cancellation occurs ONLY when Decision Engine validates new rebalance as necessary
         // System does NOT guarantee automatic cancellation on every new request
         TestHelpers.AssertIntentPublished(_cacheDiagnostics, 2);
-        
+
         // Verify lifecycle integrity and system stability (not deterministic cancellation counts)
         TestHelpers.AssertRebalanceLifecycleIntegrity(_cacheDiagnostics);
-        
+
         // At least one rebalance should complete successfully
         Assert.True(_cacheDiagnostics.RebalanceExecutionCompleted >= 1,
             $"Expected at least 1 rebalance to complete, but found {_cacheDiagnostics.RebalanceExecutionCompleted}");
@@ -355,7 +355,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
 
         // ASSERT: System stability - new intent published, system remains consistent
         Assert.True(_cacheDiagnostics.RebalanceIntentPublished > publishedBefore);
-        
+
         // Conceptual invariant: obsolescence ≠ guaranteed cancellation
         // Cancellation depends on Decision Engine validation, not automatic on new requests
         TestHelpers.AssertRebalanceLifecycleIntegrity(_cacheDiagnostics);
@@ -744,10 +744,10 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         // ASSERT: Verify cancellation-safety (F.35, G.46)
         // Focus on lifecycle integrity and system stability, not deterministic cancellation counts
         // Cancellation is triggered by Decision Engine scheduling, not automatically by requests
-        
+
         // Verify Rebalance lifecycle integrity: every started execution reaches terminal state (F.35)
         TestHelpers.AssertRebalanceLifecycleIntegrity(_cacheDiagnostics);
-        
+
         // Verify system stability: at least one rebalance completed successfully
         Assert.True(_cacheDiagnostics.RebalanceExecutionCompleted >= 1,
             $"Expected at least 1 rebalance to complete, but found {_cacheDiagnostics.RebalanceExecutionCompleted}");
@@ -927,52 +927,52 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         TestHelpers.AssertRebalanceCompleted(_cacheDiagnostics);
     }
 
-        /// <summary>
-        /// Comprehensive concurrency test with rapid burst of 20 concurrent requests verifying intent cancellation
-        /// and system stability under high load. Validates: All requests served correctly (A.1, A.10),
-        /// Intent cancellation works (C.17, C.18), At most one active intent (C.17),
-        /// Cache remains consistent (B.11, B.15). Ensures single-consumer model with cancellation-based
-        /// coordination handles realistic high-load scenarios without data corruption or request failures.
-        /// </summary>
-        [Fact]
-        public async Task ConcurrencyScenario_RapidRequestsBurstWithCancellation()
+    /// <summary>
+    /// Comprehensive concurrency test with rapid burst of 20 concurrent requests verifying intent cancellation
+    /// and system stability under high load. Validates: All requests served correctly (A.1, A.10),
+    /// Intent cancellation works (C.17, C.18), At most one active intent (C.17),
+    /// Cache remains consistent (B.11, B.15). Ensures single-consumer model with cancellation-based
+    /// coordination handles realistic high-load scenarios without data corruption or request failures.
+    /// </summary>
+    [Fact]
+    public async Task ConcurrencyScenario_RapidRequestsBurstWithCancellation()
+    {
+        // ARRANGE
+        var options = TestHelpers.CreateDefaultOptions(debounceDelay: TimeSpan.FromSeconds(1));
+        var (cache, _) = TrackCache(TestHelpers.CreateCacheWithDefaults(_domain, _cacheDiagnostics, options));
+
+        // ACT: Fire 20 rapid concurrent requests
+        var tasks = new List<Task<ReadOnlyMemory<int>>>();
+        for (var i = 0; i < 20; i++)
         {
-            // ARRANGE
-            var options = TestHelpers.CreateDefaultOptions(debounceDelay: TimeSpan.FromSeconds(1));
-            var (cache, _) = TrackCache(TestHelpers.CreateCacheWithDefaults(_domain, _cacheDiagnostics, options));
-
-            // ACT: Fire 20 rapid concurrent requests
-            var tasks = new List<Task<ReadOnlyMemory<int>>>();
-            for (var i = 0; i < 20; i++)
-            {
-                var start = 100 + i * 5;
-                tasks.Add(cache.GetDataAsync(TestHelpers.CreateRange(start, start + 10), CancellationToken.None).AsTask());
-            }
-
-            var results = await Task.WhenAll(tasks);
-
-            // Wait for background rebalance to settle before checking counters
-            await cache.WaitForIdleAsync();
-
-            // ASSERT: All requests completed successfully with correct data
-            Assert.Equal(20, results.Length);
-            for (var i = 0; i < results.Length; i++)
-            {
-                var expectedRange = TestHelpers.CreateRange(100 + i * 5, 110 + i * 5);
-                TestHelpers.AssertUserDataCorrect(results[i], expectedRange);
-            }
-
-            Assert.Equal(20, _cacheDiagnostics.UserRequestServed);
-            Assert.True(_cacheDiagnostics.RebalanceIntentPublished == 20);
-            
-            // Verify system stability: lifecycle integrity and successful completion
-            // Cancellation is coordination mechanism triggered by scheduling decisions, not deterministic per-request
-            TestHelpers.AssertRebalanceLifecycleIntegrity(_cacheDiagnostics);
-            Assert.True(_cacheDiagnostics.RebalanceScheduled >= 1,
-                $"Expected at least 1 rebalance scheduled, but found {_cacheDiagnostics.RebalanceScheduled}");
-            Assert.True(_cacheDiagnostics.RebalanceExecutionCompleted >= 1,
-                $"Expected at least 1 rebalance completed, but found {_cacheDiagnostics.RebalanceExecutionCompleted}");
+            var start = 100 + i * 5;
+            tasks.Add(cache.GetDataAsync(TestHelpers.CreateRange(start, start + 10), CancellationToken.None).AsTask());
         }
+
+        var results = await Task.WhenAll(tasks);
+
+        // Wait for background rebalance to settle before checking counters
+        await cache.WaitForIdleAsync();
+
+        // ASSERT: All requests completed successfully with correct data
+        Assert.Equal(20, results.Length);
+        for (var i = 0; i < results.Length; i++)
+        {
+            var expectedRange = TestHelpers.CreateRange(100 + i * 5, 110 + i * 5);
+            TestHelpers.AssertUserDataCorrect(results[i], expectedRange);
+        }
+
+        Assert.Equal(20, _cacheDiagnostics.UserRequestServed);
+        Assert.True(_cacheDiagnostics.RebalanceIntentPublished == 20);
+
+        // Verify system stability: lifecycle integrity and successful completion
+        // Cancellation is coordination mechanism triggered by scheduling decisions, not deterministic per-request
+        TestHelpers.AssertRebalanceLifecycleIntegrity(_cacheDiagnostics);
+        Assert.True(_cacheDiagnostics.RebalanceScheduled >= 1,
+            $"Expected at least 1 rebalance scheduled, but found {_cacheDiagnostics.RebalanceScheduled}");
+        Assert.True(_cacheDiagnostics.RebalanceExecutionCompleted >= 1,
+            $"Expected at least 1 rebalance completed, but found {_cacheDiagnostics.RebalanceExecutionCompleted}");
+    }
 
     /// <summary>
     /// Tests read mode behavior. Snapshot mode: zero-allocation reads via direct ReadOnlyMemory access.

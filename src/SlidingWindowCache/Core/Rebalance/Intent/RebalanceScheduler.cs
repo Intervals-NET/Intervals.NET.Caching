@@ -92,7 +92,7 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
         // Create CancellationTokenSource - scheduler owns complete execution infrastructure
         var pendingCts = new CancellationTokenSource();
         var intentToken = pendingCts.Token;
-        
+
         // Create PendingRebalance snapshot with encapsulated CTS
         var pendingRebalance = new PendingRebalance<TRange>(
             decision.DesiredRange!.Value,
