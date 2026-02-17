@@ -1,11 +1,12 @@
 ﻿using Intervals.NET;
 using Intervals.NET.Data;
 using Intervals.NET.Domain.Abstractions;
+using SlidingWindowCache.Core.Rebalance.Decision;
 using SlidingWindowCache.Core.Rebalance.Execution;
 using SlidingWindowCache.Core.State;
 using SlidingWindowCache.Infrastructure.Instrumentation;
 
-namespace SlidingWindowCache.Core.Rebalance.Decision;
+namespace SlidingWindowCache.Core.Rebalance.Intent;
 
 /// <summary>
 /// Represents the intent to rebalance the cache based on a requested range and the currently available range data.

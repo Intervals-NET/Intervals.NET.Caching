@@ -1,8 +1,9 @@
 ﻿using Intervals.NET.Domain.Abstractions;
+using SlidingWindowCache.Core.Rebalance.Decision;
 using SlidingWindowCache.Core.Rebalance.Execution;
 using SlidingWindowCache.Infrastructure.Instrumentation;
 
-namespace SlidingWindowCache.Core.Rebalance.Decision;
+namespace SlidingWindowCache.Core.Rebalance.Intent;
 
 /// <summary>
 /// Responsible for scheduling and executing rebalance operations in the background.

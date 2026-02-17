@@ -3,6 +3,7 @@ using Intervals.NET.Domain.Abstractions;
 using SlidingWindowCache.Core.Planning;
 using SlidingWindowCache.Core.Rebalance.Decision;
 using SlidingWindowCache.Core.Rebalance.Execution;
+using SlidingWindowCache.Core.Rebalance.Intent;
 using SlidingWindowCache.Core.State;
 using SlidingWindowCache.Core.UserPath;
 using SlidingWindowCache.Infrastructure.Instrumentation;
