@@ -121,43 +121,6 @@ internal sealed class IntentController<TRange, TData, TDomain>
     }
 
     /// <summary>
-    /// Cancels any pending or ongoing rebalance execution.
-    /// This method is called by the User Path to ensure exclusive cache access
-    /// before performing cache mutations (satisfies Invariant A.1-0a).
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// This method is synchronous and returns immediately after signaling cancellation.
-    /// The background rebalance task will handle the cancellation asynchronously.
-    /// </para>
-    /// <para>
-    /// User Path never waits for rebalance to fully complete - it just ensures
-    /// the cancellation signal is sent before proceeding with its own mutations.
-    /// </para>
-    /// <para><strong>DDD-Style Cancellation:</strong></para>
-    /// <para>
-    /// Uses the PendingRebalance domain object's Cancel() method rather than directly
-    /// managing CancellationTokenSource. This provides better encapsulation and aligns
-    /// with domain-driven design principles.
-    /// </para>
-    /// </remarks>
-    public void CancelPendingRebalance()
-    {
-        var pending = Volatile.Read(ref _pendingRebalance);
-
-        if (pending == null)
-        {
-            return;
-        }
-
-        // DDD-style cancellation through domain object
-        pending.Cancel();
-
-        // Clear pending rebalance snapshot since no rebalance is scheduled
-        Volatile.Write(ref _pendingRebalance, null);
-    }
-
-    /// <summary>
     /// Publishes a rebalance intent triggered by a user request.
     /// This method is fire-and-forget and returns immediately.
     /// </summary>
