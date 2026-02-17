@@ -32,13 +32,16 @@ internal sealed class RebalanceDecisionEngine<TRange, TDomain>
 {
     private readonly ThresholdRebalancePolicy<TRange, TDomain> _policy;
     private readonly ProportionalRangePlanner<TRange, TDomain> _planner;
+    private readonly NoRebalanceRangePlanner<TRange, TDomain> _noRebalancePlanner;
 
     public RebalanceDecisionEngine(
         ThresholdRebalancePolicy<TRange, TDomain> policy,
-        ProportionalRangePlanner<TRange, TDomain> planner)
+        ProportionalRangePlanner<TRange, TDomain> planner,
+        NoRebalanceRangePlanner<TRange, TDomain> noRebalancePlanner)
     {
         _policy = policy;
         _planner = planner;
+        _noRebalancePlanner = noRebalancePlanner;
     }
 
     /// <summary>
@@ -81,7 +84,7 @@ internal sealed class RebalanceDecisionEngine<TRange, TDomain>
         // Stage 3: Desired Range Computation
         // Compute the target cache geometry using policy
         var desiredCacheRange = _planner.Plan(requestedRange);
-        var desiredNoRebalanceRange = _policy.GetNoRebalanceRange(desiredCacheRange);
+        var desiredNoRebalanceRange = _noRebalancePlanner.Plan(desiredCacheRange);
 
         // Stage 4: Equality Short Circuit
         // If desired range matches current cache range, no mutation needed

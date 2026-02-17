@@ -118,11 +118,12 @@ public sealed class WindowCache<TRange, TData, TDomain>
         var state = new CacheState<TRange, TData, TDomain>(cacheStorage, domain);
 
         // Initialize all internal actors following corrected execution context model
-        var rebalancePolicy = new ThresholdRebalancePolicy<TRange, TDomain>(options, domain);
+        var rebalancePolicy = new ThresholdRebalancePolicy<TRange, TDomain>();
         var rangePlanner = new ProportionalRangePlanner<TRange, TDomain>(options, domain);
+        var noRebalancePlanner = new NoRebalanceRangePlanner<TRange, TDomain>(options, domain);
         var cacheFetcher = new CacheDataExtensionService<TRange, TData, TDomain>(dataSource, domain, cacheDiagnostics);
 
-        var decisionEngine = new RebalanceDecisionEngine<TRange, TDomain>(rebalancePolicy, rangePlanner);
+        var decisionEngine = new RebalanceDecisionEngine<TRange, TDomain>(rebalancePolicy, rangePlanner, noRebalancePlanner);
         var executor =
             new RebalanceExecutor<TRange, TData, TDomain>(state, cacheFetcher, cacheDiagnostics);
 
