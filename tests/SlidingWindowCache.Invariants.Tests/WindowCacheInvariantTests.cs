@@ -528,7 +528,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
             leftRatio: -(options.LeftThreshold ?? 0),
             rightRatio: -(options.RightThreshold ?? 0)
         );
-        var nextRequestRange = TestHelpers.CreateRange(320, 420); // Span 11, within pending NoRebalanceRange but outside current NoRebalanceRange
+        var nextRequestRange = TestHelpers.CreateRange(320, 420); // Span 101, within pending NoRebalanceRange but outside current NoRebalanceRange
 
         // ACT: Establish initial cache
         await TestHelpers.ExecuteRequestAndWaitForRebalance(cache, initialRange);
