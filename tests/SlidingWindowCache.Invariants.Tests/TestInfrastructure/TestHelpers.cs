@@ -293,6 +293,12 @@ public static class TestHelpers
     /// </summary>
     /// <remarks>
     /// <para>
+    /// <strong>Cancellation is a coordination mechanism triggered by scheduling decisions, not automatic
+    /// request-driven behavior.</strong> Cancellation occurs ONLY when the Decision Engine validates that
+    /// a new rebalance is necessary. This method verifies that IF cancellation occurred, it was properly
+    /// tracked in the lifecycle.
+    /// </para>
+    /// <para>
     /// Due to timing, cancellation can occur at two distinct lifecycle points:
     /// </para>
     /// <list type="number">

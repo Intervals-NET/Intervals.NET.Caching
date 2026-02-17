@@ -218,14 +218,14 @@ deterministic, race-free synchronization without polling or timing dependencies.
 
 ## C. Rebalance Intent & Temporal Invariants
 
-**C.17** 🟢 **[Behavioral — Test: `Invariant_C17_AtMostOneActiveIntent`]** At any point in time, there is **at most one active rebalance intent**.
-- *Observable via*: DEBUG counters showing intent published/cancelled
-- *Test verifies*: Multiple rapid requests show N published, N-1 cancelled
+**C.17** 🔵 **[Architectural]** At most one rebalance intent may be active at any time.
+- *Enforced by*: Single-writer architecture, cancellation coordination in IntentController
+- *Architecture*: IntentController cancels previous pending rebalance before scheduling new one
+- *Note*: This is a structural constraint enforced by component design, not a behavioral guarantee testable via public API
 
-**C.18** 🟢 **[Behavioral — Test: `Invariant_C18_PreviousIntentBecomesObsolete`]** Previously created intents may become **logically superseded** when a new intent is published, but rebalance execution relevance is determined by the **multi-stage rebalance validation logic**.
-- *Observable via*: DEBUG counters tracking intent lifecycle
-- *Test verifies*: Old intent cancelled when new one published
-- *Clarification*: Intents are access signals, not commands. An intent represents "user accessed this range," not "must execute rebalance." Execution decisions are governed by the Rebalance Decision Engine's analytical validation (Stage 1: Current Cache NoRebalanceRange check, Stage 2: Pending Desired Cache NoRebalanceRange check if applicable, Stage 3: DesiredCacheRange vs CurrentCacheRange equality check). Previously created intents may be superseded or cancelled, but the decision to execute is always based on current validation state, not intent age.
+**C.18** 🟡 **[Conceptual]** Previously created intents may become **logically superseded** when a new intent is published, but rebalance execution relevance is determined by the **multi-stage rebalance validation logic**.
+- *Design intent*: Obsolescence ≠ cancellation; obsolescence ≠ guaranteed execution prevention
+- *Clarification*: Intents are access signals, not commands. An intent represents "user accessed this range," not "must execute rebalance." Execution decisions are governed by the Rebalance Decision Engine's analytical validation (Stage 1: Current Cache NoRebalanceRange check, Stage 2: Pending Desired Cache NoRebalanceRange check if applicable, Stage 3: DesiredCacheRange vs CurrentCacheRange equality check). Previously created intents may be superseded or cancelled, but the decision to execute is always based on current validation state, not intent age. Cancellation occurs ONLY when Decision Engine validation confirms a new rebalance is necessary.
 
 **C.19** 🔵 **[Architectural]** Any rebalance execution can be **cancelled or have its results ignored**.
 - *Enforced by*: `CancellationToken` passed through execution pipeline
@@ -385,11 +385,15 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 
 ### F.1 Execution Control & Cancellation
 
-**F.35** 🟢 **[Behavioral — Test: `Invariant_F35_RebalanceExecutionSupportsCancellation`]** Rebalance Execution **MUST support cancellation** at all stages (before I/O, during I/O, before mutations).
-- *Observable via*: DEBUG counters showing execution cancelled, lifecycle tracking (Started == Completed + Cancelled)
-- *Test verifies*: Rapid requests cancel pending rebalance, execution lifecycle properly tracked
+**F.35** 🟢 **[Behavioral — Test: `Invariant_F35_G46_RebalanceCancellationBehavior`]** Rebalance Execution **MUST be cancellation-safe** at all stages (before I/O, during I/O, before mutations).
+- *Observable via*: Lifecycle tracking integrity (Started == Completed + Cancelled), system stability under concurrent requests
+- *Test verifies*: 
+  - Deterministic termination: Every started execution reaches terminal state
+  - No partial mutations: Cache consistency maintained after cancellation
+  - Lifecycle integrity: Accounting remains correct under cancellation
 - *Implementation details*: `ThrowIfCancellationRequested()` at multiple checkpoints in execution pipeline
-- *Related*: C.24d (execution skipped due to cancellation), A.0a (User Path triggers cancellation), G.46 (high-level guarantee)
+- *Note*: Cancellation is triggered by scheduling decisions (Decision Engine validation), not automatically by user requests
+- *Related*: C.24d (execution skipped due to cancellation), A.0a (User Path priority via validation-driven cancellation), G.46 (high-level guarantee)
 
 **F.35a** 🔵 **[Architectural]** Rebalance Execution **MUST yield** to User Path requests immediately upon cancellation.
 - *Enforced by*: `ThrowIfCancellationRequested()` at multiple checkpoints
@@ -460,14 +464,15 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 
 **G.46** 🟢 **[Behavioral — Tests: `Invariant_G46_UserCancellationDuringFetch`, `Invariant_G46_RebalanceCancellation`]** Cancellation **must be supported** for all scenarios:
 1. **User-facing cancellation**: User-provided CancellationToken propagates through User Path to IDataSource.FetchAsync()
-2. **Background rebalance cancellation**: New user requests cancel pending/ongoing rebalance execution
+2. **Background rebalance cancellation**: System supports cancellation of pending/ongoing rebalance execution
 - *Observable via*: 
   - User cancellation: OperationCanceledException thrown during IDataSource fetch
-  - Rebalance cancellation: DEBUG counters showing intent/execution cancelled
+  - Rebalance cancellation: System stability and lifecycle integrity under concurrent requests
 - *Test verifies*: 
   - `Invariant_G46_UserCancellationDuringFetch`: Cancelling during IDataSource fetch throws OperationCanceledException
-  - `Invariant_G46_RebalanceCancellation`: Background rebalance supports cancellation (high-level guarantee)
-- *Related*: F.35 (detailed rebalance execution cancellation mechanics), A.0a (User Path priority via cancellation)
+  - `Invariant_G46_RebalanceCancellation`: Background rebalance supports cancellation mechanism (high-level guarantee)
+- *Important*: System does NOT guarantee cancellation on new requests. Cancellation MAY occur depending on Decision Engine scheduling validation. Focus is on system stability and cache consistency, not deterministic cancellation behavior.
+- *Related*: F.35 (detailed rebalance execution cancellation mechanics), A.0a (User Path priority via validation-driven cancellation)
 
 ---
 
