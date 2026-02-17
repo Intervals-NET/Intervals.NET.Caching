@@ -72,15 +72,15 @@ User Thread (Synchronous)
             │
             ▼
 ┌───────────────────────────┐
-│ ScheduleRebalance()       │ ← Creates Task.Run (returns synchronously)
+│ ScheduleRebalance()       │ ← Creates background task (returns synchronously)
 └───────────┬───────────────┘
             │
-            │ Task.Run() - HERE background starts ⚡→🔄
+            │ Background scheduling - HERE background starts ⚡→🔄
             │
             ▼
 
 ═══════════════════════════════════════════════════════════
-Background / ThreadPool (After Task.Run)
+Background / ThreadPool (After background scheduling)
 ═══════════════════════════════════════════════════════════
 
             ▼
@@ -101,7 +101,7 @@ Background / ThreadPool (After Task.Run)
 └───────────────────────────┘
 ```
 
-**Critical:** Everything up to Task.Run happens **synchronously in user thread**. Only debounce + actual execution happen in background.
+**Critical:** Everything up to background scheduling happens **synchronously in user thread**. Only debounce + actual execution happen in background.
 
 ---
 
@@ -225,7 +225,7 @@ return _userRequestHandler.HandleRequestAsync(requestedRange, cancellationToken)
 - **Not visible to external users**
 - **Owned by IntentController** (composed in constructor)
 - Invoked synchronously by IntentController.PublishIntent()
-- Executes inline with user request (before Task.Run)
+- Executes inline with user request (before background scheduling)
 - May execute many times, work avoidance allows skipping scheduling entirely
 
 ### Ownership
@@ -386,7 +386,7 @@ but externally appears as a unified policy concept.
    - File: `src/SlidingWindowCache/Core/Rebalance/Intent/RebalanceScheduler.cs`
    - **Owned by IntentController** (created in constructor)
    - Handles debounce timing and background execution
-   - ScheduleRebalance() is synchronous (creates Task.Run, returns PendingRebalance)
+   - ScheduleRebalance() is synchronous (schedules background task, returns PendingRebalance)
    - Ensures single-flight execution via Task lifecycle
    - **Intentionally stateless** - does not own intent identity
    - **Task tracking** - provides ExecutionTask on PendingRebalance for deterministic synchronization (infrastructure/testing)
@@ -406,15 +406,15 @@ The Rebalance Intent Manager actor is responsible for:
 - **Intent lifecycle management** via PendingRebalance snapshot [IntentController - Volatile.Read/Write]
 - **Cancellation coordination** based on validation results from owned DecisionEngine [IntentController - User Thread]
 - **Immediate work avoidance** through synchronous decision evaluation [IntentController - User Thread]
-- **Debouncing** [Execution Scheduler - Background, after Task.Run]
+- **Debouncing** [Execution Scheduler - Background, after background scheduling]
 - **Single-flight execution** enforcement [Both components via cancellation + Task lifecycle]
-- **Starting background tasks** [Execution Scheduler - ScheduleRebalance creates Task.Run]
+- **Starting background tasks** [Execution Scheduler - ScheduleRebalance creates background task]
 - **Orchestrating the validation-driven decision pipeline**: [IntentController - User Thread, SYNCHRONOUS]
   1. **IntentController.PublishIntent()** invokes owned DecisionEngine synchronously (User Thread, CPU-only)
   2. **DecisionEngine.Evaluate()** performs multi-stage validation (User Thread, CPU-only)
-  3. If validation rejects → return immediately (work avoidance, no Task.Run scheduled)
+  3. If validation rejects → return immediately (work avoidance, no background task scheduled)
   4. If validation confirms → cancel old pending, call Scheduler.ScheduleRebalance()
-  5. **Scheduler.ScheduleRebalance()** creates PendingRebalance, schedules Task.Run (returns synchronously to user thread)
+  5. **Scheduler.ScheduleRebalance()** creates PendingRebalance, schedules background task (returns synchronously to user thread)
   6. **Background Task** (only part that's async) performs debounce delay + ExecuteAsync
 
 **Key Principle:** IntentController is the owner/orchestrator. It **owns DecisionEngine** and invokes it **synchronously in user thread** during PublishIntent(), enabling immediate work avoidance and preventing intent thrashing. The **DecisionEngine (owned by IntentController) is THE sole authority** for necessity determination. This separation enables **smart eventual consistency** through work avoidance: the system converges to optimal configuration while avoiding unnecessary operations.

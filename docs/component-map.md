@@ -784,7 +784,7 @@ public async Task WaitForIdleAsync(TimeSpan? timeout = null)
 
 **Execution Context**: 
 - **PublishIntent() executes synchronously in User Thread** (includes decision evaluation)
-- **Only scheduled work (Task.Run lambda) executes in Background ThreadPool**
+- **Only scheduled work (background task) executes in Background ThreadPool**
 
 **State**: 
 - `_pendingRebalance` (mutable, nullable, accessed via Volatile.Read/Write)
@@ -827,26 +827,26 @@ internal sealed class RebalanceScheduler<TRange, TData, TDomain>
 ```csharp
 public void ScheduleRebalance(Range<TRange> requestedRange, CancellationToken intentToken)
 {
-    // Fire-and-forget: schedule execution in background thread pool
-    Task.Run(async () =>
-    {
-        try
+    // Fire-and-forget: optimized background execution on thread pool
+    // Using Task.Delay().ContinueWith() pattern for performance
+    Task.Delay(_debounceDelay, intentToken)
+        .ContinueWith(async delayTask =>
         {
-            // Debounce delay
-            await Task.Delay(_debounceDelay, intentToken);
-            
-            // Intent validity check
-            if (intentToken.IsCancellationRequested)
-                return;
-            
-            // Execute pipeline
-            await ExecutePipelineAsync(requestedRange, intentToken);
-        }
-        catch (OperationCanceledException)
-        {
-            // Expected when intent is cancelled
-        }
-    }, intentToken);
+            try
+            {
+                // Intent validity check
+                if (delayTask.IsCanceled || intentToken.IsCancellationRequested)
+                    return;
+                
+                // Execute pipeline
+                await ExecutePipelineAsync(requestedRange, intentToken);
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected when intent is cancelled
+            }
+        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default)
+        .Unwrap();
 }
 ```
 
@@ -1441,11 +1441,11 @@ public Task WaitForIdleAsync(TimeSpan? timeout = null)
 │  🟦 CLASS (sealed)                                                │   │
 │                                                                   │   │
 │  ScheduleRebalance(range, intentToken):                          │   │
-│   Task.Run(async () => {                                         │   │
-│     await Task.Delay(_debounceDelay, intentToken);               │   │
-│     if (!intentToken.IsCancellationRequested)                    │   │
-│       await ExecutePipelineAsync(range, intentToken); ───────────┼───┤
-│   });                                                             │   │
+│   Task.Delay(_debounceDelay, intentToken)                        │   │
+│     .ContinueWith(async () => {                                  │   │
+│       if (!intentToken.IsCancellationRequested)                  │   │
+│         await ExecutePipelineAsync(range, intentToken); ─────────┼───┤
+│     }).Unwrap();                                                  │   │
 │                                                                   │   │
 │  ExecutePipelineAsync(range, ct):                                │   │
 │   1. Check cancellation                                          │   │
@@ -1683,8 +1683,8 @@ The Sliding Window Cache follows a **single consumer model** as documented in `d
 | **UserRequestHandler**            | ⚡ **User Thread** | Synchronous, fast path                                    |
 | **IntentController**              | ⚡ **User Thread** | Synchronous methods (PublishIntent, decision evaluation)  |
 | **RebalanceDecisionEngine**       | ⚡ **User Thread** | Invoked synchronously by IntentController, CPU-only logic |
-| **RebalanceScheduler (scheduling)**| ⚡ **User Thread** | ScheduleRebalance() is synchronous (creates Task)        |
-| **RebalanceScheduler (execution)**| 🔄 **Background** | Inside Task.Run - debounce + executor invocation         |
+| **RebalanceScheduler (scheduling)**| ⚡ **User Thread** | ScheduleRebalance() is synchronous (creates background task) |
+| **RebalanceScheduler (execution)**| 🔄 **Background** | Background task execution - debounce + executor invocation |
 | **RebalanceExecutor**             | 🔄 **Background** | ThreadPool, async, I/O                                    |
 | **CacheDataExtensionService**     | Both ⚡🔄          | User Thread OR Background                                 |
 | **CacheState**                    | Both ⚡🔄          | Shared mutable (no locks!)                                |
@@ -1708,7 +1708,7 @@ The Sliding Window Cache follows a **single consumer model** as documented in `d
 
 ### How It Works
 
-#### User Request Flow (User Thread - ALL SYNCHRONOUS until Task.Run)
+#### User Request Flow (User Thread - ALL SYNCHRONOUS until background scheduling)
 ```
 1. UserRequestHandler.HandleRequestAsync() called
 2. Read from cache or fetch missing data from IDataSource
@@ -1725,13 +1725,13 @@ The Sliding Window Cache follows a **single consumer model** as documented in `d
        ├─> If validation confirms: oldPending?.Cancel() ⚡ USER THREAD
        └─> Scheduler.ScheduleRebalance() ⚡ USER THREAD
            ├─> Create PendingRebalance (synchronous)
-           └─> Task.Run(() => ...) ← HERE background starts 🔄
+           └─> Schedule background task ← HERE background starts 🔄
                └─> Debounce delay 🔄 BACKGROUND
                └─> RebalanceExecutor.ExecuteAsync() 🔄 BACKGROUND
                    └─> I/O operations, cache mutations
 ```
 
-**Key:** Everything up to `Task.Run` happens **synchronously in user thread**. 
+**Key:** Everything up to background task scheduling happens **synchronously in user thread**. 
 Only debounce + actual execution happen in background.
 
 **Why This Matters:**

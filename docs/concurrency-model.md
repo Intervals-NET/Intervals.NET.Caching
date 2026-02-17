@@ -75,7 +75,7 @@ Cache state converges to optimal configuration asynchronously through **decision
 2. **User Path** publishes intent with delivered data (**synchronously in user thread**)
 3. **Rebalance Decision Engine** validates rebalance necessity through multi-stage analytical pipeline (**synchronously in user thread - CPU-only, side-effect free, lightweight**)
 4. **Scheduling** creates PendingRebalance and schedules background Task (**synchronously in user thread**)
-5. **Work avoidance**: Rebalance skipped if validation determines it's unnecessary (NoRebalanceRange containment, Desired==Current, pending rebalance coverage) - **all happens synchronously before Task.Run**
+5. **Work avoidance**: Rebalance skipped if validation determines it's unnecessary (NoRebalanceRange containment, Desired==Current, pending rebalance coverage) - **all happens synchronously before background scheduling**
 6. **Background execution** (only part that runs in ThreadPool): debounce delay + actual rebalance I/O operations
 7. **Debounce delay** controls convergence timing and prevents thrashing (background)
 8. **User correctness** never depends on cache state being up-to-date
@@ -86,7 +86,7 @@ Cache state converges to optimal configuration asynchronously through **decision
 
 **Critical Architectural Detail - Intent Processing is Synchronous:**
 
-The decision logic (multi-stage validation) and scheduling are **NOT background operations**. They execute **synchronously in the user thread** before returning control to the user. Only the actual rebalance execution (I/O operations) happens in background via `Task.Run`.
+The decision logic (multi-stage validation) and scheduling are **NOT background operations**. They execute **synchronously in the user thread** before returning control to the user. Only the actual rebalance execution (I/O operations) happens in background via background task scheduling.
 
 This design is intentional and critical for handling user request bursts:
 - ✅ **CPU-only validation** in user thread (math, conditions, no I/O)

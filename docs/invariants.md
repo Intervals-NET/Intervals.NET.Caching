@@ -147,7 +147,7 @@ deterministic, race-free synchronization without polling or timing dependencies.
 - *Architecture*: Encapsulation prevents other components from publishing intents
 
 **A.4** 🔵 **[Architectural]** Rebalance execution is **always performed asynchronously** relative to the User Path.
-- *Enforced by*: `Task.Run()` in `RebalanceScheduler`, fire-and-forget pattern
+- *Enforced by*: Background task scheduling in `RebalanceScheduler`, fire-and-forget pattern
 - *Architecture*: User Path returns immediately after publishing intent
 
 **A.5** 🔵 **[Architectural]** The User Path performs **only the work necessary to return data to the user**.
