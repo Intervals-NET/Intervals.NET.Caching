@@ -96,7 +96,8 @@ internal sealed class RebalanceExecutionController<TRange, TData, TDomain>
     private readonly AsyncActivityCounter _activityCounter;
 
     /// <summary>
-    /// Todo
+    /// Stores the most recent execution request submitted to the execution controller.
+    /// Used for tracking the current execution state and for testing/diagnostic purposes.
     /// </summary>
     private ExecutionRequest<TRange, TData, TDomain>? _lastExecutionRequest;
 
@@ -137,7 +138,8 @@ internal sealed class RebalanceExecutionController<TRange, TData, TDomain>
     }
 
     /// <summary>
-    /// Todo
+    /// Gets the most recent execution request submitted to the execution controller.
+    /// Returns null if no execution request has been submitted yet.
     /// </summary>
     internal ExecutionRequest<TRange, TData, TDomain>? LastExecutionRequest => _lastExecutionRequest;
 
