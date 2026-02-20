@@ -19,7 +19,7 @@ public sealed class RandomRangeRobustnessTests : IAsyncDisposable
     private readonly SpyDataSource _dataSource;
     private readonly Random _random;
     private WindowCache<int, int, IntegerFixedStepDomain>? _cache;
-    private EventCounterCacheDiagnostics _cacheDiagnostics;
+    private readonly EventCounterCacheDiagnostics _cacheDiagnostics;
 
     private const int RandomSeed = 42;
     private const int MinRangeStart = -10000;
@@ -32,6 +32,7 @@ public sealed class RandomRangeRobustnessTests : IAsyncDisposable
         _domain = new IntegerFixedStepDomain();
         _dataSource = new SpyDataSource();
         _random = new Random(RandomSeed);
+        _cacheDiagnostics = new EventCounterCacheDiagnostics();
     }
 
     /// <summary>
@@ -44,10 +45,8 @@ public sealed class RandomRangeRobustnessTests : IAsyncDisposable
         _dataSource.Reset();
     }
 
-    private WindowCache<int, int, IntegerFixedStepDomain> CreateCache(WindowCacheOptions? options = null)
-    {
-        _cacheDiagnostics = new EventCounterCacheDiagnostics();
-        return _cache = new WindowCache<int, int, IntegerFixedStepDomain>(
+    private WindowCache<int, int, IntegerFixedStepDomain> CreateCache(WindowCacheOptions? options = null) =>
+        _cache = new WindowCache<int, int, IntegerFixedStepDomain>(
             _dataSource,
             _domain,
             options ?? new WindowCacheOptions(
@@ -60,7 +59,6 @@ public sealed class RandomRangeRobustnessTests : IAsyncDisposable
             ),
             _cacheDiagnostics
         );
-    }
 
     private Range<int> GenerateRandomRange()
     {

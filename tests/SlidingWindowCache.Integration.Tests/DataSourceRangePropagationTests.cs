@@ -24,12 +24,13 @@ public sealed class DataSourceRangePropagationTests : IAsyncDisposable
     private readonly IntegerFixedStepDomain _domain;
     private readonly SpyDataSource _dataSource;
     private WindowCache<int, int, IntegerFixedStepDomain>? _cache;
-    private EventCounterCacheDiagnostics _cacheDiagnostics;
+    private readonly EventCounterCacheDiagnostics _cacheDiagnostics;
 
     public DataSourceRangePropagationTests()
     {
         _domain = new IntegerFixedStepDomain();
         _dataSource = new SpyDataSource();
+        _cacheDiagnostics = new EventCounterCacheDiagnostics();
     }
 
     public async ValueTask DisposeAsync()
@@ -40,7 +41,6 @@ public sealed class DataSourceRangePropagationTests : IAsyncDisposable
 
     private WindowCache<int, int, IntegerFixedStepDomain> CreateCache(WindowCacheOptions? options = null)
     {
-        _cacheDiagnostics = new EventCounterCacheDiagnostics();
         _cache = new WindowCache<int, int, IntegerFixedStepDomain>(
             _dataSource,
             _domain,

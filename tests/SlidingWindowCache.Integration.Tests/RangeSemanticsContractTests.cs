@@ -22,12 +22,13 @@ public sealed class RangeSemanticsContractTests : IAsyncDisposable
     private readonly IntegerFixedStepDomain _domain;
     private readonly SpyDataSource _dataSource;
     private WindowCache<int, int, IntegerFixedStepDomain>? _cache;
-    private EventCounterCacheDiagnostics _cacheDiagnostics;
+    private readonly EventCounterCacheDiagnostics _cacheDiagnostics;
 
     public RangeSemanticsContractTests()
     {
         _domain = new IntegerFixedStepDomain();
         _dataSource = new SpyDataSource();
+        _cacheDiagnostics = new EventCounterCacheDiagnostics();
     }
 
     /// <summary>
@@ -42,7 +43,6 @@ public sealed class RangeSemanticsContractTests : IAsyncDisposable
 
     private WindowCache<int, int, IntegerFixedStepDomain> CreateCache(WindowCacheOptions? options = null)
     {
-        _cacheDiagnostics = new EventCounterCacheDiagnostics();
         _cache = new WindowCache<int, int, IntegerFixedStepDomain>(
             _dataSource,
             _domain,
@@ -105,9 +105,9 @@ public sealed class RangeSemanticsContractTests : IAsyncDisposable
         var cache = CreateCache();
         var ranges = new[]
         {
-            Intervals.NET.Factories.Range.Closed<int>(10, 20),   // 11 elements
+            Intervals.NET.Factories.Range.Closed<int>(10, 20), // 11 elements
             Intervals.NET.Factories.Range.Closed<int>(100, 199), // 100 elements
-            Intervals.NET.Factories.Range.Closed<int>(500, 501)  // 2 elements
+            Intervals.NET.Factories.Range.Closed<int>(500, 501) // 2 elements
         };
 
         // ACT & ASSERT
