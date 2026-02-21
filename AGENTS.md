@@ -248,6 +248,17 @@ public void MethodName_Scenario_ExpectedBehavior()
 }
 ```
 
+**Exception Testing:**
+```csharp
+// Use Record.Exception/ExceptionAsync to separate ACT from ASSERT
+var exception = Record.Exception(() => operation());
+var exceptionAsync = await Record.ExceptionAsync(async () => await operationAsync());
+
+Assert.NotNull(exception);  // Verify exception thrown
+Assert.IsType<ArgumentException>(exception);  // Verify type
+Assert.Null(exception);  // Verify no exception
+```
+
 **WaitForIdleAsync Usage:**
 ```csharp
 // ONLY use for specific scenarios: cold start, strong consistency, testing stabilization
