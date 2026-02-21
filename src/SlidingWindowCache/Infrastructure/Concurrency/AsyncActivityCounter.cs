@@ -21,6 +21,17 @@
 /// <item><description>Call <see cref="DecrementActivity"/> in finally block when work completes (processing loop)</description></item>
 /// <item><description>Await <see cref="WaitForIdleAsync"/> to wait for all active operations to complete</description></item>
 /// </list>
+/// <para><strong>Critical Activity Tracking Invariants (docs/invariants.md Section H):</strong></para>
+/// <para>
+/// This class implements two architectural invariants that create an orchestration barrier:
+/// <list type="bullet">
+/// <item><description><strong>H.47 - Increment-Before-Publish:</strong> Work MUST call IncrementActivity() BEFORE becoming visible</description></item>
+/// <item><description><strong>H.48 - Decrement-After-Completion:</strong> Work MUST call DecrementActivity() in finally block AFTER completion</description></item>
+/// <item><description><strong>H.49 - "Was Idle" Semantics:</strong> WaitForIdleAsync() uses eventual consistency model</description></item>
+/// </list>
+/// These invariants ensure idle detection never misses scheduled-but-not-yet-started work.
+/// See docs/invariants.md Section H for detailed explanation and call site verification.
+/// </para>
 /// <para><strong>Idle State Semantics - STATE-BASED, NOT EVENT-BASED:</strong></para>
 /// <para>
 /// Counter starts at 0 (idle). When counter transitions from 0→1, a new TCS is created.
@@ -82,6 +93,12 @@ internal sealed class AsyncActivityCounter
     /// If this is a transition from idle (0) to busy (1), creates a new TaskCompletionSource.
     /// </summary>
     /// <remarks>
+    /// <para><strong>CRITICAL INVARIANT - H.47 Increment-Before-Publish:</strong></para>
+    /// <para>
+    /// Callers MUST call this method BEFORE making work visible to consumers (e.g., semaphore signal, channel write).
+    /// This ensures idle detection never misses scheduled-but-not-yet-started work.
+    /// See docs/invariants.md Section H.47 for detailed explanation and call site verification.
+    /// </para>
     /// <para><strong>Thread-Safety:</strong></para>
     /// <para>
     /// Uses <see cref="Interlocked.Increment"/> for atomic counter manipulation.
@@ -98,10 +115,11 @@ internal sealed class AsyncActivityCounter
     /// If multiple threads call IncrementActivity concurrently from idle state, Interlocked.Increment
     /// guarantees only ONE thread observes newCount == 1. That thread creates the TCS for this busy period.
     /// </para>
-    /// <para><strong>Call Sites:</strong></para>
+    /// <para><strong>Call Sites (verified in docs/invariants.md Section H.47):</strong></para>
     /// <list type="bullet">
-    /// <item><description>IntentController.PublishIntent() - when user publishes intent</description></item>
-    /// <item><description>Execution controllers - when enqueueing execution request</description></item>
+    /// <item><description>IntentController.PublishIntent() - line 173 before semaphore signal at line 177</description></item>
+    /// <item><description>TaskBasedRebalanceExecutionController.PublishExecutionRequest() - line 196 before volatile write at line 220</description></item>
+    /// <item><description>ChannelBasedRebalanceExecutionController.PublishExecutionRequest() - line 220 before channel write at line 239</description></item>
     /// </list>
     /// </remarks>
     public void IncrementActivity()
@@ -125,6 +143,12 @@ internal sealed class AsyncActivityCounter
     /// If this is a transition from busy to idle (counter reaches 0), signals the TaskCompletionSource.
     /// </summary>
     /// <remarks>
+    /// <para><strong>CRITICAL INVARIANT - H.48 Decrement-After-Completion:</strong></para>
+    /// <para>
+    /// Callers MUST call this method in a finally block AFTER work completes (success/cancellation/exception).
+    /// This ensures activity counter remains balanced and WaitForIdleAsync never hangs due to counter leaks.
+    /// See docs/invariants.md Section H.48 for detailed explanation and call site verification.
+    /// </para>
     /// <para><strong>Thread-Safety:</strong></para>
     /// <para>
     /// Uses <see cref="Interlocked.Decrement"/> for atomic counter manipulation.
@@ -146,10 +170,12 @@ internal sealed class AsyncActivityCounter
     /// </list>
     /// This race is benign: old busy period ends, new busy period begins. No corruption.
     /// </para>
-    /// <para><strong>Call Sites:</strong></para>
+    /// <para><strong>Call Sites (verified in docs/invariants.md Section H.48):</strong></para>
     /// <list type="bullet">
-    /// <item><description>IntentController.ProcessIntentsAsync() - in finally block after processing intent</description></item>
-    /// <item><description>Execution controllers - in finally block after execution</description></item>
+    /// <item><description>IntentController.ProcessIntentsAsync() - finally block at line 271</description></item>
+    /// <item><description>TaskBasedRebalanceExecutionController.ExecuteRequestAsync() - finally block at line 349</description></item>
+    /// <item><description>ChannelBasedRebalanceExecutionController.ExecutionLoopAsync() - finally block at line 327</description></item>
+    /// <item><description>ChannelBasedRebalanceExecutionController.PublishExecutionRequest() - catch block at line 245 (channel write failure)</description></item>
     /// </list>
     /// <para><strong>Critical Contract:</strong></para>
     /// <para>

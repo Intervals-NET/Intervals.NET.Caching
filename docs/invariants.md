@@ -4,7 +4,7 @@
 
 ## Understanding This Document
 
-This document lists **46 system invariants** that define the behavior, architecture, and design intent of the Sliding Window Cache.
+This document lists **49 system invariants** that define the behavior, architecture, and design intent of the Sliding Window Cache.
 
 ### Invariant Categories
 
@@ -507,22 +507,141 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 
 ---
 
+## H. Activity Tracking & Idle Detection Invariants
+
+### Background
+
+The `AsyncActivityCounter` provides lock-free idle state detection for background operations. It tracks active work (intent processing, rebalance execution) and signals completion when all work finishes. This enables deterministic synchronization for testing, disposal, and health checks.
+
+**Key Concept**: Activity tracking creates an **orchestration barrier** — work must increment counter BEFORE becoming visible, ensuring idle detection never misses scheduled-but-not-yet-started work.
+
+### The Two Critical Invariants
+
+**H.47** 🔵 **[Architectural — Enforced by call site ordering]** **Increment-Before-Publish Invariant:**
+Any operation that schedules, publishes, or enqueues background work MUST call `IncrementActivity()` BEFORE making that work visible to consumers.
+
+- *Enforced by*: Explicit ordering in all publication call sites
+- *Architecture*: Activity counter incremented before semaphore signal, channel write, or volatile write
+- *Critical property*: Prevents "scheduled but invisible to idle detection" race condition
+- *Call sites*:
+  - `IntentController.PublishIntent()`: Increment (line 173) before `_intentSignal.Release()` (line 177)
+  - `TaskBasedRebalanceExecutionController.PublishExecutionRequest()`: Increment (line 196) before `Volatile.Write(_currentExecutionTask)` (line 220)
+  - `ChannelBasedRebalanceExecutionController.PublishExecutionRequest()`: Increment (line 220) before `WriteAsync()` (line 239)
+
+**H.48** 🔵 **[Architectural — Enforced by finally blocks]** **Decrement-After-Completion Invariant:**
+Any operation representing completion of background work MUST call `DecrementActivity()` in a finally block AFTER work is fully completed or cancelled.
+
+- *Enforced by*: finally block placement in all processing loops
+- *Architecture*: Decrement always executes regardless of success/cancellation/exception path
+- *Critical property*: Prevents activity counter leaks that would cause `WaitForIdleAsync()` to hang indefinitely
+- *Call sites*:
+  - `IntentController.ProcessIntentsAsync()`: Decrement in finally block (line 271) after intent processing
+  - `TaskBasedRebalanceExecutionController.ExecuteRequestAsync()`: Decrement in finally block (line 349) after execution
+  - `ChannelBasedRebalanceExecutionController.ExecutionLoopAsync()`: Decrement in finally block (line 327) after execution
+  - `ChannelBasedRebalanceExecutionController.PublishExecutionRequest()`: Manual decrement in catch block (line 245) on channel write failure
+
+**H.49** 🟡 **[Conceptual — Eventual consistency design]** **"Was Idle" Semantics:**
+`WaitForIdleAsync()` completes when the system **was idle at some point in time**, NOT when "system is idle now".
+
+- *Design rationale*: State-based completion semantics (TaskCompletionSource) provide eventual consistency
+- *Behavior*: Reading a completed TCS after new activity starts is correct — system WAS idle between observations
+- *Implication*: Callers requiring stronger guarantees (e.g., "still idle after await") must implement retry logic or re-check state
+- *Testing usage*: Sufficient for convergence testing — system stabilized at snapshot time
+
+### Activity-Based Stabilization Barrier
+
+The combination of H.47 and H.48 creates a **stabilization barrier** with strong guarantees:
+
+**Idle state (counter=0) means:**
+- ✅ No intents being processed
+- ✅ No rebalance executions running  
+- ✅ No work enqueued in channels or task chains
+- ✅ No "scheduled but invisible" work exists
+
+**Race scenario (correct behavior):**
+1. T1 decrements to 0, signals TCS_old (idle achieved)
+2. T2 increments to 1, creates TCS_new (new busy period)
+3. T3 calls `WaitForIdleAsync()`, reads TCS_old (already completed)
+4. Result: Method completes immediately even though count=1
+
+This is **correct** — system WAS idle between steps 1 and 2. This is textbook eventual consistency semantics.
+
+### Error Handling & Counter Leak Prevention
+
+**ChannelBasedRebalanceExecutionController** demonstrates exceptional error handling:
+
+```csharp
+// Lines 237-248 in ChannelBasedRebalanceExecutionController.cs
+try
+{
+    await _executionChannel.Writer.WriteAsync(request).ConfigureAwait(false);
+}
+catch (Exception ex)
+{
+    request.Dispose();
+    _activityCounter.DecrementActivity();  // Manual cleanup prevents leak
+    _cacheDiagnostics.RebalanceExecutionFailed(ex);
+    throw;
+}
+```
+
+If channel write fails (e.g., channel completed during disposal race), the catch block manually decrements to prevent counter leak. This ensures counter remains balanced even in edge cases.
+
+### Execution Flow Example
+
+Complete trace demonstrating both invariants:
+
+```
+1. User Thread: GetDataAsync(range)
+   ├─> IntentController.PublishIntent()
+   │   ├─> Write intent reference
+   │   ├─> ✅ IncrementActivity()              [count: 0→1, TCS_A created]
+   │   └─> Release semaphore (intent visible)
+   │
+2. Intent Processing Loop (Background Thread)
+   ├─> Wake up, read intent
+   ├─> DecisionEngine evaluates
+   ├─> If skip: jump to finally
+   │   └─> finally: ✅ DecrementActivity()     [count: 1→0, TCS_A signaled → IDLE]
+   │
+   ├─> If schedule:
+   │   ├─> ExecutionController.PublishExecutionRequest()
+   │   │   ├─> ✅ IncrementActivity()          [count: 1→2]
+   │   │   └─> Enqueue/chain execution request (work visible)
+   │   └─> finally: ✅ DecrementActivity()     [count: 2→1]
+   │
+3. Rebalance Execution Loop (Background Thread)
+   ├─> Dequeue/await execution request
+   ├─> Executor.ExecuteAsync() [CACHE MUTATIONS]
+   └─> finally: ✅ DecrementActivity()         [count: 1→0, TCS_A signaled → IDLE]
+```
+
+**Key insight**: Idle state occurs ONLY when no work is active, enqueued, or scheduled. The increment-before-publish pattern ensures this guarantee holds across all execution paths.
+
+### Relation to Other Invariants
+
+- **A.-1** (Single-Writer Architecture): Activity tracking supports single-writer by tracking execution lifecycle
+- **F.35** (Cancellation Support): DecrementActivity in finally blocks ensures counter correctness even on cancellation
+- **G.46** (User/Background Cancellation): Activity counter remains balanced regardless of cancellation timing
+
+---
+
 ## Summary Statistics
 
-### Total Invariants: 47
+### Total Invariants: 49
 
 #### By Category:
 - 🟢 **Behavioral** (test-covered): 19 invariants
-- 🔵 **Architectural** (structure-enforced): 20 invariants  
+- 🔵 **Architectural** (structure-enforced): 22 invariants  
 - 🟡 **Conceptual** (design-level): 8 invariants
 
 #### Test Coverage Analysis:
 - **29 automated tests** in `WindowCacheInvariantTests`
 - **19 behavioral invariants** directly covered
-- **20 architectural invariants** enforced by code structure (not tested)
+- **22 architectural invariants** enforced by code structure (not tested)
 - **8 conceptual invariants** documented as design guidance (not tested)
 
-**This is by design.** The gap between 47 invariants and 29 tests is intentional:
+**This is by design.** The gap between 49 invariants and 29 tests is intentional:
 - Architecture enforces structural constraints automatically
 - Conceptual invariants guide development, not runtime behavior
 - Tests focus on externally observable behavior
