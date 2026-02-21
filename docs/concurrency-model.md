@@ -5,10 +5,17 @@
 This library is built around a **single logical consumer per cache instance** with a **single-writer architecture**.
 
 A cache instance:
-- is **not thread-safe for shared access**
-- is **designed for concurrent reads** (User Path is read-only)
-- assumes a single, coherent access pattern
-- enforces single-writer for all mutations (Rebalance Execution only)
+- is designed for **one logical consumer** (one user, one viewport, one coherent access pattern)
+- is **logically single-threaded** from the user's perspective (one conceptual access stream)
+- **internally supports concurrent threads** (User thread + Intent processing loop + Rebalance execution loop)
+- is **designed for concurrent reads** (User Path is read-only, safe for repeated calls)
+- enforces **single-writer** for all mutations (Rebalance Execution only)
+
+**Important Distinction:**
+- **User-facing model**: One logical consumer per cache (coherent access pattern from one source)
+- **Internal implementation**: Multiple threads operate concurrently within the cache pipeline
+- WindowCache **IS thread-safe** for its internal concurrency (user thread + background threads)
+- WindowCache is **NOT designed for multiple users sharing one cache instance** (violates coherent access pattern)
 
 This is an **ideological requirement**, not merely an architectural or technical limitation.
 
@@ -319,7 +326,9 @@ Method exists only to expose idle synchronization through public API for testing
 
 ### Lock-Free Implementation
 
-**IntentController** uses lock-free synchronization:
+The system uses lock-free synchronization throughout:
+
+**IntentController** - Lock-free intent management:
 - **No locks, no `lock` statements, no mutexes**
 - Uses `Volatile.Read` and `Volatile.Write` for safe field access across threads
 - `_pendingRebalance` field accessed with memory barriers via `Volatile` operations
@@ -327,13 +336,24 @@ Method exists only to expose idle synchronization through public API for testing
 - Thread-safe without blocking - guaranteed progress
 - Zero contention overhead
 
+**AsyncActivityCounter** - Lock-free idle detection:
+- **Fully lock-free**: Uses only `Interlocked` and `Volatile` operations
+- `Interlocked.Increment/Decrement` for atomic counter operations
+- `Volatile.Write/Read` for TaskCompletionSource reference with proper memory barriers
+- State-based completion primitive (TaskCompletionSource, not event-based like SemaphoreSlim)
+- Multiple awaiter support without coordination overhead
+- See "AsyncActivityCounter - Lock-Free Idle Detection" section for detailed architecture
+
 **Safe Visibility Pattern:**
 ```csharp
-// Read with memory barrier for safe observation
+// IntentController - Volatile operations for intent coordination
 var pending = Volatile.Read(ref _pendingRebalance);
-
-// Write with memory barrier for safe publication
 Volatile.Write(ref _pendingRebalance, newPending);
+
+// AsyncActivityCounter - Volatile + Interlocked for idle detection
+var newCount = Interlocked.Increment(ref _activityCount);  // Atomic counter
+Volatile.Write(ref _idleTcs, newTcs);  // Publish TCS with release fence
+var tcs = Volatile.Read(ref _idleTcs);  // Observe TCS with acquire fence
 ```
 
 **Domain-Driven Cancellation:**
@@ -346,7 +366,7 @@ Volatile.Write(ref _pendingRebalance, newPending);
 - Tested under concurrent load (100+ simultaneous operations)
 - No deadlocks, no race conditions, no data corruption observed
 
-This lightweight synchronization approach using `Volatile` operations ensures thread-safety 
+This lightweight synchronization approach using `Volatile` and `Interlocked` operations ensures thread-safety 
 without the overhead and complexity of traditional locking mechanisms, while the DDD-style 
 domain object pattern provides clean encapsulation of cancellation infrastructure.
 
@@ -506,14 +526,84 @@ Disposal respects the single-writer architecture:
 - **No race conditions**: Disposal does not introduce write-write races
 - **Graceful coordination**: Uses same cancellation mechanism as rebalance operations
 
-### Integration with AsyncActivityCounter
+### AsyncActivityCounter - Lock-Free Idle Detection
 
-The `AsyncActivityCounter` tracks active background operations:
-- Intent processing increments/decrements counter
-- Rebalance execution increments/decrements counter
-- `WaitForIdleAsync()` uses counter to detect idle state
+**Purpose:**
+`AsyncActivityCounter` provides lock-free, thread-safe idle state detection for background operations. It tracks active work (intent processing, rebalance execution) and provides an awaitable notification when all work completes.
 
-**Disposal does not use AsyncActivityCounter** - it directly waits for background loops to exit via `Task.Wait()` on the loop tasks. This ensures disposal completes even if counter state is inconsistent.
+**Architecture:**
+- **Fully lock-free**: Uses only `Interlocked` and `Volatile` operations
+- **State-based semantics**: TaskCompletionSource provides persistent idle state (not event-based)
+- **Multiple awaiter support**: All threads awaiting idle state complete when signaled
+- **Eventual consistency**: "Was idle at some point" semantics (not "is idle now")
+
+**Implementation Details:**
+
+```csharp
+// Activity counter - atomic operations via Interlocked
+private int _activityCount;
+
+// TaskCompletionSource - published/observed via Volatile operations
+private TaskCompletionSource<bool> _idleTcs;
+```
+
+**Thread-Safety Model:**
+- **IncrementActivity()**: `Interlocked.Increment` + `Volatile.Write` on 0→1 transition
+- **DecrementActivity()**: `Interlocked.Decrement` + `Volatile.Read` + `TrySetResult` on N→0 transition
+- **WaitForIdleAsync()**: `Volatile.Read` snapshot + `Task.WaitAsync()` for cancellation
+
+**Memory Barriers:**
+- `Volatile.Write` (release fence): Publishes fully-constructed TCS on 0→1 transition
+- `Volatile.Read` (acquire fence): Observes published TCS on N→0 transition and in WaitForIdleAsync
+- Ensures proper happens-before relationship: TCS construction visible before reference read
+
+**Why TaskCompletionSource (Not SemaphoreSlim):**
+| Primitive            | Semantics      | Idle State Behavior                                | Correct? |
+|----------------------|----------------|----------------------------------------------------|----------|
+| TaskCompletionSource | State-based    | All awaiters observe persistent idle state         | ✅ Yes   |
+| SemaphoreSlim        | Event/token    | First awaiter consumes release, others block       | ❌ No    |
+
+Idle detection requires state-based semantics: when system becomes idle, ALL current and future awaiters (until next busy period) should complete immediately. TCS provides this; SemaphoreSlim does not.
+
+**Usage Pattern:**
+
+```csharp
+// Intent processing loop
+try
+{
+    _activityCounter.IncrementActivity();  // Start work
+    await ProcessIntentAsync(intent);
+}
+finally
+{
+    _activityCounter.DecrementActivity();  // End work (even on exception)
+}
+
+// Test or disposal wait for idle
+await _activityCounter.WaitForIdleAsync(cancellationToken);  // Complete when system idle
+```
+
+**Idle State Semantics - "Was Idle" NOT "Is Idle":**
+
+WaitForIdleAsync completes when the system **was idle at some point in time**. It does NOT guarantee the system is still idle after completion. This is correct behavior for eventual consistency models.
+
+**Example Race (Correct Behavior):**
+1. T1 decrements to 0, signals TCS_old (idle state achieved)
+2. T2 increments to 1, creates TCS_new (new busy period starts)
+3. T3 calls WaitForIdleAsync, reads TCS_old (already completed)
+4. Result: WaitForIdleAsync completes immediately even though count=1
+
+This is **not a bug** - the system WAS idle between steps 1 and 2. Callers requiring stronger guarantees must implement application-specific logic (e.g., re-check state after await).
+
+**Call Sites:**
+- **IntentController.PublishIntent()**: IncrementActivity when publishing intent
+- **IntentController.ProcessIntentsAsync()**: DecrementActivity in finally block after processing
+- **Execution controllers**: IncrementActivity on enqueue, DecrementActivity in finally after execution
+- **WindowCache.WaitForIdleAsync()**: Exposes idle detection via public API for testing
+
+**Disposal and AsyncActivityCounter:**
+
+**Disposal does NOT use AsyncActivityCounter** - it directly waits for background loops to exit via `Task.Wait()` on the loop tasks. This ensures disposal completes even if counter state is inconsistent (e.g., leaked increment without matching decrement).
 
 ---
 
@@ -522,6 +612,8 @@ The `AsyncActivityCounter` tracks active background operations:
 - Single logical consumer per cache instance (coherent access pattern)
 - Single-writer architecture (Rebalance Execution only)
 - Read-only User Path (safe for repeated calls from same consumer)
+- **Internal concurrent threads** (user thread + intent processing loop + rebalance execution loop)
+- **Thread-safe internal pipeline** (lock-free synchronization via Volatile/Interlocked)
 - Background asynchronous rebalance
 - Cancellation and debouncing of rebalance execution
 - High-frequency access from one logical consumer
@@ -534,9 +626,12 @@ The `AsyncActivityCounter` tracks active background operations:
 
 ## What Is Explicitly Not Supported
 
-- Multiple concurrent consumers per cache instance
-- Thread-safe shared access
-- Cross-user sliding window arbitration
+- Multiple concurrent consumers per cache instance (multiple users sharing one cache)
+- Multiple logical access patterns per cache instance (cross-user sliding window arbitration)
+- User threads calling WindowCache methods concurrently from different logical consumers
+
+**Note:** Internal concurrency (user thread + background threads within single cache) IS supported.
+What is NOT supported is multiple users/consumers sharing the same cache instance.
 
 ---
 

@@ -279,11 +279,12 @@ public sealed class WindowCache<TRange, TData, TDomain>
     /// <remarks>
     /// <para><strong>Implementation Strategy:</strong></para>
     /// <para>
-    /// Delegates to AsyncActivityCounter which tracks active operations atomically:
+    /// Delegates to AsyncActivityCounter which tracks active operations using lock-free atomic operations:
     /// <list type="bullet">
-    /// <item><description>Counter increments when intent published or execution enqueued</description></item>
-    /// <item><description>Counter decrements when intent processing completes or execution finishes</description></item>
-    /// <item><description>Returns completed Task when counter reaches 0 (idle state)</description></item>
+    /// <item><description>Counter increments atomically when intent published or execution enqueued</description></item>
+    /// <item><description>Counter decrements atomically when intent processing completes or execution finishes</description></item>
+    /// <item><description>TaskCompletionSource signaled when counter reaches 0 (idle state)</description></item>
+    /// <item><description>Returns Task that completes when system idle (state-based, supports multiple awaiters)</description></item>
     /// </list>
     /// </para>
     /// <para><strong>Idle State Definition:</strong></para>
@@ -294,6 +295,23 @@ public sealed class WindowCache<TRange, TData, TDomain>
     /// <item><description>No rebalance execution running</description></item>
     /// </list>
     /// </para>
+    /// <para><strong>Idle State Semantics - "Was Idle" NOT "Is Idle":</strong></para>
+    /// <para>
+    /// This method completes when the system <strong>was idle at some point in time</strong>.
+    /// It does NOT guarantee the system is still idle after completion (new activity may start immediately).
+    /// This is correct behavior for eventual consistency models - callers must re-check state if needed.
+    /// </para>
+    /// <para><strong>Typical Usage (Testing):</strong></para>
+    /// <code>
+    /// // Trigger operation that schedules rebalance
+    /// await cache.GetDataAsync(newRange);
+    /// 
+    /// // Wait for system to stabilize
+    /// await cache.WaitForIdleAsync();
+    /// 
+    /// // Cache WAS idle at some point - assert on converged state
+    /// Assert.Equal(expectedRange, cache.CurrentCacheRange);
+    /// </code>
     /// </remarks>
     public Task WaitForIdleAsync(CancellationToken cancellationToken = default)
     {

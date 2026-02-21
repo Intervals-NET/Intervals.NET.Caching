@@ -211,19 +211,26 @@ catch (Exception ex)
 - Rebalance Execution: SINGLE WRITER (sole authority for cache mutations)
 - Serialization: Channel-based with single reader/single writer (intent processing loop)
 
-**Thread Safety Model:**
-- WindowCache CAN be called from multiple threads without breaking
-- **Conceptual Design**: One client = one WindowCache instance (one viewport per cache)
-- Multiple threads reading same cache is architecturally unusual (violates single logical consumer model)
+**Threading Model - Single Logical Consumer with Internal Concurrency:**
+- **User-facing model**: One logical consumer per cache (one user, one viewport, coherent access pattern)
+- **Internal implementation**: Multiple threads operate concurrently (User thread + Intent loop + Execution loop)
+- WindowCache **IS thread-safe** for its internal concurrency (user thread + background threads)
+- WindowCache is **NOT designed for multiple users sharing one cache** (violates coherent access pattern)
+- Multiple threads from the SAME logical consumer CAN call WindowCache safely (read-only User Path)
 
 **Lock-Free Operations:**
 ```csharp
 // Intent management using Volatile and Interlocked
 var previousIntent = Interlocked.Exchange(ref _currentIntent, newIntent);
 var currentIntent = Volatile.Read(ref _currentIntent);
+
+// AsyncActivityCounter - fully lock-free as of latest refactor
+var newCount = Interlocked.Increment(ref _activityCount);  // Atomic counter
+Volatile.Write(ref _idleTcs, newTcs);  // Publish TCS with release fence
+var tcs = Volatile.Read(ref _idleTcs);  // Observe TCS with acquire fence
 ```
 
-**Note**: AsyncActivityCounter uses lock-based synchronization (planned optimization to remove locks).
+**Note**: AsyncActivityCounter is now fully lock-free (refactored from previous lock-based implementation).
 
 ### Testing Guidelines
 
@@ -261,10 +268,18 @@ Assert.Null(exception);  // Verify no exception
 
 **WaitForIdleAsync Usage:**
 ```csharp
-// ONLY use for specific scenarios: cold start, strong consistency, testing stabilization
-await cache.WaitForIdleAsync(); // Cache is now idle = acceptable/consistent for last requested range
+// Use for testing to wait until system was idle at some point
+await cache.WaitForIdleAsync(); 
+
+// Cache WAS idle (converged state) - assert on that state
 Assert.Equal(expectedRange, actualRange);
 ```
+
+**WaitForIdleAsync Semantics:**
+- Completes when system **was idle at some point** (not "is idle now")
+- Uses eventual consistency semantics (correct for testing convergence)
+- New activity may start immediately after completion
+- Re-check state if stronger guarantees needed
 
 **When WaitForIdleAsync is NOT needed**: After normal `GetDataAsync` calls (cache is eventually consistent by design).
 

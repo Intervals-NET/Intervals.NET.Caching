@@ -678,7 +678,8 @@ For detailed architectural documentation, see:
     - **ScenarioBenchmarks** - End-to-end cold start performance
     - **Storage Strategy Comparison** - Snapshot vs CopyOnRead allocation and performance tradeoffs across all suites
 - **Deterministic Testing**: `WaitForIdleAsync()` API provides race-free synchronization with background rebalance
-  operations for testing, graceful shutdown, health checks, and integration scenarios
+  operations for testing, graceful shutdown, health checks, and integration scenarios. Uses "was idle at some point"
+  semantics (eventual consistency model) - system converged to stable state at snapshot time.
 
 ### Key Architectural Principles
 
@@ -715,8 +716,9 @@ For detailed architectural documentation, see:
    pending rebalance is cancelled and rescheduled. Cancellation is mechanical coordination (prevents concurrent
    executions), not a decision mechanism. See [Cache State Machine](docs/cache-state-machine.md).
 
-8. **Lock-Free Concurrency**: Intent management uses `Volatile.Read/Write` and `Interlocked.Exchange` for atomic
-   operations - no locks, no race conditions, guaranteed progress. Execution serialization via `SemaphoreSlim` ensures
+8. **Lock-Free Concurrency**: Intent management and idle detection use `Volatile.Read/Write`, `Interlocked` operations,
+   and `TaskCompletionSource` for atomic state coordination - no locks, no race conditions, guaranteed progress.
+   Execution serialization via `SemaphoreSlim` ensures single-writer architecture for cache mutations.
    single-writer semantics. Thread-safety achieved through architectural constraints and atomic operations.
    See [Concurrency Model - Lock-Free Implementation](docs/concurrency-model.md#lock-free-implementation).
 

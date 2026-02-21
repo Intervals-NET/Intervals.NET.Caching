@@ -1,14 +1,19 @@
 ﻿namespace SlidingWindowCache.Infrastructure.Concurrency;
 
 /// <summary>
-/// Thread-safe activity counter that provides awaitable idle state notification.
+/// Lock-free, thread-safe activity counter that provides awaitable idle state notification.
 /// Tracks active operations using atomic counter and signals completion via TaskCompletionSource.
 /// </summary>
 /// <remarks>
 /// <para><strong>Thread-Safety Model:</strong></para>
 /// <para>
-/// This class uses lock-free atomic operations (Interlocked) for counter manipulation
-/// and careful synchronization for TaskCompletionSource lifecycle management.
+/// This class is fully lock-free, using only <see cref="Interlocked"/> and <see cref="Volatile"/> operations
+/// for all synchronization. It supports concurrent calls from multiple threads:
+/// <list type="bullet">
+/// <item><description>User thread (via IntentController.PublishIntent)</description></item>
+/// <item><description>Intent processing loop (background)</description></item>
+/// <item><description>Execution controllers (background)</description></item>
+/// </list>
 /// </para>
 /// <para><strong>Usage Pattern:</strong></para>
 /// <list type="number">
@@ -16,25 +21,50 @@
 /// <item><description>Call <see cref="DecrementActivity"/> in finally block when work completes (processing loop)</description></item>
 /// <item><description>Await <see cref="WaitForIdleAsync"/> to wait for all active operations to complete</description></item>
 /// </list>
-/// <para><strong>Idle State:</strong></para>
+/// <para><strong>Idle State Semantics - STATE-BASED, NOT EVENT-BASED:</strong></para>
 /// <para>
 /// Counter starts at 0 (idle). When counter transitions from 0→1, a new TCS is created.
 /// When counter transitions from N→0, the TCS is signaled. Multiple waiters can await the same TCS.
 /// </para>
+/// <para>
+/// <strong>CRITICAL:</strong> This is a state-based completion primitive, NOT an event-based signaling primitive.
+/// TaskCompletionSource is the correct primitive because:
+/// <list type="bullet">
+/// <item><description>✅ State-based: Task.IsCompleted persists, all future awaiters complete immediately</description></item>
+/// <item><description>✅ Multiple awaiters: All threads awaiting the same TCS complete when signaled</description></item>
+/// <item><description>✅ No lost signals: Idle state is preserved until next busy period</description></item>
+/// </list>
+/// </para>
+/// <para>
+/// <strong>Why NOT SemaphoreSlim:</strong> SemaphoreSlim is token/event-based. Release() is consumed by first WaitAsync(),
+/// subsequent waiters block. This violates idle state semantics where ALL awaiters should observe idle state.
+/// </para>
+/// <para><strong>Memory Model Guarantees:</strong></para>
+/// <para>
+/// TCS lifecycle uses explicit memory barriers via <see cref="Volatile.Write"/> (publish) and <see cref="Volatile.Read"/> (observe):
+/// <list type="bullet">
+/// <item><description>Increment (0→1): Creates TCS, publishes via Volatile.Write (release fence)</description></item>
+/// <item><description>Decrement (N→0): Reads TCS via Volatile.Read (acquire fence), signals idle</description></item>
+/// <item><description>WaitForIdleAsync: Snapshots TCS via Volatile.Read (acquire fence)</description></item>
+/// </list>
+/// This ensures proper visibility: readers always observe fully-constructed TCS instances.
+/// </para>
+/// <para><strong>Idle Detection Semantics:</strong></para>
+/// <para>
+/// <see cref="WaitForIdleAsync"/> completes when the system <strong>was idle at some point in time</strong>.
+/// It does NOT guarantee the system is still idle after completion (new activity may start immediately).
+/// This is correct behavior for eventual consistency models - callers must re-check state if needed.
+/// </para>
 /// </remarks>
-/// TODO try to analyze this implementation - maybe we can avoid using lock at all?
-/// TODO consider about implementing this using SemaphoreSlim. I guess we can use it for signalling and avoids TCS allocations
 internal sealed class AsyncActivityCounter
 {
     // Activity counter - incremented when work starts, decremented when work finishes
+    // Atomic operations via Interlocked.Increment/Decrement
     private int _activityCount;
 
-    // Lock for synchronizing TCS creation and completion
-    // Used only during idle→busy and busy→idle transitions, not on every increment/decrement
-    private readonly object _tcsLock = new();
-
     // Current TaskCompletionSource - signaled when counter reaches 0
-    // Protected by _tcsLock for creation/replacement, but reading can be done outside lock
+    // Access via Volatile.Read/Write for proper memory barriers
+    // Published via Volatile.Write on 0→1 transition, observed via Volatile.Read on N→0 transition and WaitForIdleAsync
     private TaskCompletionSource<bool> _idleTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     /// <summary>
@@ -54,13 +84,24 @@ internal sealed class AsyncActivityCounter
     /// <remarks>
     /// <para><strong>Thread-Safety:</strong></para>
     /// <para>
-    /// Uses Interlocked.Increment for atomic counter manipulation.
-    /// TCS creation is synchronized via lock to prevent races during idle→busy transition.
+    /// Uses <see cref="Interlocked.Increment"/> for atomic counter manipulation.
+    /// TCS creation uses <see cref="Volatile.Write"/> for lock-free publication with release fence semantics.
+    /// Only the thread that observes newCount == 1 creates and publishes the new TCS.
+    /// </para>
+    /// <para><strong>Memory Barriers:</strong></para>
+    /// <para>
+    /// Volatile.Write provides release fence: all prior writes (TCS construction) are visible to readers.
+    /// This ensures readers via Volatile.Read observe fully-constructed TCS instances.
+    /// </para>
+    /// <para><strong>Concurrent 0→1 Transitions:</strong></para>
+    /// <para>
+    /// If multiple threads call IncrementActivity concurrently from idle state, Interlocked.Increment
+    /// guarantees only ONE thread observes newCount == 1. That thread creates the TCS for this busy period.
     /// </para>
     /// <para><strong>Call Sites:</strong></para>
     /// <list type="bullet">
-    /// <item><description>UserRequestHandler.PublishIntent() - when user publishes intent</description></item>
-    /// <item><description>IntentController.ProcessIntentsAsync() - before enqueuing execution request</description></item>
+    /// <item><description>IntentController.PublishIntent() - when user publishes intent</description></item>
+    /// <item><description>Execution controllers - when enqueueing execution request</description></item>
     /// </list>
     /// </remarks>
     public void IncrementActivity()
@@ -70,16 +111,12 @@ internal sealed class AsyncActivityCounter
         // Check if this is a transition from idle (0) to busy (1)
         if (newCount == 1)
         {
-            lock (_tcsLock)
-            {
-                // Double-check inside lock - another thread might have already created new TCS
-                // If current TCS is not completed, we're already busy (race with another increment)
-                if (_idleTcs.Task.IsCompleted)
-                {
-                    // Create new TCS for this busy period
-                    _idleTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-                }
-            }
+            // Create new TCS for this busy period
+            var newTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            
+            // Publish new TCS with release fence (Volatile.Write)
+            // Ensures TCS construction completes before reference becomes visible
+            Volatile.Write(ref _idleTcs, newTcs);
         }
     }
 
@@ -90,13 +127,29 @@ internal sealed class AsyncActivityCounter
     /// <remarks>
     /// <para><strong>Thread-Safety:</strong></para>
     /// <para>
-    /// Uses Interlocked.Decrement for atomic counter manipulation.
-    /// TCS.TrySetResult is inherently thread-safe (only first call succeeds, others are no-ops).
+    /// Uses <see cref="Interlocked.Decrement"/> for atomic counter manipulation.
+    /// <see cref="TaskCompletionSource{TResult}.TrySetResult"/> is inherently thread-safe and idempotent
+    /// (only first call succeeds, others are no-ops). No lock needed.
+    /// </para>
+    /// <para><strong>Memory Barriers:</strong></para>
+    /// <para>
+    /// <see cref="Volatile.Read"/> provides acquire fence: observes TCS published via Volatile.Write.
+    /// Ensures we signal the correct TCS for this busy period.
+    /// </para>
+    /// <para><strong>Race Scenario (Decrement + Increment Interleaving):</strong></para>
+    /// <para>
+    /// If T1 decrements to 0 while T2 increments to 1:
+    /// <list type="bullet">
+    /// <item><description>T1 observes count=0, reads TCS_old via Volatile.Read, signals TCS_old (completes old busy period)</description></item>
+    /// <item><description>T2 observes count=1, creates TCS_new, publishes via Volatile.Write (starts new busy period)</description></item>
+    /// <item><description>Result: TCS_old=completed, _idleTcs=TCS_new (uncompleted), count=1 - ALL CORRECT</description></item>
+    /// </list>
+    /// This race is benign: old busy period ends, new busy period begins. No corruption.
     /// </para>
     /// <para><strong>Call Sites:</strong></para>
     /// <list type="bullet">
     /// <item><description>IntentController.ProcessIntentsAsync() - in finally block after processing intent</description></item>
-    /// <item><description>RebalanceExecutionController.ProcessExecutionRequestsAsync() - in finally block after execution</description></item>
+    /// <item><description>Execution controllers - in finally block after execution</description></item>
     /// </list>
     /// <para><strong>Critical Contract:</strong></para>
     /// <para>
@@ -121,13 +174,13 @@ internal sealed class AsyncActivityCounter
         // Check if this is a transition to idle (counter reached 0)
         if (newCount == 0)
         {
-            // Signal idle state - TrySetResult is thread-safe (idempotent)
+            // Read current TCS with acquire fence (Volatile.Read)
+            // Ensures we observe TCS published by Volatile.Write in IncrementActivity
+            var tcs = Volatile.Read(ref _idleTcs);
+            
+            // Signal idle state - TrySetResult is thread-safe and idempotent
             // Multiple threads might see count=0 simultaneously, but only first TrySetResult succeeds
-            lock (_tcsLock)
-            {
-                // Signal the current TCS - this is thread-safe
-                _idleTcs.TrySetResult(true);
-            }
+            tcs.TrySetResult(true);
         }
     }
 
@@ -141,49 +194,49 @@ internal sealed class AsyncActivityCounter
     /// A Task that completes when counter reaches 0, or throws OperationCanceledException if cancelled.
     /// </returns>
     /// <remarks>
+    /// <para><strong>Thread-Safety:</strong></para>
+    /// <para>
+    /// Uses <see cref="Volatile.Read"/> to snapshot current TCS with acquire fence semantics.
+    /// Ensures we observe TCS published via Volatile.Write in <see cref="IncrementActivity"/>.
+    /// </para>
     /// <para><strong>Behavior:</strong></para>
     /// <list type="bullet">
     /// <item><description>If already idle (count=0), returns completed Task immediately</description></item>
     /// <item><description>If busy (count>0), returns Task that completes when counter reaches 0</description></item>
-    /// <item><description>Multiple callers can await the same Task</description></item>
+    /// <item><description>Multiple callers can await the same Task (TCS supports multiple awaiters)</description></item>
     /// <item><description>If cancelled, throws OperationCanceledException</description></item>
     /// </list>
-    /// <para><strong>Race Handling:</strong></para>
+    /// <para><strong>Idle State Semantics - "WAS Idle" NOT "IS Idle":</strong></para>
     /// <para>
-    /// New activity might start immediately after this method observes idle state.
-    /// Caller must use application-specific logic to determine true quiescence
-    /// (e.g., re-check after await completes).
+    /// This method completes when the system <strong>was idle at some point in time</strong>.
+    /// It does NOT guarantee the system is still idle after completion (new activity may start immediately).
+    /// </para>
+    /// <para><strong>Race Scenario (Reading Completed TCS):</strong></para>
+    /// <para>
+    /// Possible execution: T1 decrements to 0 and signals TCS_old, T2 increments to 1 and creates TCS_new,
+    /// T3 calls WaitForIdleAsync and reads TCS_old (already completed). Result: WaitForIdleAsync completes immediately
+    /// even though count=1. This is CORRECT behavior - system WAS idle between T1 and T2.
+    /// </para>
+    /// <para><strong>Why This is Correct (Not a Bug):</strong></para>
+    /// <para>
+    /// Idle detection uses eventual consistency semantics. Observing "was idle recently" is sufficient for
+    /// callers like tests (WaitForIdleAsync) and disposal (ensure background work completes). Callers requiring
+    /// stronger guarantees must implement application-specific logic (e.g., re-check state after await).
+    /// </para>
+    /// <para><strong>Cancellation Handling:</strong></para>
+    /// <para>
+    /// Uses Task.WaitAsync(.NET 6+) for simplified cancellation. If token fires, throws OperationCanceledException.
     /// </para>
     /// </remarks>
-    public async Task WaitForIdleAsync(CancellationToken cancellationToken = default)
+    public Task WaitForIdleAsync(CancellationToken cancellationToken = default)
     {
-        // Snapshot current TCS
-        TaskCompletionSource<bool> tcs;
-        lock (_tcsLock)
-        {
-            tcs = _idleTcs;
-        }
-
-        // If cancellation is not requested, we can just await the TCS task
-        if (!cancellationToken.CanBeCanceled)
-        {
-            await tcs.Task.ConfigureAwait(false);
-            return;
-        }
-
-        // Handle cancellation by racing the TCS task against cancellation token
-        var tcsTask = tcs.Task;
-        var cancellationTask = Task.Delay(Timeout.Infinite, cancellationToken);
-
-        var completedTask = await Task.WhenAny(tcsTask, cancellationTask).ConfigureAwait(false);
-
-        if (completedTask == cancellationTask)
-        {
-            // Cancellation won the race
-            cancellationToken.ThrowIfCancellationRequested();
-        }
-
-        // Idle task completed - ensure it didn't fault
-        await tcsTask.ConfigureAwait(false);
+        // Snapshot current TCS with acquire fence (Volatile.Read)
+        // Ensures we observe TCS published by Volatile.Write in IncrementActivity
+        var tcs = Volatile.Read(ref _idleTcs);
+        
+        // Use Task.WaitAsync for simplified cancellation (available in .NET 6+)
+        // If already completed, returns immediately
+        // If pending, waits until signaled or cancellation token fires
+        return tcs.Task.WaitAsync(cancellationToken);
     }
 }

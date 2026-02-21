@@ -68,21 +68,50 @@ The cache exposes a public `WaitForIdleAsync()` method for deterministic synchro
 background rebalance execution:
 
 - **Purpose**: Infrastructure/testing API (not part of domain semantics)
-- **Mechanism**: Task lifecycle tracking using observe-and-stabilize pattern
-- **Guarantee**: Returns only when no rebalance execution is running
-- **Safety**: Works correctly under concurrent intent cancellation and rescheduling
+- **Mechanism**: Lock-free idle detection using `AsyncActivityCounter`
+- **Guarantee**: Completes when system **was idle at some point** (eventual consistency semantics)
+- **Safety**: Fully thread-safe, supports multiple concurrent awaiters
 
 ### Implementation Strategy
 
-- `RebalanceScheduler` tracks latest background Task in `_idleTask` field
-- `WaitForIdleAsync()` implements observe-and-stabilize loop:
-  1. Read current `_idleTask` via `Volatile.Read` (ensures visibility)
-  2. Await the observed Task
-  3. Re-check if `_idleTask` changed (new rebalance scheduled)
-  4. Loop until Task reference stabilizes and completes
+**AsyncActivityCounter Architecture:**
+- Tracks active operations using atomic counter (`Interlocked.Increment/Decrement`)
+- Signals idle state via `TaskCompletionSource` (state-based, not event-based)
+- Uses `Volatile.Write/Read` for lock-free TCS reference coordination
+- Provides "was idle" semantics (not "is idle now")
 
-This provides deterministic synchronization useful for testing, graceful shutdown, 
-health checks, and other infrastructure scenarios.
+**WaitForIdleAsync() Workflow:**
+1. Snapshot current TaskCompletionSource via `Volatile.Read` (acquire fence)
+2. Await the TCS task (completes when counter reached 0 at snapshot time)
+3. Return immediately if already completed, or wait for completion
+
+**Idle State Semantics - "Was Idle" NOT "Is Idle":**
+
+WaitForIdleAsync completes when the system **was idle at some point in time**. 
+It does NOT guarantee the system is still idle after completion (new activity may start immediately).
+
+Example race (correct behavior):
+1. Background thread decrements counter to 0, signals TCS_old
+2. New intent arrives, increments counter to 1, creates TCS_new
+3. Test calls WaitForIdleAsync, reads TCS_old (already completed)
+4. Result: Method returns immediately even though system is now busy
+
+This is **correct behavior** for eventual consistency testing - system WAS idle between steps 1 and 2.
+Tests requiring stronger guarantees should implement retry logic or re-check state after await.
+
+**Typical Test Pattern:**
+
+```csharp
+// Trigger operation that schedules rebalance
+await cache.GetDataAsync(newRange);
+
+// Wait for system to stabilize
+await cache.WaitForIdleAsync();
+
+// At this point, system WAS idle (cache converged to consistent state)
+// Assert on converged state
+Assert.Equal(expectedRange, cache.CurrentCacheRange);
+```
 
 ### Architectural Boundaries
 
@@ -99,8 +128,8 @@ maintaining architectural separation.
 ### Relation to Instrumentation Counters
 
 Instrumentation counters track **events** (intent published, execution started, etc.) but are
-not used for synchronization. The observe-and-stabilize pattern based on Task lifecycle provides
-deterministic, race-free synchronization without polling or timing dependencies.
+not used for synchronization. AsyncActivityCounter provides deterministic, race-free idle detection
+without polling or timing dependencies.
 
 **Old approach (removed):**
 - Counter-based polling with stability windows
@@ -108,9 +137,10 @@ deterministic, race-free synchronization without polling or timing dependencies.
 - Complex lifecycle calculation
 
 **Current approach:**
-- Direct Task lifecycle tracking
-- Deterministic (no timing assumptions)
-- Simple and race-free
+- Lock-free activity tracking via AsyncActivityCounter
+- State-based completion via TaskCompletionSource
+- Deterministic "was idle" semantics (eventual consistency)
+- No timing assumptions, no polling
 
 ---
 
