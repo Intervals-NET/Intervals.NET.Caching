@@ -101,6 +101,10 @@ internal sealed class RebalanceExecutionController<TRange, TData, TDomain>
     // Activity counter for tracking active operations
     private readonly AsyncActivityCounter _activityCounter;
 
+    // Disposal state tracking (lock-free using Interlocked)
+    // 0 = not disposed, 1 = disposed
+    private int _disposeState;
+
     /// <summary>
     /// Stores the most recent execution request submitted to the execution controller.
     /// Used for tracking the current execution state and for testing/diagnostic purposes.
@@ -152,6 +156,14 @@ internal sealed class RebalanceExecutionController<TRange, TData, TDomain>
     public void PublishExecutionRequest(Intent<TRange, TData, TDomain> intent, Range<TRange> desiredRange,
         Range<TRange>? desiredNoRebalanceRange)
     {
+        // Check disposal state using Volatile.Read (lock-free)
+        if (Volatile.Read(ref _disposeState) != 0)
+        {
+            throw new ObjectDisposedException(
+                nameof(RebalanceExecutionController<TRange, TData, TDomain>),
+                "Cannot publish execution request to a disposed controller.");
+        }
+
         // Increment activity counter for new execution request
         _activityCounter.IncrementActivity();
 
@@ -246,5 +258,59 @@ internal sealed class RebalanceExecutionController<TRange, TData, TDomain>
                 _activityCounter.DecrementActivity();
             }
         }
+    }
+
+    /// <summary>
+    /// Disposes the execution controller and releases all managed resources.
+    /// Gracefully shuts down the execution loop and waits for completion.
+    /// </summary>
+    /// <returns>A ValueTask representing the asynchronous disposal operation.</returns>
+    /// <remarks>
+    /// <para><strong>Disposal Sequence:</strong></para>
+    /// <list type="number">
+    /// <item><description>Mark as disposed (prevents new execution requests)</description></item>
+    /// <item><description>Complete the channel writer (signals loop to exit after current operation)</description></item>
+    /// <item><description>Wait for execution loop to complete gracefully</description></item>
+    /// <item><description>Cancel and dispose last execution request if present</description></item>
+    /// </list>
+    /// <para><strong>Thread Safety:</strong></para>
+    /// <para>
+    /// This method is thread-safe and idempotent using lock-free Interlocked operations.
+    /// Multiple concurrent calls will execute disposal only once.
+    /// </para>
+    /// <para><strong>Exception Handling:</strong></para>
+    /// <para>
+    /// Uses best-effort cleanup. Exceptions during loop completion are logged via diagnostics
+    /// but do not prevent subsequent cleanup steps.
+    /// </para>
+    /// </remarks>
+    internal async ValueTask DisposeAsync()
+    {
+        // Idempotent check using lock-free Interlocked.CompareExchange
+        if (Interlocked.CompareExchange(ref _disposeState, 1, 0) != 0)
+        {
+            return; // Already disposed
+        }
+
+        _lastExecutionRequest?.Cancel();
+
+        // Complete the channel - signals execution loop to exit after current operation
+        _executionChannel.Writer.Complete();
+
+        // Wait for execution loop to complete gracefully
+        // No timeout needed per architectural decision: graceful shutdown with cancellation
+        try
+        {
+            await _executionLoopTask.ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Log via diagnostics but don't throw - best-effort disposal
+            // Follows "Background Path Exceptions" pattern from AGENTS.md
+            _cacheDiagnostics.RebalanceExecutionFailed(ex);
+        }
+
+        // Dispose last execution request if present
+        _lastExecutionRequest?.Dispose();
     }
 }

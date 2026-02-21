@@ -27,12 +27,18 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Ensures any background rebalance operations are completed before executing next test
+    /// Ensures any background rebalance operations are completed and cache is properly disposed
     /// </summary>
     public async ValueTask DisposeAsync()
     {
-        // Wait for any background rebalance from current test to complete
-        await _currentCache!.WaitForIdleAsync();
+        if (_currentCache != null)
+        {
+            // Wait for any background rebalance from current test to complete
+            await _currentCache.WaitForIdleAsync();
+            
+            // Properly dispose the cache to release resources
+            await _currentCache.DisposeAsync();
+        }
     }
 
     /// <summary>

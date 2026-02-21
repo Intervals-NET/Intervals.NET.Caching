@@ -40,8 +40,27 @@ namespace SlidingWindowCache.Public;
 /// <item><description>Fixed-step: DateTimeDayFixedStepDomain, IntegerFixedStepDomain (O(1) operations)</description></item>
 /// <item><description>Variable-step: Business days, months, custom calendars (O(N) operations, still fast)</description></item>
 /// </list>
+/// <para><strong>Resource Management:</strong></para>
+/// <para>
+/// WindowCache manages background processing tasks and resources that require explicit disposal.
+/// Always call <see cref="IAsyncDisposable.DisposeAsync"/> when done using the cache instance.
+/// </para>
+/// <para><strong>Disposal Behavior:</strong></para>
+/// <list type="bullet">
+/// <item><description>Gracefully stops background rebalance processing loops</description></item>
+/// <item><description>Disposes internal synchronization primitives (semaphores, cancellation tokens)</description></item>
+/// <item><description>After disposal, all methods throw <see cref="ObjectDisposedException"/></description></item>
+/// <item><description>Safe to call multiple times (idempotent)</description></item>
+/// <item><description>Does not require timeout - completes when background tasks finish current work</description></item>
+/// </list>
+/// <para><strong>Usage Pattern:</strong></para>
+/// <code>
+/// await using var cache = new WindowCache&lt;int, int, IntegerFixedStepDomain&gt;(...);
+/// var data = await cache.GetDataAsync(range, cancellationToken);
+/// // DisposeAsync automatically called at end of scope
+/// </code>
 /// </remarks>
-public interface IWindowCache<TRange, TData, TDomain>
+public interface IWindowCache<TRange, TData, TDomain> : IAsyncDisposable
     where TRange : IComparable<TRange>
     where TDomain : IRangeDomain<TRange>
 {
@@ -116,6 +135,10 @@ public sealed class WindowCache<TRange, TData, TDomain>
 
     // Activity counter for tracking active intents and executions
     private readonly AsyncActivityCounter _activityCounter = new();
+
+    // Disposal state tracking (lock-free using Interlocked)
+    // 0 = not disposed, 1 = disposing, 2 = disposed
+    private int _disposeState;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="WindowCache{TRange,TData,TDomain}"/> class.
@@ -208,6 +231,14 @@ public sealed class WindowCache<TRange, TData, TDomain>
         Range<TRange> requestedRange,
         CancellationToken cancellationToken)
     {
+        // Check disposal state using Volatile.Read (lock-free)
+        if (Volatile.Read(ref _disposeState) != 0)
+        {
+            throw new ObjectDisposedException(
+                nameof(WindowCache<TRange, TData, TDomain>),
+                "Cannot access a disposed WindowCache instance.");
+        }
+
         // Pure facade: delegate to UserRequestHandler actor
         return _userRequestHandler.HandleRequestAsync(requestedRange, cancellationToken);
     }
@@ -232,6 +263,89 @@ public sealed class WindowCache<TRange, TData, TDomain>
     /// </list>
     /// </para>
     /// </remarks>
-    public Task WaitForIdleAsync(CancellationToken cancellationToken = default) =>
-        _activityCounter.WaitForIdleAsync(cancellationToken);
+    public Task WaitForIdleAsync(CancellationToken cancellationToken = default)
+    {
+        // Check disposal state using Volatile.Read (lock-free)
+        if (Volatile.Read(ref _disposeState) != 0)
+        {
+            throw new ObjectDisposedException(
+                nameof(WindowCache<TRange, TData, TDomain>),
+                "Cannot access a disposed WindowCache instance.");
+        }
+
+        return _activityCounter.WaitForIdleAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Asynchronously disposes the WindowCache and releases all associated resources.
+    /// </summary>
+    /// <returns>
+    /// A task that represents the asynchronous disposal operation.
+    /// </returns>
+    /// <remarks>
+    /// <para><strong>Disposal Sequence:</strong></para>
+    /// <list type="number">
+    /// <item><description>Atomically transitions disposal state from 0 (active) to 1 (disposing)</description></item>
+    /// <item><description>Disposes UserRequestHandler which cascades to IntentController and RebalanceExecutionController</description></item>
+    /// <item><description>Waits for all background processing loops to complete gracefully</description></item>
+    /// <item><description>Transitions disposal state to 2 (disposed)</description></item>
+    /// </list>
+    /// <para><strong>Idempotency:</strong></para>
+    /// <para>
+    /// Safe to call multiple times. Subsequent calls will wait for the first disposal to complete
+    /// using a three-state pattern (0=active, 1=disposing, 2=disposed). This ensures exactly-once
+    /// disposal execution while allowing concurrent disposal attempts to complete successfully.
+    /// </para>
+    /// <para><strong>Thread Safety:</strong></para>
+    /// <para>
+    /// Uses lock-free synchronization via <see cref="Interlocked.CompareExchange"/> and <see cref="Volatile"/>
+    /// operations, consistent with the project's "Mostly Lock-Free Concurrency" architecture principle.
+    /// </para>
+    /// <para><strong>Architectural Context:</strong></para>
+    /// <para>
+    /// WindowCache acts as the Composition Root and owns all internal actors. Disposal follows
+    /// the ownership hierarchy: WindowCache → UserRequestHandler → IntentController → RebalanceExecutionController.
+    /// Each actor disposes its owned resources in reverse order of initialization.
+    /// </para>
+    /// <para><strong>Exception Handling:</strong></para>
+    /// <para>
+    /// Any exceptions during disposal are propagated to the caller. This aligns with the "Background Path Exceptions"
+    /// pattern where cleanup failures should be observable but not crash the application.
+    /// </para>
+    /// </remarks>
+    public async ValueTask DisposeAsync()
+    {
+        // Three-state disposal pattern for idempotency and concurrent disposal support
+        // States: 0 = active, 1 = disposing, 2 = disposed
+        
+        // Attempt to transition from active (0) to disposing (1)
+        var previousState = Interlocked.CompareExchange(ref _disposeState, 1, 0);
+        
+        if (previousState == 0)
+        {
+            // This thread won the race - perform disposal
+            try
+            {
+                // Dispose the UserRequestHandler which cascades to all internal actors
+                // Disposal order: UserRequestHandler -> IntentController -> RebalanceExecutionController
+                await _userRequestHandler.DisposeAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                // Mark disposal as complete (transition to state 2)
+                Volatile.Write(ref _disposeState, 2);
+            }
+        }
+        else if (previousState == 1)
+        {
+            // Another thread is disposing - wait for it to complete
+            // Spin-wait until disposal completes (state transitions to 2)
+            var spinWait = new SpinWait();
+            while (Volatile.Read(ref _disposeState) == 1)
+            {
+                spinWait.SpinOnce();
+            }
+        }
+        // If previousState == 2, disposal already completed - return immediately (idempotent)
+    }
 }

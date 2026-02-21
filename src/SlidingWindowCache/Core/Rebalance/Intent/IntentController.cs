@@ -95,8 +95,12 @@ internal sealed class IntentController<TRange, TData, TDomain>
     // Processing loop task
     private readonly Task _processingLoopTask;
 
-    // Cancellation token source for the processing loop (used during disposal) todo implement disposing
+    // Cancellation token source for the processing loop (used during disposal)
     private readonly CancellationTokenSource _loopCancellation = new();
+
+    // Disposal state tracking (lock-free using Interlocked)
+    // 0 = not disposed, 1 = disposed
+    private int _disposeState;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="IntentController{TRange,TData,TDomain}"/> class.
@@ -154,6 +158,14 @@ internal sealed class IntentController<TRange, TData, TDomain>
     /// </remarks>
     public void PublishIntent(Intent<TRange, TData, TDomain> intent)
     {
+        // Check disposal state using Volatile.Read (lock-free)
+        if (Volatile.Read(ref _disposeState) != 0)
+        {
+            throw new ObjectDisposedException(
+                nameof(IntentController<TRange, TData, TDomain>),
+                "Cannot publish intent to a disposed controller.");
+        }
+
         // Atomically set the pending intent (latest wins)
         Interlocked.Exchange(ref _pendingIntent, intent);
 
@@ -287,5 +299,64 @@ internal sealed class IntentController<TRange, TData, TDomain>
             default:
                 throw new ArgumentOutOfRangeException(nameof(reason), reason, "Unhandled rebalance reason");
         }
+    }
+
+    /// <summary>
+    /// Disposes the intent controller and releases all managed resources.
+    /// Gracefully shuts down the intent processing loop and execution controller.
+    /// </summary>
+    /// <returns>A ValueTask representing the asynchronous disposal operation.</returns>
+    /// <remarks>
+    /// <para><strong>Disposal Sequence:</strong></para>
+    /// <list type="number">
+    /// <item><description>Mark as disposed (prevents new intents)</description></item>
+    /// <item><description>Cancel the processing loop via CancellationTokenSource</description></item>
+    /// <item><description>Wait for processing loop to complete gracefully</description></item>
+    /// <item><description>Dispose execution controller (cascades to execution loop)</description></item>
+    /// <item><description>Dispose synchronization primitives (CancellationTokenSource, SemaphoreSlim)</description></item>
+    /// </list>
+    /// <para><strong>Thread Safety:</strong></para>
+    /// <para>
+    /// This method is thread-safe and idempotent using lock-free Interlocked operations.
+    /// Multiple concurrent calls will execute disposal only once.
+    /// </para>
+    /// <para><strong>Exception Handling:</strong></para>
+    /// <para>
+    /// Uses best-effort cleanup. Exceptions during loop completion are logged via diagnostics
+    /// but do not prevent subsequent cleanup steps.
+    /// </para>
+    /// </remarks>
+    internal async ValueTask DisposeAsync()
+    {
+        // Idempotent check using lock-free Interlocked.CompareExchange
+        if (Interlocked.CompareExchange(ref _disposeState, 1, 0) != 0)
+        {
+            return; // Already disposed
+        }
+
+        // Cancel the processing loop
+        await _loopCancellation.CancelAsync();
+
+        // Wait for processing loop to complete gracefully
+        try
+        {
+            await _processingLoopTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected during cancellation
+        }
+        catch (Exception ex)
+        {
+            // Log via diagnostics but don't throw
+            _cacheDiagnostics.RebalanceExecutionFailed(ex);
+        }
+
+        // Dispose execution controller (stops execution loop)
+        await _executionController.DisposeAsync().ConfigureAwait(false);
+
+        // Dispose resources
+        _loopCancellation.Dispose();
+        _intentSignal.Dispose();
     }
 }

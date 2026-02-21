@@ -303,6 +303,163 @@ This is synchronization **with** background work, not synchronization **of** con
 
 ---
 
+## Disposal and Resource Management
+
+### Disposal Architecture
+
+WindowCache implements `IAsyncDisposable` to ensure proper cleanup of background processing resources. The disposal mechanism follows the same concurrency principles as the rest of the system: **lock-free synchronization** with graceful coordination.
+
+### Disposal State Machine
+
+Disposal uses a **three-state pattern** with lock-free transitions:
+
+```
+States:
+  0 = Active (accepting operations)
+  1 = Disposing (disposal in progress)
+  2 = Disposed (cleanup complete)
+
+Transitions:
+  0 → 1: First DisposeAsync() call wins via Interlocked.CompareExchange
+  1 → 2: Disposal completes, state updated via Volatile.Write
+  
+Concurrent Calls:
+  - First call (0→1): Performs actual disposal
+  - Concurrent calls (1): Spin-wait until state becomes 2
+  - Subsequent calls (2): Return immediately (idempotent)
+```
+
+### Disposal Sequence
+
+When `DisposeAsync()` is called, cleanup cascades through the ownership hierarchy:
+
+```
+WindowCache.DisposeAsync()
+  └─> UserRequestHandler.DisposeAsync()
+      └─> IntentController.DisposeAsync()
+          ├─> Cancel intent processing loop (CancellationTokenSource)
+          ├─> Wait for processing loop to exit (Task.Wait)
+          ├─> RebalanceExecutionController.DisposeAsync()
+          │   ├─> Mark disposed (blocks new execution requests)
+          │   ├─> Complete execution channel (no new items)
+          │   ├─> Wait for execution loop to drain
+          │   └─> Cancel/dispose last pending execution
+          └─> Dispose coordination resources (SemaphoreSlim, CancellationTokenSource)
+```
+
+**Key Properties:**
+- **Graceful shutdown**: Background tasks finish current work before exiting
+- **No forced termination**: Cancellation signals used, not thread aborts
+- **Resource cleanup**: All channels, semaphores, and cancellation tokens disposed
+- **Cascading disposal**: Follows ownership hierarchy (parent disposes children)
+
+### Operation Blocking After Disposal
+
+All public operations check disposal state using lock-free reads:
+
+```csharp
+public ValueTask<ReadOnlyMemory<TData>> GetDataAsync(...)
+{
+    // Check disposal state (lock-free)
+    if (Volatile.Read(ref _disposeState) != 0)
+        throw new ObjectDisposedException(...);
+    
+    // Proceed with operation
+}
+
+public Task WaitForIdleAsync(...)
+{
+    // Check disposal state (lock-free)
+    if (Volatile.Read(ref _disposeState) != 0)
+        throw new ObjectDisposedException(...);
+    
+    // Proceed with operation
+}
+```
+
+**Design Properties:**
+- ✅ **Lock-free reads**: `Volatile.Read` ensures visibility without locks
+- ✅ **Fail-fast**: Operations immediately throw `ObjectDisposedException`
+- ✅ **No partial execution**: Disposal check happens before any work
+- ✅ **Consistent behavior**: All operations blocked uniformly after disposal
+
+### Concurrent Disposal Safety
+
+The three-state disposal pattern handles concurrent disposal attempts safely:
+
+```csharp
+public async ValueTask DisposeAsync()
+{
+    // Atomic transition from active (0) to disposing (1)
+    var previousState = Interlocked.CompareExchange(ref _disposeState, 1, 0);
+    
+    if (previousState == 0)
+    {
+        // This thread won the race - perform disposal
+        try
+        {
+            await _userRequestHandler.DisposeAsync();
+        }
+        finally
+        {
+            // Mark disposal complete (transition to state 2)
+            Volatile.Write(ref _disposeState, 2);
+        }
+    }
+    else if (previousState == 1)
+    {
+        // Another thread is disposing - spin-wait until complete
+        var spinWait = new SpinWait();
+        while (Volatile.Read(ref _disposeState) == 1)
+        {
+            spinWait.SpinOnce();
+        }
+    }
+    // If previousState == 2: already disposed, return immediately
+}
+```
+
+**Guarantees:**
+- ✅ **Exactly-once execution**: Only first call performs disposal
+- ✅ **Concurrent safety**: Multiple threads can call simultaneously
+- ✅ **Completion waiting**: Concurrent callers wait for disposal to finish
+- ✅ **Idempotency**: Safe to call multiple times
+
+### Disposal vs Active Operations
+
+**Race Condition Handling:**
+
+If `DisposeAsync()` is called while operations are in progress:
+1. Disposal marks state as disposing (blocks new operations)
+2. Background loops observe cancellation and exit gracefully
+3. In-flight operations may complete or throw `ObjectDisposedException`
+4. Disposal waits for background loops to exit
+5. All resources released after loops exit
+
+**User Experience:**
+- Operations started **before** disposal: May complete successfully or throw `ObjectDisposedException`
+- Operations started **after** disposal: Always throw `ObjectDisposedException`
+- No undefined behavior or resource corruption
+
+### Disposal and Single-Writer Architecture
+
+Disposal respects the single-writer architecture:
+- **User Path**: Read-only, disposal just blocks new reads
+- **Rebalance Execution**: Single writer, disposal waits for current execution to finish
+- **No race conditions**: Disposal does not introduce write-write races
+- **Graceful coordination**: Uses same cancellation mechanism as rebalance operations
+
+### Integration with AsyncActivityCounter
+
+The `AsyncActivityCounter` tracks active background operations:
+- Intent processing increments/decrements counter
+- Rebalance execution increments/decrements counter
+- `WaitForIdleAsync()` uses counter to detect idle state
+
+**Disposal does not use AsyncActivityCounter** - it directly waits for background loops to exit via `Task.Wait()` on the loop tasks. This ensures disposal completes even if counter state is inconsistent.
+
+---
+
 ## What Is Supported
 
 - Single logical consumer per cache instance (coherent access pattern)
@@ -313,6 +470,8 @@ This is synchronization **with** background work, not synchronization **of** con
 - High-frequency access from one logical consumer
 - Eventual consistency model (cache converges asynchronously)
 - Intent-based data delivery (delivered data in intent avoids duplicate fetches)
+- **Graceful disposal with resource cleanup** (lock-free, idempotent, concurrent-safe)
+- **Background task coordination during disposal** (wait for loops to exit gracefully)
 
 ---
 

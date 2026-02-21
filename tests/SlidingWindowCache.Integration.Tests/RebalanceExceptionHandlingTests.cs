@@ -57,7 +57,7 @@ public class RebalanceExceptionHandlingTests : IDisposable
             debounceDelay: TimeSpan.FromMilliseconds(10)
         );
 
-        var cache = new WindowCache<int, string, IntegerFixedStepDomain>(
+        await using var cache = new WindowCache<int, string, IntegerFixedStepDomain>(
             faultyDataSource,
             new IntegerFixedStepDomain(),
             options,
@@ -112,7 +112,7 @@ public class RebalanceExceptionHandlingTests : IDisposable
             debounceDelay: TimeSpan.FromMilliseconds(10)
         );
 
-        var cache = new WindowCache<int, string, IntegerFixedStepDomain>(
+        await using var cache = new WindowCache<int, string, IntegerFixedStepDomain>(
             partiallyFaultyDataSource,
             new IntegerFixedStepDomain(),
             options,
@@ -176,7 +176,7 @@ public class RebalanceExceptionHandlingTests : IDisposable
             debounceDelay: TimeSpan.FromMilliseconds(10)
         );
 
-        var cache = new WindowCache<int, string, IntegerFixedStepDomain>(
+        await using var cache = new WindowCache<int, string, IntegerFixedStepDomain>(
             faultyDataSource,
             new IntegerFixedStepDomain(),
             options,

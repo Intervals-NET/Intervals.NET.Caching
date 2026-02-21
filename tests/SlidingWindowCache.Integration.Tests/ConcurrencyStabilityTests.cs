@@ -32,12 +32,19 @@ public sealed class ConcurrencyStabilityTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Ensures any background rebalance operations are completed before executing next test
+    /// Ensures any background rebalance operations are completed and cache is properly disposed
     /// </summary>
     public async ValueTask DisposeAsync()
     {
-        // Wait for any background rebalance from current test to complete
-        await _cache!.WaitForIdleAsync();
+        if (_cache != null)
+        {
+            // Wait for any background rebalance from current test to complete
+            await _cache.WaitForIdleAsync();
+            
+            // Properly dispose the cache to release resources
+            await _cache.DisposeAsync();
+        }
+        
         _dataSource.Reset();
     }
 

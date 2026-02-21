@@ -1310,41 +1310,47 @@ public async Task<RangeData<TRange, TData, TDomain>> ExtendCacheAsync(
 
 #### 🟦 WindowCache<TRange, TData, TDomain>
 ```csharp
-public sealed class WindowCache<TRange, TData, TDomain> : IWindowCache<TRange, TData, TDomain>
+public sealed class WindowCache<TRange, TData, TDomain> : IWindowCache<TRange, TData, TDomain>, IAsyncDisposable
 ```
 
 **File**: `src/SlidingWindowCache/WindowCache.cs`
 
 **Type**: Class (sealed, public)
 
-**Role**: Public Facade, Composition Root
+**Role**: Public Facade, Composition Root, Resource Manager
 
 **Fields**:
 - `UserRequestHandler<TRange, TData, TDomain> _userRequestHandler` (readonly, private)
-- `IntentController<TRange, TData, TDomain> _intentController` (readonly, private)
+- `AsyncActivityCounter _activityCounter` (readonly, private)
+- `int _disposeState` (mutable, private) - Lock-free disposal state tracking (0=active, 1=disposing, 2=disposed)
 
 **Constructor**: Creates and wires all internal components:
 ```csharp
 public WindowCache(
     IDataSource<TRange, TData> dataSource,
     TDomain domain,
-    WindowCacheOptions options)
+    WindowCacheOptions options,
+    ICacheDiagnostics? cacheDiagnostics = null)
 {
     var cacheStorage = CreateCacheStorage(domain, options);
     var state = new CacheState<TRange, TData, TDomain>(cacheStorage, domain);
     
-    var rebalancePolicy = new ThresholdRebalancePolicy<TRange, TDomain>(options, domain);
+    var rebalancePolicy = new ThresholdRebalancePolicy<TRange, TDomain>();
     var rangePlanner = new ProportionalRangePlanner<TRange, TDomain>(options, domain);
+    var noRebalancePlanner = new NoRebalanceRangePlanner<TRange, TDomain>(options, domain);
     var cacheFetcher = new CacheDataExtensionService<TRange, TData, TDomain>(dataSource, domain, cacheDiagnostics);
     
-    var decisionEngine = new RebalanceDecisionEngine<TRange, TDomain>(rebalancePolicy, rangePlanner);
-    var executor = new RebalanceExecutor<TRange, TData, TDomain>(state, cacheFetcher, rebalancePolicy);
+    var decisionEngine = new RebalanceDecisionEngine<TRange, TDomain>(rebalancePolicy, rangePlanner, noRebalancePlanner);
+    var executor = new RebalanceExecutor<TRange, TData, TDomain>(state, cacheFetcher, cacheDiagnostics);
     
-    _intentController = new IntentController<TRange, TData, TDomain>(
-        state, decisionEngine, executor, options.DebounceDelay);
+    var executionController = new RebalanceExecutionController<TRange, TData, TDomain>(
+        executor, options.DebounceDelay, cacheDiagnostics, _activityCounter);
+    
+    var intentController = new IntentController<TRange, TData, TDomain>(
+        state, decisionEngine, executionController, cacheDiagnostics, _activityCounter);
     
     _userRequestHandler = new UserRequestHandler<TRange, TData, TDomain>(
-        state, cacheFetcher, _intentController);
+        state, cacheFetcher, intentController, dataSource, cacheDiagnostics);
 }
 ```
 
@@ -1355,13 +1361,43 @@ public ValueTask<ReadOnlyMemory<TData>> GetDataAsync(
     Range<TRange> requestedRange,
     CancellationToken cancellationToken)
 {
+    // Throws ObjectDisposedException if disposed
+    if (Volatile.Read(ref _disposeState) != 0)
+        throw new ObjectDisposedException(...);
+    
     return _userRequestHandler.HandleRequestAsync(requestedRange, cancellationToken);
 }
 
-// Infrastructure API (Task tracking for synchronization)
-public Task WaitForIdleAsync(TimeSpan? timeout = null)
+// Infrastructure API (synchronization)
+public Task WaitForIdleAsync(CancellationToken cancellationToken = default)
 {
-    return _intentController.WaitForIdleAsync(timeout);
+    // Throws ObjectDisposedException if disposed
+    if (Volatile.Read(ref _disposeState) != 0)
+        throw new ObjectDisposedException(...);
+    
+    return _activityCounter.WaitForIdleAsync(cancellationToken);
+}
+
+// Resource management API
+public async ValueTask DisposeAsync()
+{
+    // Three-state disposal: 0=active, 1=disposing, 2=disposed
+    // Uses Interlocked.CompareExchange for lock-free idempotency
+    var previousState = Interlocked.CompareExchange(ref _disposeState, 1, 0);
+    
+    if (previousState == 0)
+    {
+        // First disposal - perform cleanup
+        await _userRequestHandler.DisposeAsync();
+        Volatile.Write(ref _disposeState, 2);
+    }
+    else if (previousState == 1)
+    {
+        // Another thread is disposing - spin-wait until complete
+        while (Volatile.Read(ref _disposeState) == 1)
+            SpinWait.SpinOnce();
+    }
+    // previousState == 2: already disposed, return immediately
 }
 ```
 
@@ -1369,25 +1405,34 @@ public Task WaitForIdleAsync(TimeSpan? timeout = null)
 - ✅ **Pure facade** (no business logic)
 - ✅ **Composition root** (wires all components)
 - ✅ **Public API** (single entry point)
+- ✅ **Resource manager** (owns disposal lifecycle)
 - ✅ **Delegates everything** to UserRequestHandler
+- ✅ **Idempotent disposal** (safe to call multiple times)
 
 **Ownership**: 
 - Owns all internal components
 - Created by user
-- Lives for application lifetime
+- Should be disposed when no longer needed
+- Disposal cascades: WindowCache → UserRequestHandler → IntentController → RebalanceExecutionController
 
 **Execution Context**: Neutral (just delegates)
 
-**Responsibilities**:
-- Expose public API (GetDataAsync for domain operations)
-- Expose testing infrastructure (WaitForIdleAsync for deterministic synchronization)
-- Wire internal components together
-- Own configuration and lifecycle
+**Disposal Responsibilities**:
+- Mark cache as disposed (blocks new operations)
+- Dispose UserRequestHandler (cascades to all internal components)
+- Use three-state pattern for concurrent disposal safety
+- Ensure exactly-once disposal execution
+
+**Public Operations**:
+- `GetDataAsync`: Retrieve data for range (throws ObjectDisposedException if disposed)
+- `WaitForIdleAsync`: Wait for background activity to complete (throws ObjectDisposedException if disposed)
+- `DisposeAsync`: Release all resources and stop background processing (idempotent)
 
 **Does NOT**:
 - Implement business logic
 - Directly access cache state
 - Perform decision logic
+- Force-terminate background tasks (disposal is graceful)
 
 ---
 

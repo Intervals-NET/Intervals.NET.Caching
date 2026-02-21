@@ -23,6 +23,7 @@ consistency, and intelligent work avoidance.**
 - [Understanding the Sliding Window](#-understanding-the-sliding-window)
 - [Materialization for Fast Access](#-materialization-for-fast-access)
 - [Usage Example](#-usage-example)
+- [Resource Management](#-resource-management)
 - [Configuration](#-configuration)
 - [Optional Diagnostics](#-optional-diagnostics)
 - [Documentation](#-documentation)
@@ -326,6 +327,98 @@ foreach (var item in data.Span)
     Console.WriteLine(item);
 }
 ```
+
+---
+
+## 🔄 Resource Management
+
+WindowCache manages background processing tasks and resources that require explicit disposal. **Always dispose the cache when done** to prevent resource leaks and ensure graceful shutdown of background operations.
+
+### Disposal Pattern
+
+WindowCache implements `IAsyncDisposable` for proper async resource cleanup:
+
+```csharp
+// Recommended: Use await using declaration
+await using var cache = new WindowCache<int, string, IntegerFixedStepDomain>(
+    dataSource,
+    domain,
+    options,
+    cacheDiagnostics
+);
+
+// Use the cache
+var data = await cache.GetDataAsync(Range.Closed(0, 100), cancellationToken);
+
+// DisposeAsync called automatically at end of scope
+```
+
+### What Disposal Does
+
+When `DisposeAsync()` is called, the cache:
+
+1. **Stops accepting new requests** - All methods throw `ObjectDisposedException` after disposal
+2. **Cancels background rebalance processing** - Signals cancellation to intent processing and execution loops
+3. **Waits for current operations to complete** - Gracefully allows in-flight rebalance operations to finish
+4. **Releases all resources** - Disposes channels, semaphores, and cancellation token sources
+5. **Is idempotent** - Safe to call multiple times, handles concurrent disposal attempts
+
+### Disposal Behavior
+
+**Graceful Shutdown:**
+```csharp
+await using var cache = CreateCache();
+
+// Make requests
+await cache.GetDataAsync(range1, ct);
+await cache.GetDataAsync(range2, ct);
+
+// No need to call WaitForIdleAsync() before disposal
+// DisposeAsync() handles graceful shutdown automatically
+```
+
+**After Disposal:**
+```csharp
+var cache = CreateCache();
+await cache.DisposeAsync();
+
+// All operations throw ObjectDisposedException
+await cache.GetDataAsync(range, ct);       // ❌ Throws ObjectDisposedException
+await cache.WaitForIdleAsync();            // ❌ Throws ObjectDisposedException
+await cache.DisposeAsync();                // ✅ Succeeds (idempotent)
+```
+
+**Long-Lived Cache:**
+```csharp
+public class DataService : IAsyncDisposable
+{
+    private readonly WindowCache<int, string, IntegerFixedStepDomain> _cache;
+
+    public DataService(IDataSource<int, string> dataSource)
+    {
+        _cache = new WindowCache<int, string, IntegerFixedStepDomain>(
+            dataSource,
+            new IntegerFixedStepDomain(),
+            options
+        );
+    }
+
+    public ValueTask<ReadOnlyMemory<string>> GetDataAsync(Range<int> range, CancellationToken ct)
+        => _cache.GetDataAsync(range, ct);
+
+    public async ValueTask DisposeAsync()
+    {
+        await _cache.DisposeAsync();
+    }
+}
+```
+
+### Important Notes
+
+- **No timeout needed**: Disposal completes when background tasks finish their current work (typically milliseconds)
+- **Thread-safe**: Multiple concurrent disposal calls are handled safely using lock-free synchronization
+- **No forced termination**: Background operations are cancelled gracefully, not forcibly terminated
+- **Memory eligible for GC**: After disposal, the cache becomes eligible for garbage collection
 
 ---
 

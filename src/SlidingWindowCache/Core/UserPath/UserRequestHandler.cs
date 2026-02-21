@@ -52,6 +52,10 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     private readonly IDataSource<TRange, TData> _dataSource;
     private readonly ICacheDiagnostics _cacheDiagnostics;
 
+    // Disposal state tracking (lock-free using Interlocked)
+    // 0 = not disposed, 1 = disposed
+    private int _disposeState;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="UserRequestHandler{TRange,TData,TDomain}"/> class.
     /// </summary>
@@ -109,6 +113,14 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
         Range<TRange> requestedRange,
         CancellationToken cancellationToken)
     {
+        // Check disposal state using Volatile.Read (lock-free)
+        if (Volatile.Read(ref _disposeState) != 0)
+        {
+            throw new ObjectDisposedException(
+                nameof(UserRequestHandler<TRange, TData, TDomain>),
+                "Cannot handle request on a disposed handler.");
+        }
+
         // Check if cache is cold (never used) - use ToRangeData to detect empty cache
         var cacheStorage = _state.Cache;
         var isColdStart = !_state.LastRequested.HasValue;
@@ -202,5 +214,34 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
 
         // Return data directly
         return resultData;
+    }
+
+    /// <summary>
+    /// Disposes the user request handler and releases all managed resources.
+    /// Gracefully shuts down the intent controller.
+    /// </summary>
+    /// <returns>A ValueTask representing the asynchronous disposal operation.</returns>
+    /// <remarks>
+    /// <para><strong>Disposal Sequence:</strong></para>
+    /// <list type="number">
+    /// <item><description>Mark as disposed (prevents new user requests)</description></item>
+    /// <item><description>Dispose intent controller (cascades to execution controller)</description></item>
+    /// </list>
+    /// <para><strong>Thread Safety:</strong></para>
+    /// <para>
+    /// This method is thread-safe and idempotent using lock-free Interlocked operations.
+    /// Multiple concurrent calls will execute disposal only once.
+    /// </para>
+    /// </remarks>
+    internal async ValueTask DisposeAsync()
+    {
+        // Idempotent check using lock-free Interlocked.CompareExchange
+        if (Interlocked.CompareExchange(ref _disposeState, 1, 0) != 0)
+        {
+            return; // Already disposed
+        }
+
+        // Dispose intent controller (cascades to execution controller)
+        await _intentController.DisposeAsync().ConfigureAwait(false);
     }
 }
