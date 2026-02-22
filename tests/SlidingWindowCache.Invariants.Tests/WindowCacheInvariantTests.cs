@@ -838,11 +838,11 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     [Fact]
     public async Task Invariant_D28_SkipWhenDesiredEqualsCurrentRange()
     {
-        // ARRANGE: Use zero thresholds to eliminate NoRebalanceRange effects (isolate same-range logic)
+        // ARRANGE
         var options = TestHelpers.CreateDefaultOptions(
             leftCacheSize: 1.0,
             rightCacheSize: 1.0,
-            leftThreshold: 0.9, // Very small NoRebalanceRange - forces decision to Stage 3
+            leftThreshold: 1, // Very small NoRebalanceRange - forces decision to Stage 3
             rightThreshold: 0.0,
             debounceDelay: TimeSpan.FromMilliseconds(50));
         var (cache, _) = TrackCache(TestHelpers.CreateCacheWithDefaults(_domain, _cacheDiagnostics, options));

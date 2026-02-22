@@ -152,18 +152,18 @@ public class WindowCacheOptionsTests
     [Fact]
     public void Constructor_WithLargeThresholds_IsValid()
     {
-        // ARRANGE & ACT
+        // ARRANGE & ACT - Large individual thresholds are valid if sum <= 1.0
         var options = new WindowCacheOptions(
             leftCacheSize: 1.0,
             rightCacheSize: 1.0,
             readMode: UserCacheReadMode.Snapshot,
-            leftThreshold: 0.99,
-            rightThreshold: 1.0
+            leftThreshold: 0.49,
+            rightThreshold: 0.5  // Sum = 0.99 (valid)
         );
 
         // ASSERT
-        Assert.Equal(0.99, options.LeftThreshold);
-        Assert.Equal(1.0, options.RightThreshold);
+        Assert.Equal(0.49, options.LeftThreshold);
+        Assert.Equal(0.5, options.RightThreshold);
     }
 
     [Fact]
@@ -322,6 +322,156 @@ public class WindowCacheOptionsTests
         );
 
         Assert.Equal("rightCacheSize", exception.ParamName);
+    }
+
+    #endregion
+
+    #region Constructor - Threshold Sum Validation Tests
+
+    [Fact]
+    public void Constructor_WithThresholdSumExceedingOne_ThrowsArgumentException()
+    {
+        // ARRANGE, ACT & ASSERT
+        var exception = Record.Exception(() =>
+            new WindowCacheOptions(
+                leftCacheSize: 1.0,
+                rightCacheSize: 1.0,
+                readMode: UserCacheReadMode.Snapshot,
+                leftThreshold: 0.6,
+                rightThreshold: 0.5  // Sum = 1.1
+            )
+        );
+
+        Assert.NotNull(exception);
+        Assert.IsType<ArgumentException>(exception);
+        var argException = (ArgumentException)exception;
+        Assert.Contains("sum", argException.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("1.1", argException.Message); // Actual sum in message
+        Assert.Contains("exceed 1.0", argException.Message);
+    }
+
+    [Fact]
+    public void Constructor_WithThresholdSumEqualToOne_IsValid()
+    {
+        // ARRANGE & ACT
+        var options = new WindowCacheOptions(
+            leftCacheSize: 1.0,
+            rightCacheSize: 1.0,
+            readMode: UserCacheReadMode.Snapshot,
+            leftThreshold: 0.5,
+            rightThreshold: 0.5  // Sum = 1.0 (boundary case - valid)
+        );
+
+        // ASSERT
+        Assert.Equal(0.5, options.LeftThreshold);
+        Assert.Equal(0.5, options.RightThreshold);
+    }
+
+    [Fact]
+    public void Constructor_WithThresholdSumJustBelowOne_IsValid()
+    {
+        // ARRANGE & ACT
+        var options = new WindowCacheOptions(
+            leftCacheSize: 1.0,
+            rightCacheSize: 1.0,
+            readMode: UserCacheReadMode.Snapshot,
+            leftThreshold: 0.49,
+            rightThreshold: 0.5  // Sum = 0.99
+        );
+
+        // ASSERT
+        Assert.Equal(0.49, options.LeftThreshold);
+        Assert.Equal(0.5, options.RightThreshold);
+    }
+
+    [Fact]
+    public void Constructor_WithBothThresholdsOne_ThrowsArgumentException()
+    {
+        // ARRANGE, ACT & ASSERT
+        var exception = Record.Exception(() =>
+            new WindowCacheOptions(
+                leftCacheSize: 1.0,
+                rightCacheSize: 1.0,
+                readMode: UserCacheReadMode.Snapshot,
+                leftThreshold: 1.0,
+                rightThreshold: 1.0  // Sum = 2.0
+            )
+        );
+
+        Assert.NotNull(exception);
+        Assert.IsType<ArgumentException>(exception);
+        var argException = (ArgumentException)exception;
+        Assert.Contains("sum", argException.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("2.0", argException.Message); // Actual sum
+    }
+
+    [Fact]
+    public void Constructor_WithOnlyLeftThresholdEqualToOne_IsValid()
+    {
+        // ARRANGE & ACT - Only one threshold, even if 1.0, is valid (sum check only applies when both are set)
+        var options = new WindowCacheOptions(
+            leftCacheSize: 1.0,
+            rightCacheSize: 1.0,
+            readMode: UserCacheReadMode.Snapshot,
+            leftThreshold: 1.0,
+            rightThreshold: null  // Sum check doesn't apply
+        );
+
+        // ASSERT
+        Assert.Equal(1.0, options.LeftThreshold);
+        Assert.Null(options.RightThreshold);
+    }
+
+    [Fact]
+    public void Constructor_WithOnlyRightThresholdEqualToOne_IsValid()
+    {
+        // ARRANGE & ACT
+        var options = new WindowCacheOptions(
+            leftCacheSize: 1.0,
+            rightCacheSize: 1.0,
+            readMode: UserCacheReadMode.Snapshot,
+            leftThreshold: null,
+            rightThreshold: 1.0  // Sum check doesn't apply
+        );
+
+        // ASSERT
+        Assert.Null(options.LeftThreshold);
+        Assert.Equal(1.0, options.RightThreshold);
+    }
+
+    [Fact]
+    public void Constructor_WithHighButValidThresholdSum_IsValid()
+    {
+        // ARRANGE & ACT
+        var options = new WindowCacheOptions(
+            leftCacheSize: 1.0,
+            rightCacheSize: 1.0,
+            readMode: UserCacheReadMode.Snapshot,
+            leftThreshold: 0.45,
+            rightThreshold: 0.45  // Sum = 0.9 (high but valid)
+        );
+
+        // ASSERT
+        Assert.Equal(0.45, options.LeftThreshold);
+        Assert.Equal(0.45, options.RightThreshold);
+    }
+
+    [Fact]
+    public void Constructor_WithSlightlyExceedingThresholdSum_ThrowsArgumentException()
+    {
+        // ARRANGE, ACT & ASSERT
+        var exception = Record.Exception(() =>
+            new WindowCacheOptions(
+                leftCacheSize: 1.0,
+                rightCacheSize: 1.0,
+                readMode: UserCacheReadMode.Snapshot,
+                leftThreshold: 0.50001,
+                rightThreshold: 0.5  // Sum = 1.00001 (just over)
+            )
+        );
+
+        Assert.NotNull(exception);
+        Assert.IsType<ArgumentException>(exception);
     }
 
     #endregion

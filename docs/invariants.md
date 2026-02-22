@@ -568,6 +568,25 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 
 **Implementation:** See [component-map.md - NoRebalanceRange Computation](#implementation) for enforcement mechanism details.
 
+**E.35** 🟢 **[Behavioral]** When both `LeftThreshold` and `RightThreshold` are specified (non-null), their sum must not exceed 1.0.
+
+**Formal Specification:**
+```
+leftThreshold.HasValue && rightThreshold.HasValue 
+    => leftThreshold.Value + rightThreshold.Value <= 1.0
+```
+
+**Rationale:** Thresholds define inward shrinkage from cache boundaries to create the no-rebalance stability zone. If their sum exceeds 1.0 (100% of cache), the shrinkage zones would overlap, creating invalid range geometry where boundaries would cross.
+
+**Enforcement:** Constructor validation in `WindowCacheOptions` - throws `ArgumentException` at construction time if violated.
+
+**Edge Cases:**
+- Exactly 1.0 is valid (thresholds meet at center point, creating zero-width stability zone)
+- Single threshold can be any value ≥ 0 (including 1.0 or greater) - sum validation only applies when both are specified
+- Both null is valid (no threshold-based rebalancing)
+
+**Test Coverage:** Unit tests in `WindowCacheOptionsTests` verify validation logic.
+
 ---
 
 ## F. Rebalance Execution Invariants

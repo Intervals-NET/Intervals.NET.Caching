@@ -465,6 +465,20 @@ essential for optimal performance.
   items of the right edge
 - **Typical values**: 0.15 to 0.3 (lower = more aggressive rebalancing)
 
+**🚨 Important Constraint: Threshold Sum**
+
+The **sum of `leftThreshold` and `rightThreshold` must not exceed 1.0** when both are specified.
+
+**Why?** Thresholds represent percentages of the total cache window that are shrunk inward from each side to create the no-rebalance stability zone. If their sum exceeds 1.0 (100%), the shrinkage zones would overlap, creating an impossible geometric configuration.
+
+**Examples:**
+- ✅ Valid: `leftThreshold: 0.3, rightThreshold: 0.3` (sum = 0.6)
+- ✅ Valid: `leftThreshold: 0.5, rightThreshold: 0.5` (sum = 1.0 - boundaries meet at center)
+- ✅ Valid: `leftThreshold: 0.8, rightThreshold: null` (only one threshold)
+- ❌ Invalid: `leftThreshold: 0.6, rightThreshold: 0.6` (sum = 1.2 - overlapping!)
+
+**Validation:** This constraint is enforced at construction time - `WindowCacheOptions` constructor will throw `ArgumentException` if violated.
+
 **⚠️ Critical Understanding**: Thresholds are **NOT** calculated against individual buffer sizes. They represent a
 percentage of the **entire cache window** (left buffer + requested range + right buffer).
 See [Understanding the Sliding Window](#-understanding-the-sliding-window) for visual examples.

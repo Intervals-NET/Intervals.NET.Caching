@@ -111,8 +111,15 @@ Defines canonical sliding window shape and rules.
 
 **Implementation:**
 This logical actor is internally decomposed into two components for separation of concerns:
-- **ThresholdRebalancePolicy** - Computes NoRebalanceRange, checks threshold-based triggering
+- **NoRebalanceRangePlanner** - Computes NoRebalanceRange, checks threshold-based triggering
 - **ProportionalRangePlanner** - Computes DesiredCacheRange, plans cache geometry
+
+**Configuration Validation** (WindowCacheOptions):
+- Cache size coefficients ≥ 0
+- Individual thresholds ≥ 0 (when specified)
+- **Threshold sum ≤ 1.0** (when both thresholds specified) - prevents overlapping shrinkage zones
+- RebalanceQueueCapacity > 0 or null
+- All validation occurs at construction time (fail-fast)
 
 **Execution Context:**  
 **Lives in: Background Thread** (invoked synchronously by RebalanceDecisionEngine within intent processing loop)
@@ -126,11 +133,12 @@ Pure functions, lightweight structs (value types), CPU-only, side-effect free
 - 31. Canonical target cache state [ProportionalRangePlanner]
 - 32. Sliding window geometry defined by configuration [Both components]
 - 33. NoRebalanceRange derived from current cache range + config [ThresholdRebalancePolicy]
+- 35. Threshold sum constraint (leftThreshold + rightThreshold ≤ 1.0) [WindowCacheOptions validation]
 
 **Responsibility Type:** sets rules and constraints
 
 **Note:** Internally decomposed into two components that handle different aspects:
-- **When to rebalance** (threshold rules) → ThresholdRebalancePolicy
+- **When to rebalance** (threshold rules) → NoRebalanceRangePlanner
 - **What shape to target** (cache geometry) → ProportionalRangePlanner
 
 ---

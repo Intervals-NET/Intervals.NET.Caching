@@ -146,7 +146,7 @@ Delays execution (e.g., 100ms) to let bursts settle. Cancels previous if new sch
 
 **Window Size**: Total cache size (domain elements).  
 **Left/Right Split**: Proportional division vs request. Example: 30%/70%.  
-**Threshold %**: NoRebalanceRange zone. Example: 10% = skip if within 10% of boundary.  
+**Threshold %**: NoRebalanceRange zone shrinkage percentage. Must satisfy: `leftThreshold + rightThreshold ≤ 1.0` when both are specified. Example: 10% = skip rebalance if request within 10% of boundary. Sum constraint prevents overlapping shrinkage zones.  
 **Debounce Delay**: Execution delay (e.g., 100ms). Settles bursts.  
 **Storage Strategy**: **Snapshot** (immutable, WebAssembly-safe) or **CopyOnRead** (memory-efficient). See [Storage Strategies](storage-strategies.md).
 

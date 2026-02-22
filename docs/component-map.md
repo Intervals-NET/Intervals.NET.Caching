@@ -430,15 +430,18 @@ This section bridges architectural invariants (documented in [invariants.md](inv
 
 ### NoRebalanceRange Computation
 
-**Invariant**: E.34
+**Invariants**: E.34, E.35
 
 **Enforcement Mechanism**:
-- **Pure Function**: ThresholdRebalancePolicy.GetNoRebalanceRange(currentCacheRange, thresholds) → noRebalanceRange
-- **Range Shrinking**: Applies threshold percentages to current range boundaries
+- **Pure Function**: NoRebalanceRangePlanner.Plan(currentCacheRange) → noRebalanceRange or null
+- **Range Shrinking**: Applies threshold percentages to current range boundaries (negative expansion)
 - **Configuration-Driven**: Uses WindowCacheOptions threshold values
+- **Prerequisite**: WindowCacheOptions constructor ensures threshold sum ≤ 1.0 at construction time
+- **Defensive Check**: Returns null when individual thresholds ≥ 1.0 (no stability zone possible)
 
 **Source References**:
-- `src/SlidingWindowCache/Core/Planning/ThresholdRebalancePolicy.cs` - NoRebalanceRange computation
+- `src/SlidingWindowCache/Core/Planning/NoRebalanceRangePlanner.cs` - NoRebalanceRange computation
+- `src/SlidingWindowCache/Public/Configuration/WindowCacheOptions.cs` - Threshold sum validation
 
 ### Cancellation Checkpoints
 
@@ -548,8 +551,16 @@ public record WindowCacheOptions
 **Configuration Aspects**:
 - Cache size coefficients for left and right windows
 - Rebalance threshold percentages (optional)
+- **Threshold sum validation**: Enforces leftThreshold + rightThreshold ≤ 1.0 when both specified
 - Debounce delay for rebalance timing
 - Cache read strategy selection (see UserCacheReadMode)
+- Rebalance execution queue capacity (optional, selects serialization strategy)
+
+**Validations Enforced** (at construction time):
+- Cache sizes ≥ 0
+- Individual thresholds ≥ 0 (when specified)
+- **Threshold sum ≤ 1.0** (when both thresholds specified) - prevents overlapping shrinkage zones
+- RebalanceQueueCapacity > 0 or null
 
 > **See**: `src/SlidingWindowCache/Public/Configuration/WindowCacheOptions.cs` for property details.
 

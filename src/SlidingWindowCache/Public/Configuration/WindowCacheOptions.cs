@@ -27,6 +27,9 @@ public record WindowCacheOptions
     /// Thrown when LeftCacheSize, RightCacheSize, LeftThreshold, RightThreshold is less than 0,
     /// or when RebalanceQueueCapacity is less than or equal to 0.
     /// </exception>
+    /// <exception cref="ArgumentException">
+    /// Thrown when the sum of LeftThreshold and RightThreshold exceeds 1.0.
+    /// </exception>
     public WindowCacheOptions(
         double leftCacheSize,
         double rightCacheSize,
@@ -59,6 +62,17 @@ public record WindowCacheOptions
         {
             throw new ArgumentOutOfRangeException(nameof(rightThreshold),
                 "RightThreshold must be greater than or equal to 0.");
+        }
+
+        // Validate that thresholds don't overlap (sum must not exceed 1.0)
+        if (leftThreshold.HasValue && rightThreshold.HasValue && 
+            (leftThreshold.Value + rightThreshold.Value) > 1.0)
+        {
+            throw new ArgumentException(
+                $"The sum of LeftThreshold ({leftThreshold.Value:F2}) and RightThreshold ({rightThreshold.Value:F2}) " +
+                $"must not exceed 1.0 (was {leftThreshold.Value + rightThreshold.Value:F2}). " +
+                "Thresholds represent percentages of the total cache window that are shrunk from each side. " +
+                "When their sum exceeds 1.0, the shrinkage zones would overlap, creating an invalid configuration.");
         }
 
         if (rebalanceQueueCapacity is <= 0)
@@ -95,7 +109,7 @@ public record WindowCacheOptions
     /// The total cache size is defined as the sum of the left, requested range, and right cache sizes.
     /// Can be set as null to disable rebalance based on left threshold. If only one threshold is set,
     /// rebalance will be triggered when that threshold is exceeded or end of the cached range is exceeded.
-    /// Must be greater than or equal to 0
+    /// Must be greater than or equal to 0. The sum of LeftThreshold and RightThreshold must not exceed 1.0.
     /// Example: 0.2 means 20% of total cache size. Means if the next requested range and the start of the range contains less than 20% of the total cache size, a rebalance will be triggered.
     /// </summary>
     public double? LeftThreshold { get; }
@@ -105,7 +119,7 @@ public record WindowCacheOptions
     /// The total cache size is defined as the sum of the left, requested range, and right cache sizes.
     /// Can be set as null to disable rebalance based on right threshold. If only one threshold is set,
     /// rebalance will be triggered when that threshold is exceeded or start of the cached range is exceeded.
-    /// Must be greater than or equal to 0
+    /// Must be greater than or equal to 0. The sum of LeftThreshold and RightThreshold must not exceed 1.0.
     /// Example: 0.2 means 20% of total cache size. Means if the next requested range and the end of the range contains less than 20% of the total cache size, a rebalance will be triggered.
     /// </summary>
     public double? RightThreshold { get; }
