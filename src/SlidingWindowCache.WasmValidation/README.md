@@ -19,17 +19,49 @@ The sole purpose of this project is to ensure that the SlidingWindowCache librar
 
 - ✅ **Compile-only validation** - Successful build proves WebAssembly compatibility
 - ✅ **CI/CD compatibility check** - Ensures library can target browser environments
+- ✅ **Strategy coverage validation** - Validates all internal storage and serialization strategies
 - ✅ **Minimal API usage** - Instantiates core types to validate no platform-incompatible APIs are used
 
 ## Implementation
 
-The project contains minimal code that:
+The project validates all combinations of **strategy-determining configuration options** that affect internal implementation paths:
 
-1. Implements a simple `IDataSource<int, int>`
-2. Instantiates `WindowCache<int, int, IntegerFixedStepDomain>`
-3. Calls `GetDataAsync` with a `Range<int>`
-4. Uses `ReadOnlyMemory<int>` return type
-5. Calls `WaitForIdleAsync` for completeness
+### Strategy Matrix (2×2 = 4 Configurations)
+
+| Config | ReadMode   | RebalanceQueueCapacity | Storage Strategy    | Serialization Strategy  |
+|--------|------------|------------------------|---------------------|-------------------------|
+| **1**  | Snapshot   | null                   | SnapshotReadStorage | Task-based (unbounded)  |
+| **2**  | CopyOnRead | null                   | CopyOnReadStorage   | Task-based (unbounded)  |
+| **3**  | Snapshot   | 5                      | SnapshotReadStorage | Channel-based (bounded) |
+| **4**  | CopyOnRead | 5                      | CopyOnReadStorage   | Channel-based (bounded) |
+
+### Why These Configurations?
+
+**ReadMode** determines the storage strategy:
+- `Snapshot` → `SnapshotReadStorage` (contiguous array, zero-allocation reads)
+- `CopyOnRead` → `CopyOnReadStorage` (growable List, copy-on-read)
+
+**RebalanceQueueCapacity** determines the serialization strategy:
+- `null` → Task-based serialization (unbounded queue, task chaining)
+- `>= 1` → Channel-based serialization (System.Threading.Channels with bounded capacity)
+
+Other configuration parameters (leftCacheSize, rightCacheSize, thresholds, debounceDelay) are numeric values that don't affect code path selection, so they don't require separate WASM validation.
+
+### Validation Methods
+
+Each configuration has a dedicated validation method:
+
+1. `ValidateConfiguration1_SnapshotMode_UnboundedQueue()`
+2. `ValidateConfiguration2_CopyOnReadMode_UnboundedQueue()`
+3. `ValidateConfiguration3_SnapshotMode_BoundedQueue()`
+4. `ValidateConfiguration4_CopyOnReadMode_BoundedQueue()`
+
+All methods perform identical operations:
+1. Implement a simple `IDataSource<int, int>`
+2. Instantiate `WindowCache<int, int, IntegerFixedStepDomain>` with specific configuration
+3. Call `GetDataAsync` with a `Range<int>`
+4. Use `ReadOnlyMemory<int>` return type
+5. Call `WaitForIdleAsync` for completeness
 
 All code uses deterministic, synchronous-friendly patterns suitable for compile-time validation.
 
@@ -45,6 +77,8 @@ A successful build confirms that:
 - All SlidingWindowCache public APIs compile for `net8.0-browser`
 - No platform-specific APIs incompatible with WebAssembly are used
 - Intervals.NET dependencies are WebAssembly-compatible
+- **All internal storage strategies** (SnapshotReadStorage, CopyOnReadStorage) are WASM-compatible
+- **All serialization strategies** (task-based, channel-based) are WASM-compatible
 
 ## Target Framework
 
