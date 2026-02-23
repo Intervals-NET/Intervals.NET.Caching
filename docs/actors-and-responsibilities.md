@@ -2,6 +2,11 @@
 
 This document maps **system actors** to the invariants they enforce or guarantee.
 
+> **📖 For detailed architectural explanations, see:**
+> - [Architecture Model](architecture-model.md) - Threading model, decision-driven execution, single-writer architecture
+> - [Invariants](invariants.md) - Complete invariant specifications
+> - [Component Map](component-map.md) - Component relationships and structure
+
 ---
 
 ## 1. User Path (Fast Path / Read Path Actor)
@@ -57,35 +62,28 @@ The UserRequestHandler NEVER invokes directly decision logic - it just publishes
 The **sole authority for rebalance necessity determination**. Analyzes the need for rebalance through multi-stage analytical validation without mutating system state. Enables **smart eventual consistency** through work avoidance mechanisms.
 
 **Execution Context:**  
-**Lives in: User Thread** (invoked synchronously by IntentController during intent publication)
-
-**Critical Execution Model:**
-```
-Decision Engine executes SYNCHRONOUSLY in user thread.
-This is intentional and critical for handling bursts and preventing intent thrashing.
-Decision logic is CPU-only, side-effect free, lightweight (microseconds).
-```
+**Lives in: Background Thread** (invoked by `IntentController.ProcessIntentsAsync` in the background intent processing loop)
 
 **Visibility:**
 - **Not visible to external users**
 - **Owned and invoked by IntentController** (not by Scheduler)
-- Invoked synchronously during IntentController.PublishIntent()
-- Executes inline with user request (before Task.Run)
-- May execute many times, work avoidance allows skipping scheduling entirely
+- Invoked from `IntentController.ProcessIntentsAsync()` (background intent processing loop)
+- May execute many times; work avoidance allows skipping scheduling entirely
 
 **Critical Rule:**
 ```
-DecisionEngine lives in the user thread synchronous execution path.
+DecisionEngine lives in the background intent processing loop.
 DecisionEngine is THE ONLY authority for rebalance necessity determination.
 All execution decisions flow from this component's analytical validation.
-Decision happens BEFORE background scheduling, preventing work buildup.
+Decision happens BEFORE execution is scheduled, preventing work buildup.
 IntentController OWNS the DecisionEngine instance.
 ```
 
 **Multi-Stage Validation Pipeline (Work Avoidance):**
 1. **Stage 1**: Current Cache NoRebalanceRange containment check (fast path work avoidance)
-2. **Stage 2**: Pending Desired Cache NoRebalanceRange validation (anti-thrashing, conceptual)
-3. **Stage 3**: DesiredCacheRange vs CurrentCacheRange equality check (no-op prevention)
+2. **Stage 2**: Pending Desired Cache NoRebalanceRange validation (anti-thrashing — fully implemented)
+3. **Stage 3**: Compute DesiredCacheRange from RequestedRange + configuration
+4. **Stage 4**: DesiredCacheRange vs CurrentCacheRange equality check (no-op prevention)
 
 **Enables Smart Eventual Consistency:**
 - Prevents thrashing through multi-stage validation
@@ -97,7 +95,7 @@ IntentController OWNS the DecisionEngine instance.
 - 24. Decision Path is purely analytical (CPU-only, no I/O)
 - 25. Never mutates cache state
 - 26. No rebalance if inside NoRebalanceRange (Stage 1 validation)
-- 27. No rebalance if DesiredCacheRange == CurrentCacheRange (Stage 3 validation)
+- 27. No rebalance if DesiredCacheRange == CurrentCacheRange (Stage 4 validation)
 - 28. Rebalance triggered only if ALL validation stages confirm necessity
 
 **Responsibility Type:** ensures correctness of rebalance necessity decisions through analytical validation, enabling smart eventual consistency
@@ -113,11 +111,18 @@ Defines canonical sliding window shape and rules.
 
 **Implementation:**
 This logical actor is internally decomposed into two components for separation of concerns:
-- **ThresholdRebalancePolicy** - Computes NoRebalanceRange, checks threshold-based triggering
+- **NoRebalanceRangePlanner** - Computes NoRebalanceRange, checks threshold-based triggering
 - **ProportionalRangePlanner** - Computes DesiredCacheRange, plans cache geometry
 
+**Configuration Validation** (WindowCacheOptions):
+- Cache size coefficients ≥ 0
+- Individual thresholds ≥ 0 (when specified)
+- **Threshold sum ≤ 1.0** (when both thresholds specified) - prevents overlapping shrinkage zones
+- RebalanceQueueCapacity > 0 or null
+- All validation occurs at construction time (fail-fast)
+
 **Execution Context:**  
-**Lives in: User Thread** (invoked synchronously by RebalanceDecisionEngine, which itself runs in user thread)
+**Lives in: Background Thread** (invoked synchronously by RebalanceDecisionEngine within intent processing loop)
 
 **Characteristics:**  
 Pure functions, lightweight structs (value types), CPU-only, side-effect free
@@ -128,60 +133,62 @@ Pure functions, lightweight structs (value types), CPU-only, side-effect free
 - 31. Canonical target cache state [ProportionalRangePlanner]
 - 32. Sliding window geometry defined by configuration [Both components]
 - 33. NoRebalanceRange derived from current cache range + config [ThresholdRebalancePolicy]
+- 35. Threshold sum constraint (leftThreshold + rightThreshold ≤ 1.0) [WindowCacheOptions validation]
 
 **Responsibility Type:** sets rules and constraints
 
 **Note:** Internally decomposed into two components that handle different aspects:
-- **When to rebalance** (threshold rules) → ThresholdRebalancePolicy
+- **When to rebalance** (threshold rules) → NoRebalanceRangePlanner
 - **What shape to target** (cache geometry) → ProportionalRangePlanner
 
 ---
 
-## 4. Rebalance Intent Manager (Intent & Concurrency Actor)
+## 4. IntentController (Intent & Concurrency Actor)
 
 **Role:**  
 Manages lifecycle of rebalance intents, orchestrates decision pipeline, and coordinates cancellation based on validation results.
 
 **Implementation:**
 This logical actor is internally decomposed into two components for separation of concerns:
-- **IntentController** (Intent Controller) - owns DecisionEngine, intent lifecycle, cancellation coordination, decision invocation
-- **RebalanceScheduler** (Execution Scheduler) - timing, debounce, background execution orchestration (owned by IntentController)
+- **IntentController** (Intent Controller) - owns DecisionEngine, intent lifecycle, cancellation coordination, decision invocation, background intent processing loop
+- **IRebalanceExecutionController** (Execution Controller) - timing, debounce, background execution orchestration (owned by IntentController)
 
 **Execution Context:**  
 **Mixed:**
-- **User Thread**: PublishIntent(), decision evaluation, cancellation, scheduling setup (all synchronous)
-- **Background / ThreadPool**: Only the scheduled execution task (after Task.Run in Scheduler)
+- **User Thread**: PublishIntent() only (atomic ops + signal, fire-and-forget)
+- **Background Thread**: Intent processing loop, decision evaluation, cancellation, execution request enqueuing
+
 
 **Ownership Hierarchy:**
 ```
-IntentController (User Thread)
-├── owns DecisionEngine (invokes synchronously)
-├── owns RebalanceScheduler (creates in constructor)
-│   └── owns RebalanceExecutor (passed to Scheduler)
-└── owns _pendingRebalance snapshot (Volatile.Read/Write)
+IntentController (User Thread for PublishIntent; Background Thread for ProcessIntentsAsync)
+├── owns DecisionEngine (invokes in ProcessIntentsAsync loop)
+├── owns IRebalanceExecutionController (created in constructor)
+│   └── owns RebalanceExecutor (passed to ExecutionController)
+└── manages _pendingIntent snapshot (Interlocked.Exchange — latest-wins)
 ```
 
 **Enhanced Role (Decision-Driven Model):**
 
 Now responsible for:
-- **Receiving intents** (on every user request) [Intent Controller - User Thread]
-- **Owning and invoking DecisionEngine** [Intent Controller - User Thread, synchronous]
-- **Intent identity and versioning** via PendingRebalance snapshot [Intent Controller]
-- **Cancellation coordination** based on validation results from owned DecisionEngine [Intent Controller]
-- **Deduplication** via synchronous decision evaluation [Intent Controller - User Thread]
-- **Debouncing** [Execution Scheduler - Background]
+- **Receiving intents** (on every user request) [IntentController.PublishIntent - User Thread]
+- **Owning and invoking DecisionEngine** [IntentController - Background Thread (intent processing loop), synchronous]
+- **Intent identity and versioning** via ExecutionRequest snapshot [IntentController]
+- **Cancellation coordination** based on validation results from owned DecisionEngine [IntentController - Background Thread]
+- **Deduplication** via synchronous decision evaluation [IntentController - Background Thread (intent processing loop)]
+- **Debouncing** [Execution Controller - Background]
 - **Single-flight execution** enforcement [Both components via cancellation]
-- **Starting background tasks** [Execution Scheduler]
-- **Orchestrating the validation-driven decision pipeline**: [Intent Controller - User Thread, synchronous]
-  1. **IntentController.PublishIntent()** invokes owned DecisionEngine synchronously (User Thread)
-  2. If ALL validation stages pass → cancel old pending, schedule new via Scheduler
-  3. If validation rejects → return immediately (work avoidance, no Task.Run)
-  4. **Scheduler.ScheduleRebalance()** creates PendingRebalance, schedules Task.Run (returns synchronously)
+- **Starting background execution** [Execution Controller]
+- **Orchestrating the validation-driven decision pipeline**: [IntentController - Background Thread (intent processing loop), synchronous]
+  1. **IntentController.ProcessIntentsAsync()** invokes owned DecisionEngine synchronously (Background Thread)
+  2. If ALL validation stages pass → cancel old pending, enqueue new execution request via ExecutionController
+  3. If validation rejects → continue loop (work avoidance, no execution)
+  4. **ExecutionController.PublishExecutionRequest()** enqueues to channel (processed by separate execution loop)
   5. **Background Task** performs debounce delay + ExecuteAsync (only this part is async)
 
 **Authority:** *Owns DecisionEngine and invokes it synchronously. Owns time and concurrency, orchestrates validation-driven execution. Does NOT determine rebalance necessity (delegates to owned DecisionEngine).*
 
-**Key Principle:** Cancellation is mechanical coordination (prevents concurrent executions), NOT a decision mechanism. The **DecisionEngine (owned by IntentController) is THE sole authority** for determining rebalance necessity. IntentController invokes it synchronously in user thread, enabling immediate work avoidance and preventing intent thrashing. This separation enables smart eventual consistency through work avoidance.
+**Key Principle:** Cancellation is mechanical coordination (prevents concurrent executions), NOT a decision mechanism. The **DecisionEngine (owned by IntentController) is THE sole authority** for determining rebalance necessity. IntentController invokes it in the background intent processing loop (`ProcessIntentsAsync`), enabling work avoidance and preventing intent thrashing. This separation enables smart eventual consistency through work avoidance.
 
 **Responsible for invariants:**
 - 17. At most one active rebalance intent
@@ -195,7 +202,7 @@ Now responsible for:
 
 **Responsibility Type:** controls and coordinates intent execution based on validation results
 
-**Note:** Internally decomposed into Intent Controller + Execution Scheduler,
+**Note:** Internally decomposed into IntentController + RebalanceExecutionController,
 but externally appears as a single unified actor.
 
 ---
@@ -270,7 +277,7 @@ Ensures atomicity and internal consistency of cache state, coordinates cancellat
 
 - **User Path:** speed and availability
 - **Decision Engine:** pure logic
-- **Intent Manager:** temporal correctness and concurrency
+- **IntentController:** temporal correctness and concurrency
 - **Executor:** mutation
 - **State Manager:** correctness and consistency
 - **Geometry Policy:** deterministic cache shape
@@ -281,19 +288,19 @@ Ensures atomicity and internal consistency of cache state, coordinates cancellat
 
 This table maps **actors** to the scenarios they participate in and clarifies **read/write responsibilities**.
 
-| Scenario                                | User Path                                                                                                                  | Decision Engine                                  | Geometry Policy            | Intent Manager                           | Rebalance Executor                                     | Cache State Manager                                    | Notes                                      |
-|-----------------------------------------|----------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------|----------------------------|------------------------------------------|--------------------------------------------------------|--------------------------------------------------------|--------------------------------------------|
-| **U1 – Cold Cache**                     | Requests data from IDataSource, updates LastRequestedRange & CurrentCacheRange, triggers rebalance                         | –                                                | Computes DesiredCacheRange | Receives intent                          | Executes rebalance asynchronously                      | Validates atomic update of CacheData/CurrentCacheRange | User served directly                       |
-| **U2 – Full Cache Hit (Exact)**         | Reads from cache, updates LastRequestedRange, triggers rebalance                                                           | Checks NoRebalanceRange                          | Computes DesiredCacheRange | Receives intent                          | Executes if rebalance required                         | Monitors consistency                                   | Minimal I/O                                |
-| **U3 – Full Cache Hit (Shifted)**       | Reads subrange from cache, updates LastRequestedRange, triggers rebalance                                                  | Checks NoRebalanceRange                          | Computes DesiredCacheRange | Receives intent                          | Executes if rebalance required                         | Monitors consistency                                   | Cache hit but different LastRequestedRange |
-| **U4 – Partial Cache Hit**              | Reads intersection, requests missing from IDataSource, merges, updates LastRequestedRange, triggers rebalance              | Checks NoRebalanceRange                          | Computes DesiredCacheRange | Receives intent                          | Executes merge and normalization                       | Ensures atomic merge & consistency                     | Temporary excess data allowed              |
-| **U5 – Full Cache Miss (Jump)**         | Requests full range from IDataSource, replaces CacheData/CurrentCacheRange, updates LastRequestedRange, triggers rebalance | Checks NoRebalanceRange                          | Computes DesiredCacheRange | Receives intent                          | Executes full normalization                            | Ensures atomic replacement                             | No cached data usable                      |
-| **D1 – NoRebalanceRange Block**         | –                                                                                                                          | Checks NoRebalanceRange, decides no execution    | –                          | Receives intent (blocked)                | –                                                      | –                                                      | Fast path skip                             |
-| **D2 – Desired == Current**             | –                                                                                                                          | Computes DesiredCacheRange, decides no execution | Computes DesiredCacheRange | Receives intent (no-op)                  | –                                                      | –                                                      | No mutation required                       |
-| **D3 – Rebalance Required**             | –                                                                                                                          | Computes DesiredCacheRange, confirms execution   | Computes DesiredCacheRange | Issues rebalance intent                  | Executes rebalance                                     | Ensures consistency                                    | Rebalance triggered asynchronously         |
-| **R1 – Build from Scratch**             | –                                                                                                                          | –                                                | Defines DesiredCacheRange  | Receives intent                          | Requests full range, replaces cache                    | Atomic replacement                                     | Cache initialized from empty               |
-| **R2 – Expand Cache (Partial Overlap)** | –                                                                                                                          | –                                                | Defines DesiredCacheRange  | Receives intent                          | Requests missing subranges, merges with existing cache | Atomic merge, consistency                              | Cache partially reused                     |
-| **R3 – Shrink / Normalize**             | –                                                                                                                          | –                                                | Defines DesiredCacheRange  | Receives intent                          | Trims cache to DesiredCacheRange                       | Atomic trim, consistency                               | Cache normalized to target                 |
-| **C1 – Rebalance Trigger Pending**      | Executes normally                                                                                                          | –                                                | –                          | Debounces old intent, allows only latest | Cancels obsolete                                       | Ensures atomicity                                      | Fast user response guaranteed              |
-| **C2 – Rebalance Executing**            | Executes normally                                                                                                          | –                                                | –                          | Marks latest intent                      | Cancels or discards obsolete execution                 | Ensures atomicity                                      | Latest execution wins                      |
-| **C3 – Spike / Multiple Requests**      | Executes normally                                                                                                          | –                                                | –                          | Debounces & coordinates intents          | Executes only latest rebalance                         | Ensures atomicity                                      | Single-flight execution enforced           |
+| Scenario                                | User Path                                                                                                               | Decision Engine                                  | Geometry Policy            | IntentController                         | Rebalance Executor                                                                     | Cache State Manager                                    | Notes                                      |
+|-----------------------------------------|-------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------|----------------------------|------------------------------------------|----------------------------------------------------------------------------------------|--------------------------------------------------------|--------------------------------------------|
+| **U1 – Cold Cache**                     | Requests data from IDataSource, returns data to user, publishes rebalance intent                                        | –                                                | Computes DesiredCacheRange | Receives intent                          | Executes rebalance asynchronously (writes LastRequested, CurrentCacheRange, CacheData) | Validates atomic update of CacheData/CurrentCacheRange | User served directly                       |
+| **U2 – Full Cache Hit (Exact)**         | Reads from cache, publishes rebalance intent                                                                            | Checks NoRebalanceRange                          | Computes DesiredCacheRange | Receives intent                          | Executes if rebalance required                                                         | Monitors consistency                                   | Minimal I/O                                |
+| **U3 – Full Cache Hit (Shifted)**       | Reads subrange from cache, publishes rebalance intent                                                                   | Checks NoRebalanceRange                          | Computes DesiredCacheRange | Receives intent                          | Executes if rebalance required                                                         | Monitors consistency                                   | Cache hit but different LastRequestedRange |
+| **U4 – Partial Cache Hit**              | Reads intersection, requests missing from IDataSource, merges locally, returns data to user, publishes rebalance intent | Checks NoRebalanceRange                          | Computes DesiredCacheRange | Receives intent                          | Executes merge and normalization                                                       | Ensures atomic merge & consistency                     | Temporary excess data allowed              |
+| **U5 – Full Cache Miss (Jump)**         | Requests full range from IDataSource, returns data to user, publishes rebalance intent                                  | Checks NoRebalanceRange                          | Computes DesiredCacheRange | Receives intent                          | Executes full normalization                                                            | Ensures atomic replacement                             | No cached data usable                      |
+| **D1 – NoRebalanceRange Block**         | –                                                                                                                       | Checks NoRebalanceRange, decides no execution    | –                          | Receives intent (blocked)                | –                                                                                      | –                                                      | Fast path skip                             |
+| **D2 – Desired == Current**             | –                                                                                                                       | Computes DesiredCacheRange, decides no execution | Computes DesiredCacheRange | Receives intent (no-op)                  | –                                                                                      | –                                                      | No mutation required                       |
+| **D3 – Rebalance Required**             | –                                                                                                                       | Computes DesiredCacheRange, confirms execution   | Computes DesiredCacheRange | Issues rebalance intent                  | Executes rebalance                                                                     | Ensures consistency                                    | Rebalance triggered asynchronously         |
+| **R1 – Build from Scratch**             | –                                                                                                                       | –                                                | Defines DesiredCacheRange  | Receives intent                          | Requests full range, replaces cache                                                    | Atomic replacement                                     | Cache initialized from empty               |
+| **R2 – Expand Cache (Partial Overlap)** | –                                                                                                                       | –                                                | Defines DesiredCacheRange  | Receives intent                          | Requests missing subranges, merges with existing cache                                 | Atomic merge, consistency                              | Cache partially reused                     |
+| **R3 – Shrink / Normalize**             | –                                                                                                                       | –                                                | Defines DesiredCacheRange  | Receives intent                          | Trims cache to DesiredCacheRange                                                       | Atomic trim, consistency                               | Cache normalized to target                 |
+| **C1 – Rebalance Trigger Pending**      | Executes normally                                                                                                       | –                                                | –                          | Debounces old intent, allows only latest | Cancels obsolete                                                                       | Ensures atomicity                                      | Fast user response guaranteed              |
+| **C2 – Rebalance Executing**            | Executes normally                                                                                                       | –                                                | –                          | Marks latest intent                      | Cancels or discards obsolete execution                                                 | Ensures atomicity                                      | Latest execution wins                      |
+| **C3 – Spike / Multiple Requests**      | Executes normally                                                                                                       | –                                                | –                          | Debounces & coordinates intents          | Executes only latest rebalance                                                         | Ensures atomicity                                      | Single-flight execution enforced           |

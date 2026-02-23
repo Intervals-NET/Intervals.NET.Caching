@@ -1,4 +1,4 @@
-﻿using Intervals.NET.Domain.Default.Numeric;
+using Intervals.NET.Domain.Default.Numeric;
 using Intervals.NET.Domain.Extensions.Fixed;
 using SlidingWindowCache.Integration.Tests.TestInfrastructure;
 using SlidingWindowCache.Infrastructure.Instrumentation;
@@ -32,12 +32,19 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Ensures any background rebalance operations are completed before executing next test
+    /// Ensures any background rebalance operations are completed and cache is properly disposed
     /// </summary>
     public async ValueTask DisposeAsync()
     {
-        // Wait for any background rebalance from current test to complete
-        await _cache!.WaitForIdleAsync();
+        if (_cache != null)
+        {
+            // Wait for any background rebalance from current test to complete
+            await _cache.WaitForIdleAsync();
+
+            // Properly dispose the cache to release resources
+            await _cache.DisposeAsync();
+        }
+
         _dataSource.Reset();
     }
 
@@ -68,7 +75,7 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
         var requestedRange = Intervals.NET.Factories.Range.Closed<int>(100, 110);
 
         // ACT
-        var data = await cache.GetDataAsync(requestedRange, CancellationToken.None);
+        var result = await cache.GetDataAsync(requestedRange, CancellationToken.None);
 
         // ASSERT - DataSource was called with the requested range
         Assert.True(_dataSource.TotalFetchCount > 0, "DataSource should be called for cold start");
@@ -78,7 +85,7 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
             "DataSource should be asked to fetch at least the requested range [100, 110]");
 
         // Verify data is correct
-        var array = data.ToArray();
+        var array = result.ToArray();
         Assert.Equal((int)requestedRange.Span(_domain), array.Length);
         Assert.Equal(100, array[0]);
         Assert.Equal(110, array[^1]);
@@ -98,13 +105,13 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
 
         // ACT - Jump to non-overlapping range
         var newRange = Intervals.NET.Factories.Range.Closed<int>(500, 510);
-        var data = await cache.GetDataAsync(newRange, CancellationToken.None);
+        var result = await cache.GetDataAsync(newRange, CancellationToken.None);
 
         // ASSERT - DataSource was called for new range
         Assert.True(_dataSource.TotalFetchCount > 0, "DataSource should be called for non-overlapping range");
 
         // Verify correct data
-        var array = data.ToArray();
+        var array = result.ToArray();
         Assert.Equal(11, array.Length);
         Assert.Equal(500, array[0]);
         Assert.Equal(510, array[^1]);
@@ -127,10 +134,10 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
         // ACT - Request overlapping range [105, 120]
         // Should fetch only missing portion [111, 120]
         var overlappingRange = Intervals.NET.Factories.Range.Closed<int>(105, 120);
-        var data = await cache.GetDataAsync(overlappingRange, CancellationToken.None);
+        var result = await cache.GetDataAsync(overlappingRange, CancellationToken.None);
 
         // ASSERT - Verify returned data is correct
-        var array = data.ToArray();
+        var array = result.ToArray();
         Assert.Equal(16, array.Length); // [105, 120] = 16 elements
         Assert.Equal(105, array[0]);
         Assert.Equal(120, array[^1]);
@@ -155,10 +162,10 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
 
         // ACT - Extend to the left [190, 205]
         var leftExtendRange = Intervals.NET.Factories.Range.Closed<int>(190, 205);
-        var data = await cache.GetDataAsync(leftExtendRange, CancellationToken.None);
+        var result = await cache.GetDataAsync(leftExtendRange, CancellationToken.None);
 
         // ASSERT - Verify data correctness
-        var array = data.ToArray();
+        var array = result.ToArray();
         Assert.Equal(16, array.Length);
         Assert.Equal(190, array[0]);
         Assert.Equal(205, array[^1]);
@@ -176,10 +183,10 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
 
         // ACT - Extend to the right [305, 320]
         var rightExtendRange = Intervals.NET.Factories.Range.Closed<int>(305, 320);
-        var data = await cache.GetDataAsync(rightExtendRange, CancellationToken.None);
+        var result = await cache.GetDataAsync(rightExtendRange, CancellationToken.None);
 
         // ASSERT - Verify data correctness
-        var array2 = data.ToArray();
+        var array2 = result.ToArray();
         Assert.Equal(16, array2.Length);
         Assert.Equal(305, array2[0]);
         Assert.Equal(320, array2[^1]);
@@ -205,7 +212,7 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
         // ACT - Request range [100, 110] (11 elements)
         // Expected expansion: left by 22, right by 22 -> cache becomes [78, 132]
         var requestedRange = Intervals.NET.Factories.Range.Closed<int>(100, 110);
-        var data = await cache.GetDataAsync(requestedRange, CancellationToken.None);
+        var result = await cache.GetDataAsync(requestedRange, CancellationToken.None);
 
         // Wait for rebalance to complete
         await cache.WaitForIdleAsync();
@@ -216,7 +223,7 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
         var data2 = await cache.GetDataAsync(withinExpanded, CancellationToken.None);
 
         // ASSERT - Verify data correctness
-        var array1 = data.ToArray();
+        var array1 = result.ToArray();
         var array2 = data2.ToArray();
         Assert.Equal(11, array1.Length);
         Assert.Equal(100, array1[0]);
@@ -247,8 +254,8 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
 
         foreach (var range in ranges)
         {
-            var data = await cache.GetDataAsync(range, CancellationToken.None);
-            Assert.Equal((int)range.Span(_domain), data.Length);
+            var loopResult = await cache.GetDataAsync(range, CancellationToken.None);
+            Assert.Equal((int)range.Span(_domain), loopResult.Length);
             await cache.WaitForIdleAsync();
         }
 
@@ -306,10 +313,10 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
 
         // Request subset that should be in expanded cache
         var subset = Intervals.NET.Factories.Range.Closed<int>(150, 160);
-        var data = await cache.GetDataAsync(subset, CancellationToken.None);
+        var result = await cache.GetDataAsync(subset, CancellationToken.None);
 
         // ASSERT - Data is correct
-        var array = data.ToArray();
+        var array = result.ToArray();
         Assert.Equal(11, array.Length);
         Assert.Equal(150, array[0]);
         Assert.Equal(160, array[^1]);
@@ -377,10 +384,10 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
 
         // ACT
         var singleElementRange = Intervals.NET.Factories.Range.Closed<int>(42, 42);
-        var data = await cache.GetDataAsync(singleElementRange, CancellationToken.None);
+        var result = await cache.GetDataAsync(singleElementRange, CancellationToken.None);
 
         // ASSERT
-        var array1 = data.ToArray();
+        var array1 = result.ToArray();
         Assert.Single(array1);
         Assert.Equal(42, array1[0]);
         Assert.True(_dataSource.TotalFetchCount >= 1);
@@ -394,10 +401,10 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
 
         // ACT - Large range (1000 elements)
         var largeRange = Intervals.NET.Factories.Range.Closed<int>(0, 999);
-        var data = await cache.GetDataAsync(largeRange, CancellationToken.None);
+        var result = await cache.GetDataAsync(largeRange, CancellationToken.None);
 
         // ASSERT
-        var array2 = data.ToArray();
+        var array2 = result.ToArray();
         Assert.Equal(1000, array2.Length);
         Assert.Equal(0, array2[0]);
         Assert.Equal(999, array2[^1]);

@@ -1,4 +1,4 @@
-﻿using Intervals.NET;
+using Intervals.NET;
 using Intervals.NET.Domain.Default.Numeric;
 using Intervals.NET.Domain.Extensions.Fixed;
 using Moq;
@@ -38,14 +38,16 @@ public static class TestHelpers
         double? leftThreshold = 0.2, // 20% threshold on the left side
         double? rightThreshold = 0.2, // 20% threshold on the right side
         TimeSpan? debounceDelay = null, // Default debounce delay of 50ms
-        UserCacheReadMode readMode = UserCacheReadMode.Snapshot
+        UserCacheReadMode readMode = UserCacheReadMode.Snapshot,
+        int? rebalanceQueueCapacity = null // null = task-based (unbounded), >= 1 = channel-based (bounded)
     ) => new(
         leftCacheSize: leftCacheSize,
         rightCacheSize: rightCacheSize,
         readMode: readMode,
         leftThreshold: leftThreshold,
         rightThreshold: rightThreshold,
-        debounceDelay: debounceDelay ?? TimeSpan.FromMilliseconds(50)
+        debounceDelay: debounceDelay ?? TimeSpan.FromMilliseconds(50),
+        rebalanceQueueCapacity: rebalanceQueueCapacity
     );
 
     /// <summary>
@@ -209,6 +211,83 @@ public static class TestHelpers
     }
 
     /// <summary>
+    /// Creates a mock IDataSource with fetch tracking to verify which ranges were requested.
+    /// Used for testing incremental fetch optimization and data preservation invariants.
+    /// </summary>
+    public static (Mock<IDataSource<int, int>> mock, List<Range<int>> fetchedRanges) CreateTrackingMockDataSource(
+        IntegerFixedStepDomain domain,
+        TimeSpan? fetchDelay = null)
+    {
+        var fetchedRanges = new List<Range<int>>();
+        var mock = new Mock<IDataSource<int, int>>();
+
+        mock.Setup(ds => ds.FetchAsync(It.IsAny<Range<int>>(), It.IsAny<CancellationToken>()))
+            .Returns<Range<int>, CancellationToken>(async (range, ct) =>
+            {
+                lock (fetchedRanges)
+                {
+                    fetchedRanges.Add(range);
+                }
+
+                if (fetchDelay.HasValue)
+                {
+                    await Task.Delay(fetchDelay.Value, ct);
+                }
+
+                var span = range.Span(domain);
+                var data = new List<int>((int)span);
+                var start = (int)range.Start;
+                var end = (int)range.End;
+
+                switch (range)
+                {
+                    case { IsStartInclusive: true, IsEndInclusive: true }:
+                        for (var i = start; i <= end; i++)
+                        {
+                            data.Add(i);
+                        }
+                        break;
+                    case { IsStartInclusive: true, IsEndInclusive: false }:
+                        for (var i = start; i < end; i++)
+                        {
+                            data.Add(i);
+                        }
+                        break;
+                    case { IsStartInclusive: false, IsEndInclusive: true }:
+                        for (var i = start + 1; i <= end; i++)
+                        {
+                            data.Add(i);
+                        }
+                        break;
+                    default:
+                        for (var i = start + 1; i < end; i++)
+                        {
+                            data.Add(i);
+                        }
+                        break;
+                }
+
+                return data;
+            });
+
+        mock.Setup(ds => ds.FetchAsync(It.IsAny<IEnumerable<Range<int>>>(), It.IsAny<CancellationToken>()))
+            .Returns<IEnumerable<Range<int>>, CancellationToken>(async (ranges, ct) =>
+            {
+                var chunks = new List<RangeChunk<int, int>>();
+
+                foreach (var range in ranges)
+                {
+                    var data = await mock.Object.FetchAsync(range, ct);
+                    chunks.Add(new RangeChunk<int, int>(range, data));
+                }
+
+                return chunks;
+            });
+
+        return (mock, fetchedRanges);
+    }
+
+    /// <summary>
     /// Creates a WindowCache instance with the specified options.
     /// </summary>
     public static WindowCache<int, int, IntegerFixedStepDomain> CreateCache(
@@ -241,9 +320,9 @@ public static class TestHelpers
         WindowCache<int, int, IntegerFixedStepDomain> cache,
         Range<int> range)
     {
-        var data = await cache.GetDataAsync(range, CancellationToken.None);
+        var result = await cache.GetDataAsync(range, CancellationToken.None);
         await cache.WaitForIdleAsync();
-        return data;
+        return result;
     }
 
     /// <summary>

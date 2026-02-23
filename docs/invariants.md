@@ -4,7 +4,7 @@
 
 ## Understanding This Document
 
-This document lists **46 system invariants** that define the behavior, architecture, and design intent of the Sliding Window Cache.
+This document lists **49 system invariants** that define the behavior, architecture, and design intent of the Sliding Window Cache.
 
 ### Invariant Categories
 
@@ -68,21 +68,50 @@ The cache exposes a public `WaitForIdleAsync()` method for deterministic synchro
 background rebalance execution:
 
 - **Purpose**: Infrastructure/testing API (not part of domain semantics)
-- **Mechanism**: Task lifecycle tracking using observe-and-stabilize pattern
-- **Guarantee**: Returns only when no rebalance execution is running
-- **Safety**: Works correctly under concurrent intent cancellation and rescheduling
+- **Mechanism**: Lock-free idle detection using `AsyncActivityCounter`
+- **Guarantee**: Completes when system **was idle at some point** (eventual consistency semantics)
+- **Safety**: Fully thread-safe, supports multiple concurrent awaiters
 
 ### Implementation Strategy
 
-- `RebalanceScheduler` tracks latest background Task in `_idleTask` field
-- `WaitForIdleAsync()` implements observe-and-stabilize loop:
-  1. Read current `_idleTask` via `Volatile.Read` (ensures visibility)
-  2. Await the observed Task
-  3. Re-check if `_idleTask` changed (new rebalance scheduled)
-  4. Loop until Task reference stabilizes and completes
+**AsyncActivityCounter Architecture:**
+- Tracks active operations using atomic operations
+- Signals idle state via state-based completion semantics (not event-based)
+- Lock-free coordination for all operations
+- Provides "was idle" semantics (not "is idle now")
 
-This provides deterministic synchronization useful for testing, graceful shutdown, 
-health checks, and other infrastructure scenarios.
+**WaitForIdleAsync() Workflow:**
+1. Snapshot current completion state
+2. Await completion (occurs when counter reached 0 at snapshot time)
+3. Return immediately if already completed, or wait for completion
+
+**Idle State Semantics - "Was Idle" NOT "Is Idle":**
+
+WaitForIdleAsync completes when the system **was idle at some point in time**. 
+It does NOT guarantee the system is still idle after completion (new activity may start immediately).
+
+Example race (correct behavior):
+1. Background thread decrements counter to 0, signals idle completion
+2. New intent arrives, increments counter to 1, creates new busy period
+3. Test calls WaitForIdleAsync, observes already-completed state
+4. Result: Method returns immediately even though system is now busy
+
+This is **correct behavior** for eventual consistency testing - system WAS idle between steps 1 and 2.
+Tests requiring stronger guarantees should implement retry logic or re-check state after await.
+
+**Typical Test Pattern:**
+
+```csharp
+// Trigger operation that schedules rebalance
+await cache.GetDataAsync(newRange);
+
+// Wait for system to stabilize
+await cache.WaitForIdleAsync();
+
+// At this point, system WAS idle (cache converged to consistent state)
+// Assert on converged state
+Assert.Equal(expectedRange, cache.CurrentCacheRange);
+```
 
 ### Architectural Boundaries
 
@@ -90,7 +119,7 @@ This synchronization mechanism **does not alter actor responsibilities**:
 
 - ✅ UserRequestHandler remains the ONLY publisher of rebalance intents
 - ✅ IntentController remains the lifecycle authority for intent cancellation
-- ✅ RebalanceScheduler remains the authority for background Task execution
+- ✅ `IRebalanceExecutionController` remains the authority for background Task execution
 - ✅ WindowCache remains a composition root with no business logic
 
 The method exists solely to expose idle synchronization through the public API for testing,
@@ -99,8 +128,8 @@ maintaining architectural separation.
 ### Relation to Instrumentation Counters
 
 Instrumentation counters track **events** (intent published, execution started, etc.) but are
-not used for synchronization. The observe-and-stabilize pattern based on Task lifecycle provides
-deterministic, race-free synchronization without polling or timing dependencies.
+not used for synchronization. AsyncActivityCounter provides deterministic, race-free idle detection
+without polling or timing dependencies.
 
 **Old approach (removed):**
 - Counter-based polling with stability windows
@@ -108,9 +137,10 @@ deterministic, race-free synchronization without polling or timing dependencies.
 - Complex lifecycle calculation
 
 **Current approach:**
-- Direct Task lifecycle tracking
-- Deterministic (no timing assumptions)
-- Simple and race-free
+- Lock-free activity tracking via AsyncActivityCounter
+- State-based completion semantics
+- Deterministic "was idle" semantics (eventual consistency)
+- No timing assumptions, no polling
 
 ---
 
@@ -119,19 +149,39 @@ deterministic, race-free synchronization without polling or timing dependencies.
 ### A.1 Concurrency & Priority
 
 **A.-1** 🔵 **[Architectural]** The User Path and Rebalance Execution **never write to cache concurrently**.
-- *Enforced by*: Single-writer architecture - User Path is read-only, only Rebalance Execution writes
-- *Architecture*: User Path never mutates cache state; Rebalance Execution is sole writer
+
+**Formal Specification:**
+- At any point in time, at most one component has write permission to CacheState
+- User Path operations must be read-only with respect to cache state
+- All cache mutations must be performed by a single designated writer
+
+**Rationale:** Eliminates write-write races and simplifies reasoning about cache consistency through architectural constraints.
+
+**Implementation:** See [component-map.md - Single-Writer Architecture](#implementation) for enforcement mechanism details.
 
 **A.0** 🔵 **[Architectural]** The User Path **always has higher priority** than Rebalance Execution.
-- *Enforced by*: Component ownership, cancellation protocol
-- *Architecture*: User Path cancels rebalance; rebalance checks cancellation
+
+**Formal Specification:**
+- User requests take precedence over background rebalance operations
+- Background work must yield when new user activity requires different cache state
+- System prioritizes immediate user needs over optimization work
+
+**Rationale:** Ensures responsive user experience by preventing background optimization from interfering with user-facing operations.
+
+**Implementation:** See [component-map.md - Priority and Cancellation](#implementation) for enforcement mechanism details.
 
 **A.0a** 🟢 **[Behavioral — Test: `Invariant_A_0a_UserRequestCancelsRebalance`]** A User Request **MAY cancel** an ongoing or pending Rebalance Execution **ONLY when a new rebalance is validated as necessary** by the multi-stage decision pipeline.
-- *Observable via*: DEBUG instrumentation counters tracking cancellation
-- *Test verifies*: Cancellation counter increments when new request arrives and rebalance validation requires rescheduling
-- *Clarification*: Cancellation is a mechanical coordination tool (single-writer architecture), not a decision mechanism. Rebalance necessity is determined by the Rebalance Decision Engine through analytical validation (NoRebalanceRange containment, DesiredRange vs CurrentRange comparison). User requests do NOT automatically trigger cancellation; validated rebalance necessity triggers cancellation + rescheduling.
-- *Note*: Cancellation prevents concurrent rebalance executions, not duplicate decision-making
-- *Implementation*: Uses `Interlocked.Exchange` for atomic read-and-clear of pending rebalance, preventing race where multiple threads could call `Cancel()` on same `PendingRebalance`
+
+**Formal Specification:**
+- Cancellation is a coordination mechanism, not a decision mechanism
+- Rebalance necessity determined by analytical validation (Decision Engine)
+- User requests do NOT automatically trigger cancellation
+- Validated rebalance necessity triggers cancellation + rescheduling
+- Cancellation prevents concurrent rebalance executions, not duplicate decision-making
+
+**Rationale:** Prevents thrashing while allowing necessary cache adjustments when user access pattern changes significantly.
+
+**Implementation:** See [component-map.md - Intent Management and Cancellation](#implementation) for enforcement mechanism details.
 
 ### A.2 User-Facing Guarantees
 
@@ -144,16 +194,37 @@ deterministic, race-free synchronization without polling or timing dependencies.
 - *Test verifies*: Request completes in <500ms with 1-second debounce
 
 **A.3** 🔵 **[Architectural]** The User Path is the **sole source of rebalance intent**.
-- *Enforced by*: Only `UserRequestHandler` calls `IntentController.PublishIntent()`
-- *Architecture*: Encapsulation prevents other components from publishing intents
+
+**Formal Specification:**
+- Only User Path publishes rebalance intents
+- No other component may trigger rebalance operations
+- Intent publishing is exclusive to user request handling
+
+**Rationale:** Centralizes intent origination to single actor, simplifying reasoning about when and why rebalances occur.
+
+**Implementation:** See [component-map.md - UserRequestHandler Responsibilities](#implementation) for enforcement mechanism details.
 
 **A.4** 🔵 **[Architectural]** Rebalance execution is **always performed asynchronously** relative to the User Path.
-- *Enforced by*: Background task scheduling in `RebalanceScheduler`, fire-and-forget pattern
-- *Architecture*: User Path returns immediately after publishing intent
+
+**Formal Specification:**
+- User requests return immediately without waiting for rebalance completion
+- Rebalance operations execute in background threads
+- User Path and rebalance execution are temporally decoupled
+
+**Rationale:** Prevents user requests from blocking on background optimization work, ensuring responsive user experience.
+
+**Implementation:** See [component-map.md - Async Execution Model](#implementation) for enforcement mechanism details.
 
 **A.5** 🔵 **[Architectural]** The User Path performs **only the work necessary to return data to the user**.
-- *Enforced by*: Responsibility assignment, component boundaries
-- *Architecture*: `UserRequestHandler` doesn't normalize/trim cache
+
+**Formal Specification:**
+- User Path does minimal work: assemble data, return to user
+- No cache normalization, trimming, or optimization in User Path
+- Background work deferred to rebalance execution
+
+**Rationale:** Minimizes user-facing latency by deferring non-essential work to background threads.
+
+**Implementation:** See [component-map.md - UserRequestHandler Responsibilities](#implementation) for enforcement mechanism details.
 
 **A.6** 🟡 **[Conceptual]** The User Path may synchronously request data from `IDataSource` in the user execution context if needed to serve `RequestedRange`.
 - *Design decision*: Prioritizes user-facing latency over background work
@@ -166,22 +237,38 @@ deterministic, race-free synchronization without polling or timing dependencies.
 ### A.3 Cache Mutation Rules (User Path)
 
 **A.7** 🔵 **[Architectural]** The User Path may read from cache and `IDataSource` but **does not mutate cache state**.
-- *Enforced by*: Component responsibilities, read-only architecture
-- *Architecture*: User Path has no write access to cache, LastRequested, or NoRebalanceRange
+
+**Formal Specification:**
+- User Path has read-only access to cache state
+- No write operations permitted in User Path
+- Cache, LastRequested, and NoRebalanceRange are immutable from User Path perspective
+
+**Rationale:** Enforces single-writer architecture, eliminating write-write races and simplifying concurrency reasoning.
+
+**Implementation:** See [component-map.md - Single-Writer Architecture](#implementation) for enforcement mechanism details.
 
 **A.8** 🔵 **[Architectural — Tests: `Invariant_A3_8_ColdStart`, `_CacheExpansion`, `_FullCacheReplacement`]** The User Path **MUST NOT mutate cache under any circumstance**.
-   - User Path is **read-only** with respect to cache state
-   - User Path **NEVER** calls `Cache.Rematerialize()`
-   - User Path **NEVER** writes to `LastRequested`
-   - User Path **NEVER** writes to `NoRebalanceRange`
-   - All cache mutations are performed exclusively by Rebalance Execution (single-writer)
-- *Observable via*: Instrumentation counters (`CacheExpanded`, `CacheReplaced`) track when CacheDataExtensionService analyzes extension needs
-- *Test verifies*: User Path returns correct data without mutating cache; Rebalance Execution populates cache
-- *Note*: `CacheExpanded/Replaced` counters are incremented by shared service (`CacheDataExtensionService`) used by both paths during range analysis, not mutation. Tests verify User Path doesn't trigger these counters in specific scenarios where prior rebalance has already expanded cache sufficiently.
+
+**Formal Specification:**
+- User Path is strictly read-only with respect to cache state
+- User Path never triggers cache rematerialization
+- User Path never updates LastRequested or NoRebalanceRange
+- All cache mutations exclusively performed by Rebalance Execution (single-writer)
+
+**Rationale:** Enforces single-writer architecture at the strictest level, preventing any mutation-related bugs in User Path.
+
+**Implementation:** See [component-map.md - Single-Writer Enforcement](#implementation) for enforcement mechanism details.
 
 **A.9** 🔵 **[Architectural]** Cache mutations are performed **exclusively by Rebalance Execution** (single-writer architecture).
-- *Enforced by*: Component encapsulation, internal setters on CacheState
-- *Architecture*: Only `RebalanceExecutor` has write access to cache state
+
+**Formal Specification:**
+- Only one component has permission to write to cache state
+- Rebalance Execution is the sole writer
+- All other components have read-only access
+
+**Rationale:** Single-writer architecture eliminates write-write races and simplifies concurrency model.
+
+**Implementation:** See [component-map.md - Single-Writer Architecture](#implementation) for enforcement mechanism details.
 
 **A.9a** 🟢 **[Behavioral — Test: `Invariant_A3_9a_CacheContiguityMaintained`]** **Cache Contiguity Rule:** `CacheData` **MUST always remain contiguous** — gapped or partially materialized cache states are invalid.
 - *Observable via*: All requests return valid contiguous data
@@ -196,12 +283,26 @@ deterministic, race-free synchronization without polling or timing dependencies.
 - *Test verifies*: For any request, returned data length matches expected range size
 
 **B.12** 🔵 **[Architectural]** Changes to `CacheData` and the corresponding `CurrentCacheRange` are performed **atomically**.
-- *Enforced by*: `Rematerialize()` performs atomic swap (staging buffer pattern)
-- *Architecture*: Tuple swap `(_activeStorage, _stagingBuffer) = (_stagingBuffer, _activeStorage)` is atomic
+
+**Formal Specification:**
+- Cache data and range updates are indivisible operations
+- No intermediate states where data and range are inconsistent
+- Updates appear instantaneous to all observers
+
+**Rationale:** Prevents readers from observing inconsistent cache state during updates.
+
+**Implementation:** See [component-map.md - Atomic Cache Updates](#implementation) for enforcement mechanism details.
 
 **B.13** 🔵 **[Architectural]** The system **never enters a permanently inconsistent state** with respect to `CacheData ↔ CurrentCacheRange`.
-- *Enforced by*: Atomic operations, cancellation checks before mutations
-- *Architecture*: `ThrowIfCancellationRequested()` prevents applying obsolete results
+
+**Formal Specification:**
+- Cache data always matches its declared range
+- Cancelled operations cannot leave cache in invalid state
+- System maintains consistency even under concurrent cancellation
+
+**Rationale:** Ensures cache remains usable even when rebalance operations are cancelled mid-flight.
+
+**Implementation:** See [component-map.md - Consistency Under Cancellation](#implementation) for enforcement mechanism details.
 
 **B.14** 🟡 **[Conceptual]** Temporary geometric or coverage inefficiencies in the cache are acceptable **if they can be resolved by rebalance execution**.
 - *Design decision*: User Path prioritizes speed over optimal cache shape
@@ -212,33 +313,67 @@ deterministic, race-free synchronization without polling or timing dependencies.
 - *Test verifies*: Rapid request changes don't corrupt cache
 
 **B.16** 🔵 **[Architectural]** Results from rebalance execution are applied **only if they correspond to the latest active rebalance intent**.
-- *Enforced by*: Cancellation token identity, checks before `Rematerialize()`
-- *Architecture*: `ThrowIfCancellationRequested()` before applying changes
+
+**Formal Specification:**
+- Obsolete rebalance results are discarded
+- Only current, valid results update cache state
+- System prevents applying stale computations
+
+**Rationale:** Prevents cache from being updated with results that no longer match current user access pattern.
+
+**Implementation:** See [component-map.md - Obsolete Result Prevention](#implementation) for enforcement mechanism details.
 
 ---
 
 ## C. Rebalance Intent & Temporal Invariants
 
 **C.17** 🔵 **[Architectural]** At most one rebalance intent may be active at any time.
-- *Enforced by*: Single-writer architecture, cancellation coordination in IntentController
-- *Architecture*: IntentController cancels previous pending rebalance before scheduling new one
-- *Note*: This is a structural constraint enforced by component design, not a behavioral guarantee testable via public API
+
+**Formal Specification:**
+- System maintains at most one pending rebalance intent
+- New intents supersede previous ones
+- Intent singularity prevents buildup of obsolete work
+
+**Rationale:** Prevents queue buildup and ensures system always works toward most recent user access pattern.
+
+**Implementation:** See [component-map.md - Intent Singularity](#implementation) for enforcement mechanism details.
 
 **C.18** 🟡 **[Conceptual]** Previously created intents may become **logically superseded** when a new intent is published, but rebalance execution relevance is determined by the **multi-stage rebalance validation logic**.
 - *Design intent*: Obsolescence ≠ cancellation; obsolescence ≠ guaranteed execution prevention
 - *Clarification*: Intents are access signals, not commands. An intent represents "user accessed this range," not "must execute rebalance." Execution decisions are governed by the Rebalance Decision Engine's analytical validation (Stage 1: Current Cache NoRebalanceRange check, Stage 2: Pending Desired Cache NoRebalanceRange check if applicable, Stage 3: DesiredCacheRange vs CurrentCacheRange equality check). Previously created intents may be superseded or cancelled, but the decision to execute is always based on current validation state, not intent age. Cancellation occurs ONLY when Decision Engine validation confirms a new rebalance is necessary.
 
 **C.19** 🔵 **[Architectural]** Any rebalance execution can be **cancelled or have its results ignored**.
-- *Enforced by*: `CancellationToken` passed through execution pipeline
-- *Architecture*: All async operations check cancellation token
+
+**Formal Specification:**
+- Rebalance operations are interruptible
+- Results from cancelled operations are discarded
+- System supports cooperative cancellation throughout pipeline
+
+**Rationale:** Enables User Path priority by allowing cancellation of obsolete background work.
+
+**Implementation:** See [component-map.md - Cancellation Protocol](#implementation) for enforcement mechanism details.
 
 **C.20** 🔵 **[Architectural]** If a rebalance intent becomes obsolete before execution begins, the execution **must not start**.
-- *Enforced by*: `IsCancellationRequested` check after debounce
-- *Architecture*: Early exit in `RebalanceScheduler.ExecutePipelineAsync`
+
+**Formal Specification:**
+- Obsolete rebalance operations must not execute
+- Early exit prevents wasted work
+- System validates intent relevance before execution
+
+**Rationale:** Avoids wasting CPU and I/O resources on obsolete cache shapes that no longer match user needs.
+
+**Implementation:** See [component-map.md - Early Exit Validation](#implementation) for enforcement mechanism details.
 
 **C.21** 🔵 **[Architectural]** At any point in time, **at most one rebalance execution is active**.
-- *Enforced by*: Cancellation protocol, single intent identity
-- *Architecture*: New intent cancels old execution via token
+
+**Formal Specification:**
+- Only one rebalance operation executes at a time
+- Concurrent rebalance executions are prevented
+- Serial execution guarantees single-writer consistency
+
+**Rationale:** Enforces single-writer architecture by ensuring only one component can mutate cache at any time.
+
+**Implementation:** See [component-map.md - Serial Execution Guarantee](#implementation) for enforcement mechanism details.
 
 **C.22** 🟡 **[Conceptual]** The results of rebalance execution **always reflect the latest user access pattern**.
 - *Design guarantee*: Obsolete results are discarded
@@ -257,9 +392,16 @@ deterministic, race-free synchronization without polling or timing dependencies.
 - *Design decision*: Rebalance is opportunistic, not mandatory
 - *Test note*: Test verifies skip behavior exists, but non-execution is acceptable
 
-**C.24e** 🔵 **[Architectural]** Intent **MUST contain delivered data** (`RangeData<TRange,TData,TDomain>`) representing what was actually returned to the user for the requested range.
-- *Enforced by*: `PublishIntent()` signature requires `deliveredData` parameter
-- *Architecture*: User Path materializes data once and passes to both user and intent
+**C.24e** 🔵 **[Architectural]** Intent **MUST contain delivered data** representing what was actually returned to the user for the requested range.
+
+**Formal Specification:**
+- Intent includes actual data delivered to user
+- Data materialized once and shared between user response and intent
+- Ensures rebalance uses same data user received
+
+**Rationale:** Prevents duplicate data fetching and ensures cache converges to exact data user saw.
+
+**Implementation:** See [component-map.md - Intent Data Contract](#implementation) for enforcement mechanism details.
 
 **C.24f** 🟡 **[Conceptual]** Delivered data in intent serves as the **authoritative source** for Rebalance Execution, avoiding duplicate fetches and ensuring consistency with user view.
 - *Design guarantee*: Rebalance Execution uses delivered data as base, not current cache
@@ -269,9 +411,11 @@ deterministic, race-free synchronization without polling or timing dependencies.
 
 ## D. Rebalance Decision Path Invariants
 
+> **📖 For detailed architectural explanation, see:** [Architecture Model - Decision-Driven Execution](architecture-model.md#rebalance-validation-vs-cancellation)
+
 ### D.0 Rebalance Decision Model Overview
 
-The system uses a **multi-stage rebalance decision pipeline**, not a cancellation policy. Rebalance necessity is determined entirely in the User Path context via CPU-only analytical validation performed by the Rebalance Decision Engine.
+The system uses a **multi-stage rebalance decision pipeline**, not a cancellation policy. Rebalance necessity is determined in the background intent processing loop via CPU-only analytical validation performed by the Rebalance Decision Engine.
 
 #### Key Conceptual Distinctions
 
@@ -286,7 +430,7 @@ The system uses a **multi-stage rebalance decision pipeline**, not a cancellatio
 - Rebalance may be skipped because:
   - NoRebalanceRange containment (Stage 1 validation)
   - Pending rebalance already covers range (Stage 2 validation, anti-thrashing)
-  - Desired == Current range (Stage 3 validation)
+  - Desired == Current range (Stage 4 validation)
   - Intent superseded or cancelled before execution begins
 
 #### Multi-Stage Decision Pipeline
@@ -299,15 +443,20 @@ The Rebalance Decision Engine validates rebalance necessity through three sequen
 - **Rationale**: Current cache already provides sufficient buffer around request
 - **Performance**: O(1) range containment check, no computation needed
 
-**Stage 2 — Pending Desired Cache NoRebalanceRange Validation** (if pending rebalance exists)
+**Stage 2 — Pending Desired Cache NoRebalanceRange Validation** (if pending execution exists)
 - **Purpose**: Anti-thrashing mechanism preventing oscillation
 - **Logic**: If RequestedRange ⊆ NoRebalanceRange(PendingDesiredCacheRange), skip rebalance
 - **Rationale**: Pending rebalance execution will satisfy this request when it completes
-- **Note**: This stage is conceptually part of the decision model but may be implemented as cancellation optimization in current architecture
+- **Implementation**: Checks `lastExecutionRequest?.DesiredNoRebalanceRange` — fully implemented
 
-**Stage 3 — DesiredCacheRange vs CurrentCacheRange Equality Check**
+**Stage 3 — Compute DesiredCacheRange**
+- **Purpose**: Determine the optimal cache range for the current request
+- **Logic**: Use `ProportionalRangePlanner` to compute `DesiredCacheRange` from `RequestedRange` + configuration
+- **Performance**: Pure CPU computation, no I/O
+
+**Stage 4 — DesiredCacheRange vs CurrentCacheRange Equality Check**
 - **Purpose**: Avoid no-op rebalance operations
-- **Logic**: Compute DesiredCacheRange from RequestedRange + config; if DesiredCacheRange == CurrentCacheRange, skip rebalance
+- **Logic**: If `DesiredCacheRange == CurrentCacheRange`, skip rebalance
 - **Rationale**: Cache is already in optimal configuration for this request
 - **Performance**: Requires computing desired range but avoids I/O
 
@@ -331,12 +480,27 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 **Trade-off:** Slight delay in cache optimization vs. system stability and resource efficiency
 
 **D.25** 🔵 **[Architectural]** The Rebalance Decision Path is **purely analytical** and has **no side effects**.
-- *Enforced by*: `RebalanceDecisionEngine` is stateless, uses value types
-- *Architecture*: Pure function: inputs → decision (no I/O, no mutations)
+
+**Formal Specification:**
+- Decision logic is pure: inputs → decision
+- No I/O operations during decision evaluation
+- No state mutations during decision evaluation
+- Deterministic: same inputs always produce same decision
+
+**Rationale:** Pure decision logic enables reasoning about correctness and prevents unintended side effects.
+
+**Implementation:** See [component-map.md - Pure Decision Logic](#implementation) for enforcement mechanism details.
 
 **D.26** 🔵 **[Architectural]** The Decision Path **never mutates cache state**.
-- *Enforced by*: No write access to `CacheState` in decision components
-- *Architecture*: Decision components don't have reference to mutable cache
+
+**Formal Specification:**
+- Decision logic has no write access to cache
+- Decision components are read-only with respect to system state
+- Separation between decision (analytical) and execution (mutating)
+
+**Rationale:** Enforces clean separation between decision-making and state mutation, simplifying reasoning.
+
+**Implementation:** See [component-map.md - Decision-Execution Separation](#implementation) for enforcement mechanism details.
 
 **D.27** 🟢 **[Behavioral — Test: `Invariant_D27_NoRebalanceIfRequestInNoRebalanceRange`]** If `RequestedRange` is fully contained within `NoRebalanceRange`, **rebalance execution is prohibited**.
 - *Observable via*: DEBUG counters showing execution skipped (policy-based, see C.24b)
@@ -345,16 +509,26 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 **D.28** 🟢 **[Behavioral — Test: `Invariant_D28_SkipWhenDesiredEqualsCurrentRange`]** If `DesiredCacheRange == CurrentCacheRange`, **rebalance execution is not required**.
 - *Observable via*: DEBUG counter `RebalanceSkippedSameRange` (optimization-based, see C.24c)
 - *Test verifies*: Repeated request with same range increments skip counter
-- *Implementation*: Early exit in `RebalanceExecutor.ExecuteAsync` before I/O operations
+- *Implementation*: Early exit in `RebalanceDecisionEngine.Evaluate` (Stage 4) before execution is scheduled
 
 **D.29** 🔵 **[Architectural]** Rebalance execution is triggered **only if ALL stages of the multi-stage decision pipeline confirm necessity**.
-- *Enforced by*: `RebalanceScheduler` checks decision before calling executor
-- *Architecture*: Decision result gates execution
-- *Decision Pipeline Stages*:
-  1. **Stage 1 — Current Cache NoRebalanceRange Validation**: If RequestedRange is contained within the NoRebalanceRange computed from CurrentCacheRange, skip rebalance (fast path)
-  2. **Stage 2 — Pending Desired Cache NoRebalanceRange Validation** (if pending rebalance exists): Validate against the NoRebalanceRange computed from the pending DesiredCacheRange to prevent thrashing/oscillation
-  3. **Stage 3 — DesiredCacheRange vs CurrentCacheRange Equality Check**: If computed DesiredCacheRange equals CurrentCacheRange, skip rebalance (no change needed)
-- *Critical Principle*: Rebalance executes ONLY if ALL stages pass validation. This multi-stage approach prevents unnecessary I/O, cache thrashing, and oscillating cache geometry while ensuring the system converges to optimal configuration.
+
+**Formal Specification:**
+- Five-stage validation pipeline gates execution
+- All stages must pass for execution to proceed
+- Multi-stage approach prevents unnecessary work while ensuring convergence
+- Critical Principle: Rebalance executes ONLY if ALL stages pass validation
+
+**Decision Pipeline Stages**:
+1. **Stage 1 — Current Cache NoRebalanceRange Validation**: Skip if RequestedRange contained in current NoRebalanceRange (fast path)
+2. **Stage 2 — Pending Desired Cache NoRebalanceRange Validation**: Validate against pending NoRebalanceRange to prevent thrashing
+3. **Stage 3 — Compute DesiredCacheRange**: Determine optimal cache range from RequestedRange + configuration
+4. **Stage 4 — DesiredCacheRange vs CurrentCacheRange Equality**: Skip if DesiredCacheRange equals CurrentCacheRange (no change needed)
+5. **Stage 5 — Schedule Execution**: All stages passed; schedule rebalance execution
+
+**Rationale:** Multi-stage validation prevents thrashing while ensuring cache converges to optimal state.
+
+**Implementation:** See [component-map.md - Multi-Stage Decision Pipeline](#implementation) for enforcement mechanism details.
 
 ---
 
@@ -365,8 +539,15 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 - *Test verifies*: With config (leftSize=1.0, rightSize=1.0), cache expands as expected
 
 **E.31** 🔵 **[Architectural]** `DesiredCacheRange` is **independent of the current cache contents**, but may use configuration and `RequestedRange`.
-- *Enforced by*: `ProportionalRangePlanner.Plan()` doesn't access current cache
-- *Architecture*: Pure function using only config + requested range
+
+**Formal Specification:**
+- Desired range computed only from configuration and requested range
+- Current cache state does not influence desired range calculation
+- Pure function: config + requested range → desired range
+
+**Rationale:** Deterministic range computation ensures predictable cache behavior independent of history.
+
+**Implementation:** See [component-map.md - Desired Range Computation](#implementation) for enforcement mechanism details.
 
 **E.32** 🟡 **[Conceptual]** `DesiredCacheRange` represents the **canonical target state** towards which the system converges.
 - *Design concept*: Single source of truth for "what cache should be"
@@ -377,8 +558,34 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 - *Rationale*: Predictable, user-controllable cache shape
 
 **E.34** 🔵 **[Architectural]** `NoRebalanceRange` is derived **from `CurrentCacheRange` and configuration**.
-- *Enforced by*: `ThresholdRebalancePolicy.GetNoRebalanceRange()` implementation
-- *Architecture*: Shrinks current range by threshold ratios
+
+**Formal Specification:**
+- No-rebalance range computed from current cache range and threshold configuration
+- Represents stability zone around current cache
+- Pure computation: current range + thresholds → no-rebalance range
+
+**Rationale:** Stability zone prevents thrashing when user makes small movements within already-cached area.
+
+**Implementation:** See [component-map.md - NoRebalanceRange Computation](#implementation) for enforcement mechanism details.
+
+**E.35** 🟢 **[Behavioral]** When both `LeftThreshold` and `RightThreshold` are specified (non-null), their sum must not exceed 1.0.
+
+**Formal Specification:**
+```
+leftThreshold.HasValue && rightThreshold.HasValue 
+    => leftThreshold.Value + rightThreshold.Value <= 1.0
+```
+
+**Rationale:** Thresholds define inward shrinkage from cache boundaries to create the no-rebalance stability zone. If their sum exceeds 1.0 (100% of cache), the shrinkage zones would overlap, creating invalid range geometry where boundaries would cross.
+
+**Enforcement:** Constructor validation in `WindowCacheOptions` - throws `ArgumentException` at construction time if violated.
+
+**Edge Cases:**
+- Exactly 1.0 is valid (thresholds meet at center point, creating zero-width stability zone)
+- Single threshold can be any value ≥ 0 (including 1.0 or greater) - sum validation only applies when both are specified
+- Both null is valid (no threshold-based rebalancing)
+
+**Test Coverage:** Unit tests in `WindowCacheOptionsTests` verify validation logic.
 
 ---
 
@@ -397,8 +604,15 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 - *Related*: C.24d (execution skipped due to cancellation), A.0a (User Path priority via validation-driven cancellation), G.46 (high-level guarantee)
 
 **F.35a** 🔵 **[Architectural]** Rebalance Execution **MUST yield** to User Path requests immediately upon cancellation.
-- *Enforced by*: `ThrowIfCancellationRequested()` at multiple checkpoints
-- *Architecture*: Cancellation checks before/after I/O, before mutations
+
+**Formal Specification:**
+- Background operations must check for cancellation signals
+- Execution must abort promptly when cancelled
+- User Path priority enforced through cooperative cancellation
+
+**Rationale:** Ensures background work never degrades responsiveness to user requests.
+
+**Implementation:** See [component-map.md - Cancellation Checkpoints](#implementation) for enforcement mechanism details.
 
 **F.35b** 🟢 **[Behavioral — Covered by `Invariant_B15`]** Partially executed or cancelled Rebalance Execution **MUST NOT leave cache in inconsistent state**.
 - *Observable via*: Cache continues serving valid data after cancellation
@@ -407,8 +621,15 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 ### F.2 Cache Mutation Rules (Rebalance Execution)
 
 **F.36** 🔵 **[Architectural]** The Rebalance Execution Path is the **ONLY component that mutates cache state** (single-writer architecture).
-- *Enforced by*: Component encapsulation, internal setters on CacheState
-- *Architecture*: Only `RebalanceExecutor` writes to Cache, LastRequested, NoRebalanceRange
+
+**Formal Specification:**
+- Only one component has write permission to cache state
+- Exclusive mutation authority: Cache, LastRequested, NoRebalanceRange
+- All other components are read-only
+
+**Rationale:** Single-writer architecture eliminates all write-write races and simplifies concurrency reasoning.
+
+**Implementation:** See [component-map.md - Single-Writer Architecture](#implementation) for enforcement mechanism details.
 
 **F.36a** 🟢 **[Behavioral — Test: `Invariant_F36a_RebalanceNormalizesCache`]** Rebalance Execution mutates cache for normalization using **delivered data from intent as authoritative base**:
    - **Uses delivered data** from intent (not current cache) as starting point
@@ -422,16 +643,37 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 - *Single-writer guarantee*: These are the ONLY mutations in the system
 
 **F.37** 🔵 **[Architectural]** Rebalance Execution may **replace, expand, or shrink cache data** to achieve normalization.
-- *Enforced by*: `RebalanceExecutor` has full mutation capability
-- *Architecture*: Can call `Rematerialize()` with any range
+
+**Formal Specification:**
+- Full mutation capability: expand, trim, or replace cache entirely
+- Flexibility to achieve any desired cache geometry
+- Single operation can transform cache to target state
+
+**Rationale:** Complete mutation authority enables efficient convergence to optimal cache shape in single operation.
+
+**Implementation:** See [component-map.md - Cache Normalization Operations](#implementation) for enforcement mechanism details.
 
 **F.38** 🔵 **[Architectural]** Rebalance Execution requests data from `IDataSource` **only for missing subranges**.
-- *Enforced by*: `CacheDataExtensionService.ExtendCacheAsync()` calculates missing ranges
-- *Architecture*: Union logic preserves existing data
+
+**Formal Specification:**
+- Fetch only gaps between existing cache and desired range
+- Minimize redundant data fetching
+- Preserve existing cached data during expansion
+
+**Rationale:** Avoids wasting I/O bandwidth by re-fetching data already in cache.
+
+**Implementation:** See [component-map.md - Incremental Data Fetching](#implementation) for enforcement mechanism details.
 
 **F.39** 🔵 **[Architectural]** Rebalance Execution **does not overwrite existing data** that intersects with `DesiredCacheRange`.
-- *Enforced by*: `ExtendCacheAsync()` unions new data with existing
-- *Architecture*: Staging buffer pattern preserves active storage during enumeration
+
+**Formal Specification:**
+- Existing cached data is preserved during rebalance
+- New data merged with existing, not replaced
+- Union operation maintains data integrity
+
+**Rationale:** Preserves valid cached data, avoiding redundant fetches and ensuring consistency.
+
+**Implementation:** See [component-map.md - Data Preservation During Expansion](#implementation) for enforcement mechanism details.
 
 ### F.3 Post-Execution Guarantees
 
@@ -455,13 +697,35 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 - *Observable via*: Request completes quickly without waiting for background work
 - *Test verifies*: Request time < debounce delay
 
-**G.44** 🔵 **[Architectural — Covered by same test as G.43]** Rebalance Decision Path and Rebalance Execution Path execute **outside the user execution context**.
-- *Enforced by*: `Task.Run()` executes in ThreadPool
-- *Architecture*: Fire-and-forget pattern, async execution
+### G.44: Rebalance Decision Path and Rebalance Execution Path execute outside the user execution context
 
-**G.45** 🔵 **[Architectural — Covered by same test as G.43]** Rebalance Execution Path performs I/O **only in a background execution context**.
-- *Enforced by*: `ExecuteAsync` runs in ThreadPool thread
-- *Architecture*: User Path returns before background I/O starts
+**Formal Specification:**
+The Rebalance Decision Path and Rebalance Execution Path MUST execute asynchronously outside the user execution context. User requests MUST return immediately without waiting for background analysis or I/O operations.
+
+**Architectural Properties:**
+- Fire-and-forget pattern: User request publishes work and returns
+- No user blocking: Background work proceeds independently
+- Decoupled execution: Decision and Execution run in background threads
+
+**Rationale:** Ensures user requests remain responsive by offloading all optimization work to background threads.
+
+**Implementation:** See [component-map.md - Async Execution Model](#implementation) for enforcement mechanism details.
+- 🔵 **[Architectural — Covered by same test as G.43]**
+
+### G.45: Rebalance Execution Path performs I/O only in background execution context
+
+**Formal Specification:**
+All I/O operations (data fetching via IDataSource) MUST occur exclusively in the background execution context. The User Path MUST complete and return to the caller before any background I/O operations begin.
+
+**Architectural Properties:**
+- User Path is I/O-free: Returns before IDataSource.FetchAsync called
+- Background I/O isolation: Data fetching confined to Rebalance Execution Path
+- No user-facing latency: I/O costs do not impact user request time
+
+**Rationale:** Isolates expensive I/O operations from user-facing request path to minimize latency.
+
+**Implementation:** See [component-map.md - I/O Isolation](#implementation) for enforcement mechanism details.
+- 🔵 **[Architectural — Covered by same test as G.43]**
 
 **G.46** 🟢 **[Behavioral — Tests: `Invariant_G46_UserCancellationDuringFetch`, `Invariant_G46_RebalanceCancellation`]** Cancellation **must be supported** for all scenarios:
 1. **User-facing cancellation**: User-provided CancellationToken propagates through User Path to IDataSource.FetchAsync()
@@ -477,22 +741,166 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 
 ---
 
+## H. Activity Tracking & Idle Detection Invariants
+
+### Background
+
+The system provides idle state detection for background operations through an activity counter mechanism. It tracks active work (intent processing, rebalance execution) and signals completion when all work finishes. This enables deterministic synchronization for testing, disposal, and health checks.
+
+**Key Architectural Concept**: Activity tracking creates an **orchestration barrier** — work must increment counter BEFORE becoming visible, ensuring idle detection never misses scheduled-but-not-yet-started work.
+
+**Current Implementation** (implementation details - expected to change):
+The `AsyncActivityCounter` component implements this using lock-free synchronization primitives.
+
+### The Two Critical Invariants
+
+### H.47: Increment-Before-Publish Invariant
+
+**Formal Specification:**
+Any operation that schedules, publishes, or enqueues background work MUST increment the activity counter BEFORE making that work visible to consumers (via semaphore signal, channel write, volatile write, or task chain).
+
+**Critical Property:**
+Prevents "scheduled but invisible to idle detection" race condition. If work becomes visible before counter increment, `WaitForIdleAsync()` could signal idle while work is enqueued but not yet started.
+
+**Architectural Guarantee:**
+When activity counter reaches zero (idle state), NO work exists in any of these states:
+- Scheduled but not yet visible to consumers
+- Enqueued in channels or semaphores
+- Published but not yet dequeued
+
+**Rationale:** Ensures idle detection accurately reflects all enqueued work, preventing premature idle signals.
+
+**Implementation:** See [component-map.md - Activity Counter Ordering](#implementation) for enforcement mechanism details.
+- 🔵 **[Architectural — Enforced by call site ordering]**
+
+### H.48: Decrement-After-Completion Invariant
+
+**Formal Specification:**
+Any operation representing completion of background work MUST decrement the activity counter AFTER work is fully completed, cancelled, or failed. Decrement MUST execute unconditionally regardless of success/failure/cancellation path.
+
+**Critical Property:**
+Prevents activity counter leaks that would cause `WaitForIdleAsync()` to hang indefinitely. If decrement is missed on any execution path, the counter never reaches zero and idle detection breaks permanently.
+
+**Architectural Guarantee:**
+Activity counter accurately reflects active work count at all times:
+- Counter > 0: Background work is active, enqueued, or in-flight
+- Counter = 0: All work completed, system is idle
+- No missed decrements: Counter cannot leak upward
+
+**Rationale:** Ensures `WaitForIdleAsync()` will eventually complete by preventing counter leaks on any execution path.
+
+**Implementation:** See [component-map.md - Activity Counter Cleanup](#implementation) for enforcement mechanism details.
+- 🔵 **[Architectural — Enforced by finally blocks]**
+
+**H.49** 🟡 **[Conceptual — Eventual consistency design]** **"Was Idle" Semantics:**
+`WaitForIdleAsync()` completes when the system **was idle at some point in time**, NOT when "system is idle now".
+
+- *Design rationale*: State-based completion semantics provide eventual consistency
+- *Behavior*: Observing completed state after new activity starts is correct — system WAS idle between observations
+- *Implication*: Callers requiring stronger guarantees (e.g., "still idle after await") must implement retry logic or re-check state
+- *Testing usage*: Sufficient for convergence testing — system stabilized at snapshot time
+
+### Activity-Based Stabilization Barrier
+
+The combination of H.47 and H.48 creates a **stabilization barrier** with strong guarantees:
+
+**Idle state (counter=0) means:**
+- ✅ No intents being processed
+- ✅ No rebalance executions running  
+- ✅ No work enqueued in channels or task chains
+- ✅ No "scheduled but invisible" work exists
+
+**Race scenario (correct behavior):**
+1. T1 decrements to 0, signals idle completion (idle achieved)
+2. T2 increments to 1, creates new busy period
+3. T3 calls `WaitForIdleAsync()`, observes already-completed state
+4. Result: Method completes immediately even though count=1
+
+This is **correct** — system WAS idle between steps 1 and 2. This is textbook eventual consistency semantics.
+
+### Error Handling & Counter Leak Prevention
+
+**Architectural Principle:**
+When background work publication fails (e.g., channel closed, queue full), the activity counter increment MUST be reversed to prevent leaks. This requires exception handling at publication sites.
+
+**Current Implementation Example** (implementation details - expected to change):
+
+One strategy is demonstrated in the channel-based execution controller, which uses try-catch to handle write failures:
+
+```csharp
+// Example from ChannelBasedRebalanceExecutionController.cs (lines 237-248)
+try
+{
+    await _executionChannel.Writer.WriteAsync(request).ConfigureAwait(false);
+}
+catch (Exception ex)
+{
+    request.Dispose();
+    _activityCounter.DecrementActivity();  // Manual cleanup prevents leak
+    _cacheDiagnostics.RebalanceExecutionFailed(ex);
+    throw;
+}
+```
+
+If channel write fails (e.g., channel completed during disposal race), the catch block manually decrements to prevent counter leak. This ensures counter remains balanced even in edge cases.
+
+### Execution Flow Example
+
+**Current Implementation Trace** (implementation details - expected to change):
+
+Complete trace demonstrating both invariants in current architecture:
+
+```
+1. User Thread: GetDataAsync(range)
+   ├─> IntentController.PublishIntent()
+   │   ├─> Write intent reference
+   │   ├─> ✅ IncrementActivity()              [count: 0→1, TCS_A created]
+   │   └─> Release semaphore (intent visible)
+   │
+2. Intent Processing Loop (Background Thread)
+   ├─> Wake up, read intent
+   ├─> DecisionEngine evaluates
+   ├─> If skip: jump to finally
+   │   └─> finally: ✅ DecrementActivity()     [count: 1→0, TCS_A signaled → IDLE]
+   │
+   ├─> If schedule:
+   │   ├─> ExecutionController.PublishExecutionRequest()
+   │   │   ├─> ✅ IncrementActivity()          [count: 1→2]
+   │   │   └─> Enqueue/chain execution request (work visible)
+   │   └─> finally: ✅ DecrementActivity()     [count: 2→1]
+   │
+3. Rebalance Execution Loop (Background Thread)
+   ├─> Dequeue/await execution request
+   ├─> Executor.ExecuteAsync() [CACHE MUTATIONS]
+   └─> finally: ✅ DecrementActivity()         [count: 1→0, TCS_A signaled → IDLE]
+```
+
+**Key insight**: Idle state occurs ONLY when no work is active, enqueued, or scheduled. The increment-before-publish pattern ensures this guarantee holds across all execution paths.
+
+### Relation to Other Invariants
+
+- **A.-1** (Single-Writer Architecture): Activity tracking supports single-writer by tracking execution lifecycle
+- **F.35** (Cancellation Support): DecrementActivity in finally blocks ensures counter correctness even on cancellation
+- **G.46** (User/Background Cancellation): Activity counter remains balanced regardless of cancellation timing
+
+---
+
 ## Summary Statistics
 
-### Total Invariants: 47
+### Total Invariants: 49
 
 #### By Category:
 - 🟢 **Behavioral** (test-covered): 19 invariants
-- 🔵 **Architectural** (structure-enforced): 20 invariants  
+- 🔵 **Architectural** (structure-enforced): 22 invariants  
 - 🟡 **Conceptual** (design-level): 8 invariants
 
 #### Test Coverage Analysis:
 - **29 automated tests** in `WindowCacheInvariantTests`
 - **19 behavioral invariants** directly covered
-- **20 architectural invariants** enforced by code structure (not tested)
+- **22 architectural invariants** enforced by code structure (not tested)
 - **8 conceptual invariants** documented as design guidance (not tested)
 
-**This is by design.** The gap between 47 invariants and 29 tests is intentional:
+**This is by design.** The gap between 49 invariants and 29 tests is intentional:
 - Architecture enforces structural constraints automatically
 - Conceptual invariants guide development, not runtime behavior
 - Tests focus on externally observable behavior
@@ -510,6 +918,6 @@ For conceptual invariants, the design rationale is explained.
 ## Related Documentation
 
 - **[Component Map](component-map.md)** - Detailed component responsibilities and ownership
-- **[Concurrency Model](concurrency-model.md)** - Single-consumer model and coordination
+- **[Architecture Model](architecture-model.md)** - Single-consumer model and coordination
 - **[Scenario Model](scenario-model.md)** - Temporal behavior scenarios
 - **[Storage Strategies](storage-strategies.md)** - Staging buffer pattern and memory behavior

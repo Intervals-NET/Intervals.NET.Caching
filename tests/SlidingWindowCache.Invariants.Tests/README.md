@@ -10,9 +10,61 @@ Comprehensive unit test suite for the WindowCache library verifying system invar
 - Cancellation is coordination tool (prevents concurrent executions), not decision mechanism
 
 **Test Statistics**:
-- **Total Tests**: 27 automated tests (all passing)
-- **Test Execution Time**: ~7 seconds for full suite
+- **Total Tests**: 35 test methods (45 individual xUnit test cases including Theory parameterizations)
+- **Test Execution Time**: ~14 seconds for full suite
 - **Architecture**: Single-writer with intent-carried data
+- **Coverage Expansion**:
+  - Added 7 new gap tests for previously untested invariants
+  - Converted 7 tests to Theory with execution strategy parameterization (2x coverage)
+  - Converted 3 tests to Theory with storage strategy parameterization (2x coverage)
+  - Total new test cases: 16 (from 29 → 45, +55% increase)
+
+## Recent Test Suite Enhancements
+
+### Phase 1: High-Priority Gap Tests (2 tests added)
+- **B.15 Enhanced**: Cancellation during I/O operations - validates consistency when rebalance is cancelled during active `FetchAsync` operations
+- **B.16**: Stale result prevention - ensures only the most recent rebalance results are applied to cache, preventing race conditions from slow/obsolete executions
+
+### Phase 2: Execution Strategy Coverage (4 tests converted to Theory)
+Tests now validate behavior across **both execution strategies**:
+- **Task-based** (unbounded, `rebalanceQueueCapacity: null`) - Default strategy
+- **Channel-based** (bounded, `rebalanceQueueCapacity: 10`) - Backpressure control
+
+Converted tests:
+- `Invariant_A_0a_UserRequestCancelsRebalance`
+- `Invariant_C17_AtMostOneActiveIntent`
+- `Invariant_F35_G46_RebalanceCancellationBehavior`
+- `ConcurrencyScenario_RapidRequestsBurstWithCancellation`
+
+### Phase 3: Medium-Priority Gap Tests (3 tests added)
+- **A.-1**: Concurrent write safety - stress test with 50 concurrent requests verifying single-writer robustness
+- **C.20**: Early exit for obsolete intents - validates Decision Engine discards superseded intents efficiently
+- **E.31**: Desired range independence - confirms desired range computation is deterministic regardless of cache history
+
+### Phase 4: Performance Guarantee Tests (2 tests added)
+- **F.38**: Incremental fetch optimization - verifies only missing data segments are fetched during cache expansion
+- **F.39**: Data preservation during expansion - ensures existing cached data is never refetched, preventing wasteful I/O
+
+### Phase 5: Storage Strategy Coverage (3 tests converted to Theory)
+Tests now validate behavior across **both storage strategies**:
+- **Snapshot** (`UserCacheReadMode.Snapshot`) - Zero-allocation reads, expensive rematerialization
+- **CopyOnRead** (`UserCacheReadMode.CopyOnRead`) - Defensive copies, cheaper rematerialization
+
+Converted tests:
+- `Invariant_A3_8_UserPathNeverMutatesCache` (3 scenarios × 2 storage = 6 test cases)
+- `Invariant_F36a_RebalanceNormalizesCache`
+- `Invariant_F40_F41_F42_PostExecutionGuarantees`
+
+### Test Infrastructure Enhancements
+- **Added**: `CreateTrackingMockDataSource` helper for validating fetch patterns
+- **Added**: `A3_8_TestData` MemberData provider combining scenarios and storage strategies
+- **Updated**: `CreateDefaultOptions` to support `rebalanceQueueCapacity` parameter
+
+### Coverage Summary
+- **New gap tests**: 7 tests covering previously untested architectural invariants
+- **Parameterized tests**: 7 tests now run across multiple strategies (14+ test cases)
+- **Total increase**: +55% test coverage (29 → 45 test cases)
+- **Execution time**: ~14 seconds (from ~7 seconds, +100% due to strategy combinations)
 
 ## Implementation Details
 
@@ -27,11 +79,11 @@ Comprehensive unit test suite for the WindowCache library verifying system invar
   - `WindowCache.cs` - No direct instrumentation (facade)
   - `UserRequestHandler.cs` - Tracks user requests served (NO cache mutations - read-only)
   - `IntentController.cs` - Tracks intent published/cancelled
-  - `RebalanceScheduler.cs` - Tracks execution started/completed/cancelled, policy-based skips
+  - `IntentController.cs` - Tracks intent published/cancelled, execution started/completed/cancelled, policy-based skips
   - `RebalanceExecutor.cs` - Tracks optimization-based skips (same-range detection)
 
 - **Counter Types** (with Invariant References):
-  - `UserRequestsServed` - User requests completed
+  - `UserRequestServed` - User requests completed
   - `CacheExpanded` - Range analysis determined expansion needed (called by shared CacheDataExtensionService)
   - `CacheReplaced` - Range analysis determined replacement needed (called by shared CacheDataExtensionService)
   - `RebalanceIntentPublished` - Rebalance intent published (every user request with delivered data)
@@ -39,7 +91,8 @@ Comprehensive unit test suite for the WindowCache library verifying system invar
   - `RebalanceExecutionStarted` - Rebalance execution began
   - `RebalanceExecutionCompleted` - Rebalance execution finished successfully (sole writer)
   - `RebalanceExecutionCancelled` - Rebalance execution cancelled
-  - `RebalanceSkippedNoRebalanceRange` - **Policy-based skip** (Invariant D.27) - Request within NoRebalanceRange threshold
+  - `RebalanceSkippedCurrentNoRebalanceRange` - **Policy-based skip (Stage 1)** - Request within current NoRebalanceRange threshold
+  - `RebalanceSkippedPendingNoRebalanceRange` - **Policy-based skip (Stage 2)** - Request within pending NoRebalanceRange threshold
   - `RebalanceSkippedSameRange` - **Optimization-based skip** (Invariant D.28) - DesiredRange == CurrentRange
 
 **Note**: `CacheExpanded` and `CacheReplaced` are incremented during range analysis by the shared `CacheDataExtensionService` 
@@ -52,7 +105,7 @@ not actual cache mutations. Actual mutations only occur in Rebalance Execution v
   - `TestHelpers.cs` - Factory methods, data verification, and deterministic synchronization utilities
 
 - **Synchronization Strategy**: Deterministic Task Lifecycle Tracking
-  - **Method**: `WaitForRebalanceToSettleAsync(cache, timeout)` - Delegates to `cache.WaitForIdleAsync()`
+  - **Method**: `cache.WaitForIdleAsync()` - Waits until the system was idle at some point
   - **Mechanism**: Observe-and-stabilize pattern based on Task reference tracking (not counter polling)
   - **Benefits**:
     - ✅ Race-free: No timing dependencies or polling intervals
@@ -61,13 +114,8 @@ not actual cache mutations. Actual mutations only occur in Rebalance Execution v
     - ✅ Reliable: Works under concurrent intent cancellation and rescheduling
 
 - **Implementation Details**:
-  - **RebalanceScheduler** tracks latest background Task (`_idleTask` field) to support public WaitForIdleAsync() API
-  - **WaitForIdleAsync()** implements observe-and-stabilize loop:
-    1. Read current `_idleTask` via `Volatile.Read` (ensures visibility)
-    2. Await the observed Task
-    3. Re-check if `_idleTask` changed (new rebalance scheduled)
-    4. Loop until Task reference stabilizes and completes
-  - This implementation exists in all builds to support the public infrastructure API for testing, graceful shutdown, and health checks
+  - **`AsyncActivityCounter`** tracks active operations (intents + executions) using lock-free `Interlocked` operations to support `WaitForIdleAsync()`
+  - **`WaitForIdleAsync()`** awaits the `TaskCompletionSource` published by `AsyncActivityCounter` when the activity count reaches zero
 
 - **Old Approach (Removed)**:
   - Counter-based polling with stability windows
@@ -94,56 +142,58 @@ not actual cache mutations. Actual mutations only occur in Rebalance Execution v
 
 ### 4. Comprehensive Test Suite
 - **Location**: `tests/SlidingWindowCache.Invariants.Tests/WindowCacheInvariantTests.cs`
-- **Test Count**: 27 invariant tests + 1 execution lifecycle meta-invariant
+- **Test Count**: 26 test methods (29 individual xUnit test cases)
 - **Test Structure**: Each test method references its invariant number and description
 
 #### Test Categories:
 
-**A. User Path & Fast User Access (8 tests)**
-- A.1-0a: User request cancels rebalance (to prevent interference, not for mutation safety)
+**A. User Path & Fast User Access (10 tests)**
+- A.0a: User request cancels rebalance [Theory: 2 execution strategies]
+- A.-1: Concurrent write safety stress test (50 concurrent requests) **[NEW]**
 - A.2.1: User path always serves requests
 - A.2.2: User path never waits for rebalance
 - A.2.10: User always receives exact requested range
-- A.3.8: Cold start - User Path does NOT populate cache (read-only)
-- A.3.8: Cache expansion - User Path does NOT expand cache (read-only)
-- A.3.8: Full cache replacement - User Path does NOT replace cache (read-only)
+- A.3.8: User Path never mutates cache [Theory: 3 scenarios × 2 storage strategies = 6 tests]
 - A.3.9a: Cache contiguity maintained
 
-**B. Cache State & Consistency (2 tests)**
+**B. Cache State & Consistency (4 tests)**
 - B.11: CacheData and CurrentCacheRange always consistent
 - B.15: Cancelled rebalance doesn't violate consistency
+- B.15 Enhanced: Cancellation during I/O operations **[NEW]**
+- B.16: Only most recent rebalance results are applied (stale result prevention) **[NEW]**
 
-**C. Rebalance Intent & Temporal (4 tests)**
-- C.17: At most one active intent
-- C.18: Previous intent becomes logically superseded (execution relevance determined by multi-stage validation)
-- C.24: Intent doesn't guarantee execution (opportunistic, validation-driven)
+**C. Rebalance Intent & Temporal (5 tests)**
+- C.17: At most one active intent [Theory: 2 execution strategies]
+- C.18: Previous intent becomes logically superseded
+- C.20: Decision Engine exits early for obsolete intents **[NEW]**
+- C.24: Intent doesn't guarantee execution
 - C.23: System stabilizes under load
 
-**D. Rebalance Decision Path (2 tests + TODOs)**
-- D.27: No rebalance if request in NoRebalanceRange (policy-based skip) - **Enhanced with execution started assertion**
-- D.28: Rebalance skipped when DesiredRange == CurrentRange (optimization-based skip) - **New test**
-- TODOs for D.25, D.26, D.29 (require internal state access)
+**D. Rebalance Decision Path (4 tests)**
+- D.27: No rebalance if request in NoRebalanceRange
+- D.27 Stage 1: Skips when within current NoRebalanceRange
+- D.29 Stage 2: Skips when within pending NoRebalanceRange
+- D.28: Rebalance skipped when DesiredRange == CurrentRange
 
-**E. Cache Geometry & Policy (1 test + TODOs)**
+**E. Cache Geometry & Policy (3 tests)**
 - E.30: DesiredRange computed from config and request
-- TODOs for E.31-34 (require internal state inspection)
+- E.31: DesiredRange independent of cache state (determinism test) **[NEW]**
+- ReadMode behavior verification (Snapshot and CopyOnRead)
 
-**F. Rebalance Execution (3 tests)**
-- F.35, F.35a: Rebalance execution supports cancellation
-- F.36a: Rebalance normalizes cache - **Enhanced with lifecycle integrity assertions**
-- F.40-42: Post-execution guarantees
+**F. Rebalance Execution (7 tests)**
+- F.35, F.35a, G.46: Rebalance cancellation behavior [Theory: 2 execution strategies]
+- F.36a: Rebalance normalizes cache [Theory: 2 storage strategies]
+- F.38: Incremental fetch optimization (only missing subranges fetched) **[NEW]**
+- F.39: Data preservation during expansion (no refetching) **[NEW]**
+- F.40-42: Post-execution guarantees [Theory: 2 storage strategies]
 
 **G. Execution Context & Scheduling (2 tests)**
 - G.43-45: Execution context separation
-- G.46: Cancellation supported for all scenarios
+- G.46: User cancellation during fetch
 
-**Meta-Invariant Tests (1 test)**
-- Execution lifecycle integrity: started == (completed + cancelled) - **New test**
-
-**Additional Comprehensive Tests (3 tests)**
+**Additional Comprehensive Tests (2 tests)**
 - Complete scenario with multiple requests and rebalancing
-- Concurrency scenario with rapid request bursts and cancellation
-- Read mode variations (Snapshot and CopyOnRead)
+- Concurrency scenario with rapid burst of 20 requests [Theory: 2 execution strategies]
 
 ### 5. Key Implementation Changes (Single-Writer Architecture Migration)
 
@@ -157,7 +207,7 @@ not actual cache mutations. Actual mutations only occur in Rebalance Execution v
 - **PRESERVED**: Cache hit detection and read logic
 - **PRESERVED**: IDataSource fetching for missing data
 
-**IntentController.cs & RebalanceScheduler.cs**:
+**IntentController.cs**:
 - **ADDED**: `RangeData<TRange,TData,TDomain> deliveredData` parameter to intent
 - **ADDED**: Intent now carries both requested range and actual delivered data
 - **PURPOSE**: Enables Rebalance Execution to use delivered data as authoritative source
@@ -236,10 +286,10 @@ dotnet test --filter "FullyQualifiedName~Invariant_D"
 ### Skip Condition Distinction
 The system has **two distinct skip scenarios**, tracked by separate counters:
 
-1. **Policy-Based Skip** (Invariant D.27)
-   - Counter: `RebalanceSkippedNoRebalanceRange`
-   - Location: `RebalanceScheduler` (after `DecisionEngine` returns `ShouldExecute=false`)
-   - Reason: Request within NoRebalanceRange threshold zone
+1. **Policy-Based Skip** (Invariants D.27 / D.29)
+   - Counters: `RebalanceSkippedCurrentNoRebalanceRange` (Stage 1) and `RebalanceSkippedPendingNoRebalanceRange` (Stage 2)
+   - Location: `IntentController.ProcessIntentsAsync` (after `DecisionEngine` returns `ShouldSchedule=false`)
+   - Reason: Request within NoRebalanceRange threshold zone (current or pending)
    - Characteristic: Execution **never starts** (decision-level optimization)
 
 2. **Optimization-Based Skip** (Invariant D.28)
@@ -266,8 +316,8 @@ See `docs/storage-strategies.md` for detailed documentation.
 - **Architecture**: Single-writer model (User Path read-only, Rebalance Execution sole writer)
 - **Intent Structure**: Intent carries delivered `RangeData` (requested range + actual data)
 - **Eventual Consistency**: Cache state converges asynchronously via background rebalance
-- Instrumentation is DEBUG-only using `[Conditional("DEBUG")]` attributes - zero overhead in Release builds
-- Tests use timing-based async verification with `WaitForRebalanceAsync()` helper
+- Instrumentation is available in all builds via `ICacheDiagnostics` / `EventCounterCacheDiagnostics`
+- Tests use `cache.WaitForIdleAsync()` for deterministic async verification
 - Counter reset in constructor/dispose ensures test isolation
 - Uses `Intervals.NET.Domain.Default.Numeric.IntegerFixedStepDomain` for proper range inclusivity handling
 - `CacheExpanded` and `CacheReplaced` counters are deprecated (User Path no longer mutates)
@@ -284,7 +334,7 @@ See `docs/storage-strategies.md` for detailed documentation.
 
 All tests use:
 1. **`WaitForIdleAsync()`** - Deterministic synchronization with background rebalance (available in all builds)
-2. **`CacheInstrumentationCounters`** (DEBUG-only) - Observable event counters for validation
+2. **`EventCounterCacheDiagnostics`** - Observable event counters for validation
 3. **`TestHelpers`** - Test data builders and common assertion patterns
 
 ## Diagnostic Usage in Tests
@@ -396,11 +446,14 @@ TestHelpers.AssertRebalanceLifecycleIntegrity(_cacheDiagnostics);
 **Rebalance Lifecycle:**
 - `RebalanceIntentPublished` - Intents published
 - `RebalanceIntentCancelled` - Intents cancelled
+- `RebalanceScheduled` - Rebalances scheduled for execution
 - `RebalanceExecutionStarted` - Executions started
 - `RebalanceExecutionCompleted` - Executions completed
 - `RebalanceExecutionCancelled` - Executions cancelled
-- `RebalanceSkippedNoRebalanceRange` - Skipped due to policy
-- `RebalanceSkippedSameRange` - Skipped due to optimization
+- `RebalanceExecutionFailed` - Executions failed with exception
+- `RebalanceSkippedCurrentNoRebalanceRange` - Skipped: request within current NoRebalanceRange (Stage 1)
+- `RebalanceSkippedPendingNoRebalanceRange` - Skipped: request within pending NoRebalanceRange (Stage 2)
+- `RebalanceSkippedSameRange` - Skipped due to DesiredRange == CurrentRange (Stage 4)
 
 ### Helper Assertion Library
 

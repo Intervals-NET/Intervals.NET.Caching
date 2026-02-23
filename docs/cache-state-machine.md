@@ -2,6 +2,11 @@
 
 This document defines the formal state machine for the Sliding Window Cache, clarifying state transitions, mutation ownership, and concurrency control.
 
+> **📖 For related architectural concepts, see:**
+> - [Architecture Model](architecture-model.md) - Single-writer architecture, coordination mechanisms
+> - [Invariants](invariants.md) - State invariants and constraints
+> - [Scenario Model](scenario-model.md) - Temporal behavior and user scenarios
+
 ---
 
 ## States
@@ -177,7 +182,7 @@ The cache exists in one of three states:
 
 User Path has priority but does NOT mutate cache:
 
-1. **Pre-operation cancellation:** User Path cancels active rebalance
+1. **Pre-operation cancellation:** User Path publishes new intent (atomically supersedes any prior intent); background loop cancels active rebalance execution when it processes the new intent
 2. **Read/fetch:** User Path reads from cache or fetches from IDataSource (NO mutation)
 3. **Immediate return:** User Path returns data to user (never waits)
 4. **Intent publication:** User Path emits intent with delivered data

@@ -23,7 +23,9 @@ consistency, and intelligent work avoidance.**
 - [Understanding the Sliding Window](#-understanding-the-sliding-window)
 - [Materialization for Fast Access](#-materialization-for-fast-access)
 - [Usage Example](#-usage-example)
+- [Resource Management](#-resource-management)
 - [Configuration](#-configuration)
+- [Execution Strategy Selection](#-execution-strategy-selection)
 - [Optional Diagnostics](#-optional-diagnostics)
 - [Documentation](#-documentation)
 - [Performance Considerations](#-performance-considerations)
@@ -64,6 +66,8 @@ the most recently requested range, significantly reducing the need for repeated 
 
 ### Decision-Driven Rebalance Execution
 
+> **📖 For detailed architectural explanation, see:** [Architecture Model - Decision-Driven Execution](docs/architecture-model.md#rebalance-validation-vs-cancellation)
+
 The cache uses a sophisticated **decision-driven model** where rebalance necessity is determined by analytical
 validation rather than blindly executing every user request. This prevents thrashing, reduces unnecessary I/O, and
 maintains stability under rapid access pattern changes.
@@ -83,7 +87,7 @@ User Request
              │
              ▼
 ┌─────────────────────────────────────────────────┐
-│  Decision Engine (User Thread - CPU-only)       │
+│  Decision Engine (Background Loop - CPU-only)   │
 │  Stage 1: NoRebalanceRange check                │
 │  Stage 2: Pending coverage check                │
 │  Stage 3: Desired == Current check              │
@@ -107,7 +111,7 @@ User Request
 **Key Points:**
 
 1. **User requests never block** - data returned immediately, rebalance happens later
-2. **Decision happens synchronously** - validation is CPU-only (microseconds), happens in user thread before scheduling
+2. **Decision happens in background** - validation is CPU-only (microseconds), happens in the intent processing loop before scheduling
 3. **Work avoidance prevents thrashing** - validation may skip rebalance entirely if unnecessary
 4. **Only I/O happens in background** - debounce + data fetching + cache updates run asynchronously
 5. **Smart eventual consistency** - cache converges to optimal state while avoiding unnecessary operations
@@ -122,7 +126,7 @@ User Request
 
 **For complete architectural details, see:**
 
-- [Concurrency Model](docs/concurrency-model.md) - Smart eventual consistency and synchronous decision execution
+- [Architecture Model](docs/architecture-model.md) - Smart eventual consistency and synchronous decision execution
 - [Invariants](docs/invariants.md) - Multi-stage validation pipeline specification (Section D)
 - [Scenario Model](docs/scenario-model.md) - Temporal behavior and decision scenarios
 
@@ -329,6 +333,98 @@ foreach (var item in data.Span)
 
 ---
 
+## 🔄 Resource Management
+
+WindowCache manages background processing tasks and resources that require explicit disposal. **Always dispose the cache when done** to prevent resource leaks and ensure graceful shutdown of background operations.
+
+### Disposal Pattern
+
+WindowCache implements `IAsyncDisposable` for proper async resource cleanup:
+
+```csharp
+// Recommended: Use await using declaration
+await using var cache = new WindowCache<int, string, IntegerFixedStepDomain>(
+    dataSource,
+    domain,
+    options,
+    cacheDiagnostics
+);
+
+// Use the cache
+var data = await cache.GetDataAsync(Range.Closed(0, 100), cancellationToken);
+
+// DisposeAsync called automatically at end of scope
+```
+
+### What Disposal Does
+
+When `DisposeAsync()` is called, the cache:
+
+1. **Stops accepting new requests** - All methods throw `ObjectDisposedException` after disposal
+2. **Cancels background rebalance processing** - Signals cancellation to intent processing and execution loops
+3. **Waits for current operations to complete** - Gracefully allows in-flight rebalance operations to finish
+4. **Releases all resources** - Disposes channels, semaphores, and cancellation token sources
+5. **Is idempotent** - Safe to call multiple times, handles concurrent disposal attempts
+
+### Disposal Behavior
+
+**Graceful Shutdown:**
+```csharp
+await using var cache = CreateCache();
+
+// Make requests
+await cache.GetDataAsync(range1, ct);
+await cache.GetDataAsync(range2, ct);
+
+// No need to call WaitForIdleAsync() before disposal
+// DisposeAsync() handles graceful shutdown automatically
+```
+
+**After Disposal:**
+```csharp
+var cache = CreateCache();
+await cache.DisposeAsync();
+
+// All operations throw ObjectDisposedException
+await cache.GetDataAsync(range, ct);       // ❌ Throws ObjectDisposedException
+await cache.WaitForIdleAsync();            // ❌ Throws ObjectDisposedException
+await cache.DisposeAsync();                // ✅ Succeeds (idempotent)
+```
+
+**Long-Lived Cache:**
+```csharp
+public class DataService : IAsyncDisposable
+{
+    private readonly WindowCache<int, string, IntegerFixedStepDomain> _cache;
+
+    public DataService(IDataSource<int, string> dataSource)
+    {
+        _cache = new WindowCache<int, string, IntegerFixedStepDomain>(
+            dataSource,
+            new IntegerFixedStepDomain(),
+            options
+        );
+    }
+
+    public ValueTask<ReadOnlyMemory<string>> GetDataAsync(Range<int> range, CancellationToken ct)
+        => _cache.GetDataAsync(range, ct);
+
+    public async ValueTask DisposeAsync()
+    {
+        await _cache.DisposeAsync();
+    }
+}
+```
+
+### Important Notes
+
+- **No timeout needed**: Disposal completes when background tasks finish their current work (typically milliseconds)
+- **Thread-safe**: Multiple concurrent disposal calls are handled safely using lock-free synchronization
+- **No forced termination**: Background operations are cancelled gracefully, not forcibly terminated
+- **Memory eligible for GC**: After disposal, the cache becomes eligible for garbage collection
+
+---
+
 ## ⚙️ Configuration
 
 The `WindowCacheOptions` class provides fine-grained control over cache behavior. Understanding these parameters is
@@ -370,19 +466,60 @@ essential for optimal performance.
   items of the right edge
 - **Typical values**: 0.15 to 0.3 (lower = more aggressive rebalancing)
 
+**🚨 Important Constraint: Threshold Sum**
+
+The **sum of `leftThreshold` and `rightThreshold` must not exceed 1.0** when both are specified.
+
+**Why?** Thresholds represent percentages of the total cache window that are shrunk inward from each side to create the no-rebalance stability zone. If their sum exceeds 1.0 (100%), the shrinkage zones would overlap, creating an impossible geometric configuration.
+
+**Examples:**
+- ✅ Valid: `leftThreshold: 0.3, rightThreshold: 0.3` (sum = 0.6)
+- ✅ Valid: `leftThreshold: 0.5, rightThreshold: 0.5` (sum = 1.0 - boundaries meet at center)
+- ✅ Valid: `leftThreshold: 0.8, rightThreshold: null` (only one threshold)
+- ❌ Invalid: `leftThreshold: 0.6, rightThreshold: 0.6` (sum = 1.2 - overlapping!)
+
+**Validation:** This constraint is enforced at construction time - `WindowCacheOptions` constructor will throw `ArgumentException` if violated.
+
 **⚠️ Critical Understanding**: Thresholds are **NOT** calculated against individual buffer sizes. They represent a
 percentage of the **entire cache window** (left buffer + requested range + right buffer).
 See [Understanding the Sliding Window](#-understanding-the-sliding-window) for visual examples.
 
 #### Debouncing
 
-**`debounceDelay`** (TimeSpan, default: 50ms)
+**`debounceDelay`** (TimeSpan, default: 100ms)
 
 - **Definition**: Minimum time delay before executing a rebalance operation after it's triggered
 - **Purpose**: Prevents cache thrashing when user rapidly changes access patterns
 - **Behavior**: If multiple rebalance requests occur within the debounce window, only the last one executes
 - **Typical values**: 20ms to 200ms (depending on data source latency)
 - **Trade-off**: Higher values reduce rebalance frequency but may delay cache optimization
+
+#### Execution Strategy
+
+**`rebalanceQueueCapacity`** (int?, default: null)
+
+- **Definition**: Controls the rebalance execution serialization strategy
+- **Default**: `null` (unbounded task-based strategy - recommended for most scenarios)
+- **Bounded capacity**: Set to `>= 1` to use channel-based strategy with backpressure
+- **Purpose**: Choose between lightweight task chaining or strict queue capacity control
+- **When to use bounded strategy**:
+  - High-frequency rebalance scenarios requiring backpressure
+  - Memory-constrained environments where queue growth must be limited
+  - Testing scenarios requiring deterministic queue behavior
+- **When to use unbounded strategy (default)**:
+  - Normal operation with typical rebalance frequencies
+  - Maximum performance with minimal overhead
+  - Fire-and-forget execution model preferred
+- **Trade-off**: Bounded capacity provides backpressure control but may slow intent processing when queue is full
+
+**Strategy Comparison:**
+
+| Strategy                 | Queue Capacity            | Backpressure     | Overhead        | Use Case                               |
+|--------------------------|---------------------------|------------------|-----------------|----------------------------------------|
+| **Task-based** (default) | Unbounded                 | None             | Minimal         | Recommended for most scenarios         |
+| **Channel-based**        | Bounded (`capacity >= 1`) | Blocks when full | Slightly higher | High-frequency or resource-constrained |
+
+**Note**: Both strategies guarantee single-writer architecture - only one rebalance executes at a time.
 
 ### Configuration Examples
 
@@ -419,6 +556,109 @@ var options = new WindowCacheOptions(
     debounceDelay: TimeSpan.FromMilliseconds(100)  // Wait for access pattern to stabilize
 );
 ```
+
+**Bounded execution strategy** (e.g., high-frequency access with backpressure control):
+
+```csharp
+var options = new WindowCacheOptions(
+    leftCacheSize: 1.0,
+    rightCacheSize: 2.0,
+    readMode: UserCacheReadMode.Snapshot,
+    leftThreshold: 0.2,
+    rightThreshold: 0.2,
+    rebalanceQueueCapacity: 5  // Limit pending rebalance operations to 5
+);
+```
+
+---
+
+## ⚡ Execution Strategy Selection
+
+The `rebalanceQueueCapacity` configuration parameter controls how the cache serializes background rebalance operations. Choosing the right strategy depends on your expected burst load characteristics and I/O latency patterns.
+
+### Strategy Overview
+
+| Configuration | Implementation | Queue Behavior | Best For |
+|---------------|----------------|----------------|----------|
+| `null` (default) | Task-based | Unbounded accumulation via task chaining | **99% of use cases** - typical workloads with moderate burst patterns |
+| `>= 1` (e.g., `10`) | Channel-based | Bounded queue with backpressure | Extreme high-frequency scenarios (1000+ rapid requests with I/O latency) |
+
+### Unbounded Execution (Default - Recommended)
+
+**Configuration**:
+```csharp
+var options = new WindowCacheOptions(
+    leftCacheSize: 1.0,
+    rightCacheSize: 2.0,
+    rebalanceQueueCapacity: null // Unbounded (default)
+);
+```
+
+**Characteristics**:
+- Task-based execution with unbounded task chaining
+- Minimal overhead
+- Excellent for typical workloads (burst ≤100 requests)
+- Effective cancellation of obsolete rebalance operations
+- No backpressure - intent processing never blocks
+
+**Best for**:
+- Web APIs with moderate scrolling (10-100 rapid requests)
+- Gaming/real-time applications with fast local data
+- Most production scenarios with typical access patterns
+- Any scenario where request bursts are ≤100 or I/O latency is low
+
+✅ **Recommended for 99% of use cases**
+
+---
+
+### Bounded Execution (High-Frequency Optimization)
+
+**Configuration**:
+```csharp
+var options = new WindowCacheOptions(
+    leftCacheSize: 1.0,
+    rightCacheSize: 2.0,
+    rebalanceQueueCapacity: 10 // Bounded queue with capacity of 10
+);
+```
+
+**Characteristics**:
+- Channel-based execution with bounded queue and backpressure
+- Prevents unbounded queue accumulation under extreme burst loads
+- Intent processing blocks when queue is full (applies backpressure)
+- Provides dramatic speedup (25-196×) under extreme conditions (1000+ burst with I/O latency)
+- Slightly less memory usage (5-9% reduction)
+- Performs identically to unbounded for typical workloads (burst ≤100)
+
+**Best for**:
+- Streaming sensor data at 1000+ Hz with network I/O
+- Any scenario with 1000+ rapid requests and significant I/O latency (50-100ms+)
+- Systems requiring predictable bounded queue behavior
+- Memory-constrained environments where accumulation must be prevented
+
+⚠️ **Use for extreme high-frequency edge cases only**
+
+---
+
+### Decision Guide
+
+**Choose Unbounded (null) if:**
+- ✅ Your application has typical access patterns (10-100 rapid requests)
+- ✅ I/O latency is low (<50ms) or burst size is moderate (≤100)
+- ✅ You want minimal overhead and maximum performance for common scenarios
+- ✅ **This covers 99% of production use cases**
+
+**Choose Bounded (capacity ≥ 10) if:**
+- ✅ Your application experiences extreme burst loads (1000+ rapid requests)
+- ✅ Data source has significant latency (50-100ms+) during bursts
+- ✅ You need predictable queue depth to prevent accumulation
+- ✅ You require bounded memory usage for rebalance operations
+
+**Key Insight**: Both strategies perform identically for typical workloads (burst ≤100). The bounded strategy's dramatic performance advantage (25-196× faster) only appears under **extreme conditions** (1000+ burst with I/O latency), making unbounded the safer default choice.
+
+**For comprehensive benchmark methodology, performance data, and detailed analysis**, see:
+- [ExecutionStrategyBenchmarks Documentation](benchmarks/SlidingWindowCache.Benchmarks/README.md#-execution-strategy-benchmarks)
+- [Benchmark Results](benchmarks/SlidingWindowCache.Benchmarks/Results/SlidingWindowCache.Benchmarks.Benchmarks.ExecutionStrategyBenchmarks-report-github.md)
 
 ---
 
@@ -507,85 +747,79 @@ see [Diagnostics Guide](docs/diagnostics.md).**
 
 ## 📚 Documentation
 
-For detailed architectural documentation, see:
+### Learning Paths
 
-### Mathematical Foundations
+**Choose your path based on your needs:**
 
-- **[Intervals.NET](https://github.com/blaze6950/Intervals.NET)** - Robust interval and range handling library that
-  underpins cache logic. See README and documentation for core concepts like `Range`, `Domain`, `RangeData`, and
-  interval operations.
+#### 🚀 Path 1: Quick Start (Getting Started Fast)
 
-### Core Architecture
+**Goal**: Get up and running with working code and common patterns.
 
-- **[Invariants](docs/invariants.md)** - Complete list of system invariants and guarantees
-- **[Scenario Model](docs/scenario-model.md)** - Temporal behavior scenarios (User Path, Decision Path, Rebalance
-  Execution)
-- **[Actors & Responsibilities](docs/actors-and-responsibilities.md)** - System actors and invariant ownership mapping
-- **[Actors to Components Mapping](docs/actors-to-components-mapping.md)** - How architectural actors map to concrete
-  components
-- **[Cache State Machine](docs/cache-state-machine.md)** - Formal state machine with mutation ownership and concurrency
-  semantics
-- **[Concurrency Model](docs/concurrency-model.md)** - Single-writer architecture and eventual consistency model
+1. **[README - Quick Start](#-quick-start)** - Basic usage examples (you're already here!)
+2. **[README - Configuration Guide](#configuration)** - Understand the 5 key parameters
+3. **[Storage Strategies](docs/storage-strategies.md)** - Choose Snapshot vs CopyOnRead for your use case
+4. **[Glossary - Common Misconceptions](docs/glossary.md#common-misconceptions)** - Avoid common pitfalls
+5. **[Diagnostics](docs/diagnostics.md)** - Add optional instrumentation for visibility
 
-### Implementation Details
+**When to use this path**: Building features, integrating the cache, performance tuning.
 
-- **[Component Map](docs/component-map.md)** - Comprehensive component catalog with responsibilities and interactions
-- **[Storage Strategies](docs/storage-strategies.md)** - Detailed comparison of Snapshot vs. CopyOnRead modes and
-  multi-level cache patterns
-- **[Diagnostics](docs/diagnostics.md)** - Optional instrumentation and observability guide
+---
 
-### Testing Infrastructure
+#### 🏗️ Path 2: Deep Dive (Advanced Understanding)
 
-- **[Invariant Test Suite README](tests/SlidingWindowCache.Invariants.Tests/README.md)** - Comprehensive invariant test
-  suite with deterministic synchronization
-- **[Benchmark Suite README](benchmarks/SlidingWindowCache.Benchmarks/README.md)** - BenchmarkDotNet performance
-  benchmarks
-    - **RebalanceFlowBenchmarks** - Behavior-driven rebalance cost analysis (Fixed/Growing/Shrinking span patterns)
-    - **UserFlowBenchmarks** - User-facing API latency (Full hit, Partial hit, Full miss scenarios)
-    - **ScenarioBenchmarks** - End-to-end cold start performance
-    - **Storage Strategy Comparison** - Snapshot vs CopyOnRead allocation and performance tradeoffs across all suites
-- **Deterministic Testing**: `WaitForIdleAsync()` API provides race-free synchronization with background rebalance
-  operations for testing, graceful shutdown, health checks, and integration scenarios
+**Goal**: Understand architecture, invariants, and implementation details.
+
+1. **[Glossary](docs/glossary.md)** - 📖 **Start here** - Canonical term definitions with navigation guide
+2. **[Architecture Model](docs/architecture-model.md)** - Core architectural patterns (single-writer, decision-driven execution, smart eventual consistency)
+3. **[Invariants](docs/invariants.md)** - 49 system invariants with formal specifications
+4. **[Component Map](docs/component-map.md)** - Comprehensive component catalog with invariant implementation mapping
+5. **[Scenario Model](docs/scenario-model.md)** - Temporal behavior scenarios (User Path, Decision Path, Execution Path)
+6. **[Cache State Machine](docs/cache-state-machine.md)** - Formal state transitions and mutation ownership
+7. **[Actors & Responsibilities](docs/actors-and-responsibilities.md)** - Actor model with invariant ownership
+8. **[Actors to Components Mapping](docs/actors-to-components-mapping.md)** - Architectural actors → concrete components
+
+**When to use this path**: Contributing code, debugging complex issues, understanding design decisions, architectural review.
+
+---
+
+### Reference Documentation
+
+#### Mathematical Foundations
+
+- **[Intervals.NET](https://github.com/blaze6950/Intervals.NET)** - Interval/range library providing `Range`, `Domain`, `RangeData`, and interval operations
+
+#### Testing & Benchmarking
+
+- **[Invariant Test Suite](tests/SlidingWindowCache.Invariants.Tests/README.md)** - 27 automated invariant tests validating architectural contracts
+- **[Benchmark Suite](benchmarks/SlidingWindowCache.Benchmarks/README.md)** - BenchmarkDotNet performance benchmarks:
+  - **RebalanceFlowBenchmarks** - Rebalance cost analysis (Fixed/Growing/Shrinking patterns)
+  - **UserFlowBenchmarks** - User-facing API latency (Hit/Partial/Miss scenarios)
+  - **ScenarioBenchmarks** - End-to-end cold start performance
+  - **Storage Comparison** - Snapshot vs CopyOnRead tradeoffs
+
+#### Testing Infrastructure
+
+**Deterministic Synchronization**: `WaitForIdleAsync()` provides race-free synchronization with background operations for testing, shutdown, health checks. Uses "was idle at some point" semantics (eventual consistency). See [Invariants - Testing Infrastructure](docs/invariants.md#testing-infrastructure-deterministic-synchronization).
 
 ### Key Architectural Principles
 
-1. **Single-Writer Architecture**: Only Rebalance Execution writes to cache state; User Path is read-only. Multiple
-   rebalance executions are serialized via `SemaphoreSlim` to guarantee only one execution writes to cache at a time.
-   This eliminates race conditions and data corruption through architectural constraints and execution serialization.
-   See [Concurrency Model](docs/concurrency-model.md).
+> **📖 For detailed explanations, see:** [Architecture Model](docs/architecture-model.md) | [Invariants](docs/invariants.md) | [Glossary](docs/glossary.md)
 
-2. **Decision-Driven Execution**: Rebalance necessity determined by synchronous CPU-only analytical validation in user
-   thread (microseconds). Enables immediate work avoidance and prevents intent thrashing.
-   See [Invariants - Section D](docs/invariants.md#d-rebalance-decision-path-invariants).
+1. **Single-Writer Architecture**: Only Rebalance Execution writes to cache state; User Path is read-only. Eliminates race conditions through architectural constraints.
 
-3. **Multi-Stage Validation Pipeline**:
-    - Stage 1: NoRebalanceRange containment check (fast-path rejection)
-    - Stage 2: Pending rebalance coverage check (anti-thrashing)
-    - Stage 3: Desired == Current check (no-op prevention)
+2. **Decision-Driven Execution**: Rebalance necessity determined by analytical validation before execution. Enables work avoidance and prevents thrashing.
 
-   Rebalance executes ONLY if ALL stages confirm necessity.
-   See [Scenario Model - Decision Path](docs/scenario-model.md#ii-rebalance-decision-path--decision-scenarios).
+3. **Multi-Stage Validation Pipeline**: Four validation stages must all pass before rebalance executes (NoRebalanceRange check, pending coverage check, desired==current check). See [Scenario Model - Decision Path](docs/scenario-model.md#ii-rebalance-decision-path--decision-scenarios).
 
-4. **Smart Eventual Consistency**: Cache converges to optimal configuration asynchronously while avoiding unnecessary
-   work through validation. System prioritizes decision correctness and work avoidance over aggressive rebalance
-   responsiveness.
-   See [Concurrency Model - Smart Eventual Consistency](docs/concurrency-model.md#smart-eventual-consistency-model).
+4. **Smart Eventual Consistency**: Cache converges to optimal state asynchronously while avoiding unnecessary operations through validation.
 
-5. **Intent Semantics**: Intents represent observed access patterns (signals), not mandatory work (commands). Publishing
-   an intent does not guarantee rebalance execution - validation determines necessity.
-   See [Invariants C.24](docs/invariants.md).
+5. **Intent Semantics**: Intents are signals (observed access patterns), not commands (mandatory work). Validation determines execution necessity.
 
-6. **Cache Contiguity Rule**: Cache data must always remain contiguous (no gaps allowed). Non-intersecting requests
-   fully replace the cache rather than creating partial/gapped states. See [Invariants A.9a](docs/invariants.md).
+6. **Cache Contiguity**: Cache data remains contiguous without gaps. Non-intersecting requests replace cache entirely.
 
-7. **User Path Priority**: User requests always served immediately. When validation confirms new rebalance is necessary,
-   pending rebalance is cancelled and rescheduled. Cancellation is mechanical coordination (prevents concurrent
-   executions), not a decision mechanism. See [Cache State Machine](docs/cache-state-machine.md).
+7. **User Path Priority**: User requests always served immediately. Background rebalancing never blocks user operations.
 
-8. **Lock-Free Concurrency**: Intent management uses `Volatile.Read/Write` and `Interlocked.Exchange` for atomic
-   operations - no locks, no race conditions, guaranteed progress. Execution serialization via `SemaphoreSlim` ensures
-   single-writer semantics. Thread-safety achieved through architectural constraints and atomic operations.
-   See [Concurrency Model - Lock-Free Implementation](docs/concurrency-model.md#lock-free-implementation).
+8. **Lock-Free Concurrency**: Intent management uses atomic operations (`Volatile`, `Interlocked`). Execution serialization ensures single-writer semantics.
 
 ---
 

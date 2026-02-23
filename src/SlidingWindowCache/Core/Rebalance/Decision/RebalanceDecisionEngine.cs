@@ -1,7 +1,7 @@
 ﻿using Intervals.NET;
 using Intervals.NET.Domain.Abstractions;
 using SlidingWindowCache.Core.Planning;
-using SlidingWindowCache.Core.Rebalance.Intent;
+using SlidingWindowCache.Core.Rebalance.Execution;
 using SlidingWindowCache.Core.State;
 
 namespace SlidingWindowCache.Core.Rebalance.Decision;
@@ -13,14 +13,15 @@ namespace SlidingWindowCache.Core.Rebalance.Decision;
 /// <typeparam name="TRange">The type representing the range boundaries.</typeparam>
 /// <typeparam name="TDomain">The type representing the domain of the ranges.</typeparam>
 /// <remarks>
-/// <para><strong>Execution Context:</strong> User Thread (Synchronous)</para>
+/// <para><strong>Execution Context:</strong> Background Thread (Intent Processing Loop)</para>
 /// <para>
-/// This component executes SYNCHRONOUSLY in the user thread during intent publication.
-/// This is intentional and critical for handling request bursts and preventing intent thrashing.
+/// This component executes in the background intent processing loop of <see cref="IntentController{TRange,TData,TDomain}"/>.
+/// Invoked synchronously within loop iteration after user thread signals intent via semaphore.
 /// Decision logic is CPU-only, side-effect free, and lightweight (completes in microseconds).
+/// This architecture enables burst resistance and work avoidance without blocking user requests.
 /// </para>
 /// <para><strong>Visibility:</strong> Not visible to external users, owned and invoked by IntentController</para>
-/// <para><strong>Invocation:</strong> Called synchronously by IntentController.PublishIntent() before any background scheduling (before Task.Run)</para>
+/// <para><strong>Invocation:</strong> Called synchronously within the background intent processing loop of <see cref="IntentController{TRange,TData,TDomain}"/> after a semaphore signal from <see cref="IntentController{TRange,TData,TDomain}.PublishIntent"/></para>
 /// <para><strong>Characteristics:</strong> Pure, deterministic, side-effect free, CPU-only (no I/O)</para>
 /// <para><strong>Decision Pipeline (5 Stages):</strong></para>
 /// <list type="number">
@@ -60,7 +61,7 @@ internal sealed class RebalanceDecisionEngine<TRange, TDomain>
     /// </summary>
     /// <param name="requestedRange">The range requested by the user.</param>
     /// <param name="currentCacheState">The current cache state snapshot.</param>
-    /// <param name="pendingRebalance">The pending rebalance state, if any.</param>
+    /// <param name="lastExecutionRequest">The last rebalance execution request, if any.</param>
     /// <returns>A decision indicating whether to schedule rebalance with explicit reasoning.</returns>
     /// <remarks>
     /// <para><strong>Multi-Stage Validation Pipeline:</strong></para>
@@ -72,7 +73,7 @@ internal sealed class RebalanceDecisionEngine<TRange, TDomain>
     public RebalanceDecision<TRange> Evaluate<TData>(
         Range<TRange> requestedRange,
         CacheState<TRange, TData, TDomain> currentCacheState,
-        PendingRebalance<TRange>? pendingRebalance)
+        ExecutionRequest<TRange, TData, TDomain>? lastExecutionRequest)
     {
         // Stage 1: Current Cache Stability Check (fast path)
         // If requested range is fully contained within current NoRebalanceRange, skip rebalancing
@@ -85,8 +86,8 @@ internal sealed class RebalanceDecisionEngine<TRange, TDomain>
         // Stage 2: Pending Rebalance Stability Check (anti-thrashing)
         // If there's a pending rebalance AND requested range will be covered by its NoRebalanceRange,
         // skip scheduling a new rebalance to avoid cancellation storms
-        if (pendingRebalance?.DesiredNoRebalanceRange != null &&
-            !_policy.ShouldRebalance(pendingRebalance.DesiredNoRebalanceRange.Value, requestedRange))
+        if (lastExecutionRequest?.DesiredNoRebalanceRange != null &&
+            !_policy.ShouldRebalance(lastExecutionRequest.DesiredNoRebalanceRange.Value, requestedRange))
         {
             return RebalanceDecision<TRange>.Skip(RebalanceReason.WithinPendingNoRebalanceRange);
         }
