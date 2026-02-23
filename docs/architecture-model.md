@@ -478,7 +478,7 @@ public Task WaitForIdleAsync(...)
 
 ### Concurrent Disposal Safety
 
-The three-state disposal pattern handles concurrent disposal attempts safely:
+The three-state disposal pattern handles concurrent disposal attempts safely using `TaskCompletionSource` for async coordination:
 
 ```csharp
 public async ValueTask DisposeAsync()
@@ -488,10 +488,19 @@ public async ValueTask DisposeAsync()
     
     if (previousState == 0)
     {
-        // This thread won the race - perform disposal
+        // Winner thread - create TCS and perform disposal
+        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Volatile.Write(ref _disposalCompletionSource, tcs);
+        
         try
         {
             await _userRequestHandler.DisposeAsync();
+            tcs.TrySetResult(true);
+        }
+        catch (Exception ex)
+        {
+            tcs.TrySetException(ex);
+            throw;
         }
         finally
         {
@@ -501,22 +510,42 @@ public async ValueTask DisposeAsync()
     }
     else if (previousState == 1)
     {
-        // Another thread is disposing - spin-wait until complete
+        // Loser thread - await disposal completion asynchronously
+        // Brief spin-wait for TCS publication (very fast - CPU-only operation)
+        TaskCompletionSource<bool>? tcs;
         var spinWait = new SpinWait();
-        while (Volatile.Read(ref _disposeState) == 1)
+        
+        while ((tcs = Volatile.Read(ref _disposalCompletionSource)) == null)
         {
             spinWait.SpinOnce();
         }
+        
+        // Await disposal completion without CPU burn
+        await tcs.Task.ConfigureAwait(false);
     }
     // If previousState == 2: already disposed, return immediately
 }
 ```
 
+**Coordination Pattern:**
+- **Winner thread (0→1)**: Creates `TaskCompletionSource`, performs disposal, signals result/exception
+- **Loser threads (state=1)**: Brief spin for TCS publication, then await TCS.Task asynchronously
+- **Exception propagation**: All threads observe winner's disposal outcome (success or exception)
+- **No CPU burn**: Loser threads await async work instead of spinning (similar to `AsyncActivityCounter` pattern)
+
 **Guarantees:**
 - ✅ **Exactly-once execution**: Only first call performs disposal
 - ✅ **Concurrent safety**: Multiple threads can call simultaneously
-- ✅ **Completion waiting**: Concurrent callers wait for disposal to finish
+- ✅ **Async coordination**: Loser threads await without spinning on async work
+- ✅ **Exception propagation**: All callers observe disposal failures
 - ✅ **Idempotency**: Safe to call multiple times
+
+**Why TaskCompletionSource?**
+- Disposal involves async operations (awaiting UserRequestHandler disposal)
+- Spin-waiting would burn CPU while async work completes (potentially seconds)
+- TCS allows async coordination without thread-pool starvation
+- Consistent with project's lock-free async patterns (see `AsyncActivityCounter`)
+
 
 ### Disposal vs Active Operations
 

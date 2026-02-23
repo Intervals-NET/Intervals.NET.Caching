@@ -69,8 +69,8 @@ public record WindowCacheOptions
             (leftThreshold.Value + rightThreshold.Value) > 1.0)
         {
             throw new ArgumentException(
-                $"The sum of LeftThreshold ({leftThreshold.Value:F2}) and RightThreshold ({rightThreshold.Value:F2}) " +
-                $"must not exceed 1.0 (was {leftThreshold.Value + rightThreshold.Value:F2}). " +
+                $"The sum of LeftThreshold ({leftThreshold.Value:F6}) and RightThreshold ({rightThreshold.Value:F6}) " +
+                $"must not exceed 1.0 (actual sum: {leftThreshold.Value + rightThreshold.Value:F6}). " +
                 "Thresholds represent percentages of the total cache window that are shrunk from each side. " +
                 "When their sum exceeds 1.0, the shrinkage zones would overlap, creating an invalid configuration.");
         }

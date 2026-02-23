@@ -97,7 +97,7 @@ internal readonly struct ProportionalRangePlanner<TRange, TDomain>
     /// </para>
     /// <para>See also:
     ///   <see cref="ThresholdRebalancePolicy{TRange,TDomain}"/>
-    ///   <see cref="docs/component-map.md#proportionalrangeplanner"/>
+    ///   <see href="../docs/component-map.md#proportionalrangeplanner" />
     /// </para>
     /// </remarks>
     public Range<TRange> Plan(Range<TRange> requested)

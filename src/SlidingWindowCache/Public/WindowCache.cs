@@ -140,6 +140,11 @@ public sealed class WindowCache<TRange, TData, TDomain>
     // 0 = not disposed, 1 = disposing, 2 = disposed
     private int _disposeState;
 
+    // TaskCompletionSource for coordinating concurrent DisposeAsync calls
+    // Allows loser threads to await disposal completion without CPU burn
+    // Published via Volatile.Write when winner thread starts disposal
+    private TaskCompletionSource<bool>? _disposalCompletionSource;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="WindowCache{TRange,TData,TDomain}"/> class.
     /// </summary>
@@ -348,8 +353,20 @@ public sealed class WindowCache<TRange, TData, TDomain>
     /// </para>
     /// <para><strong>Thread Safety:</strong></para>
     /// <para>
-    /// Uses lock-free synchronization via <see cref="Interlocked.CompareExchange"/> and <see cref="Volatile"/>
-    /// operations, consistent with the project's "Mostly Lock-Free Concurrency" architecture principle.
+    /// Uses lock-free synchronization via <see cref="Interlocked.CompareExchange"/>, <see cref="Volatile"/>,
+    /// and <see cref="TaskCompletionSource{TResult}"/> operations, consistent with the project's 
+    /// "Mostly Lock-Free Concurrency" architecture principle.
+    /// </para>
+    /// <para><strong>Concurrent Disposal Coordination:</strong></para>
+    /// <para>
+    /// When multiple threads call DisposeAsync concurrently:
+    /// <list type="bullet">
+    /// <item><description>Winner thread (first to transition 0→1): Creates TCS, performs disposal, signals completion</description></item>
+    /// <item><description>Loser threads (see state=1): Await TCS.Task to wait asynchronously without CPU burn</description></item>
+    /// <item><description>All threads observe the same disposal outcome (success or exception propagation)</description></item>
+    /// </list>
+    /// This pattern prevents CPU spinning while the winner thread performs async disposal operations.
+    /// Similar to <see cref="AsyncActivityCounter"/> idle coordination pattern.
     /// </para>
     /// <para><strong>Architectural Context:</strong></para>
     /// <para>
@@ -359,8 +376,10 @@ public sealed class WindowCache<TRange, TData, TDomain>
     /// </para>
     /// <para><strong>Exception Handling:</strong></para>
     /// <para>
-    /// Any exceptions during disposal are propagated to the caller. This aligns with the "Background Path Exceptions"
-    /// pattern where cleanup failures should be observable but not crash the application.
+    /// Any exceptions during disposal are propagated to ALL callers (both winner and losers). 
+    /// This aligns with the "Background Path Exceptions" pattern where cleanup failures should be 
+    /// observable but not crash the application. Loser threads will observe and re-throw the same 
+    /// exception that occurred during disposal.
     /// </para>
     /// </remarks>
     public async ValueTask DisposeAsync()
@@ -373,12 +392,24 @@ public sealed class WindowCache<TRange, TData, TDomain>
 
         if (previousState == 0)
         {
-            // This thread won the race - perform disposal
+            // Winner thread - create TCS and perform disposal
+            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Volatile.Write(ref _disposalCompletionSource, tcs);
+
             try
             {
                 // Dispose the UserRequestHandler which cascades to all internal actors
                 // Disposal order: UserRequestHandler -> IntentController -> RebalanceExecutionController
                 await _userRequestHandler.DisposeAsync().ConfigureAwait(false);
+                
+                // Signal successful completion
+                tcs.TrySetResult(true);
+            }
+            catch (Exception ex)
+            {
+                // Signal failure - loser threads will observe this exception
+                tcs.TrySetException(ex);
+                throw;
             }
             finally
             {
@@ -388,13 +419,19 @@ public sealed class WindowCache<TRange, TData, TDomain>
         }
         else if (previousState == 1)
         {
-            // Another thread is disposing - wait for it to complete
-            // Spin-wait until disposal completes (state transitions to 2)
+            // Loser thread - await disposal completion asynchronously
+            // Brief spin-wait for TCS publication (should be very fast - CPU-only operation)
+            TaskCompletionSource<bool>? tcs;
             var spinWait = new SpinWait();
-            while (Volatile.Read(ref _disposeState) == 1)
+            
+            while ((tcs = Volatile.Read(ref _disposalCompletionSource)) == null)
             {
                 spinWait.SpinOnce();
             }
+            
+            // Await disposal completion without CPU burn
+            // If winner threw exception, this will re-throw the same exception
+            await tcs.Task.ConfigureAwait(false);
         }
         // If previousState == 2, disposal already completed - return immediately (idempotent)
     }
