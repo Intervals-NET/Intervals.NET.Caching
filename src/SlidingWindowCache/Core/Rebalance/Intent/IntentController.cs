@@ -210,18 +210,26 @@ internal sealed class IntentController<TRange, TData, TDomain>
         {
             while (!_loopCancellation.Token.IsCancellationRequested)
             {
+                // Track whether we successfully consumed a semaphore signal
+                // This prevents activity counter imbalance when disposal cancels WaitAsync
+                bool consumedSignal = false;
+
                 try
                 {
                     // Wait for signal from user thread
                     await _intentSignal.WaitAsync(_loopCancellation.Token).ConfigureAwait(false);
+                    
+                    // Signal successfully consumed - we must decrement in finally
+                    consumedSignal = true;
 
                     // Atomically read and clear pending intent (latest intent wins)
                     var intent = Interlocked.Exchange(ref _pendingIntent, null);
 
                     if (intent == null)
                     {
-                        // No intent to process - continue waiting
-                        // NOTE: No increment happened, so no decrement needed
+                        // Signal was consumed but no intent available
+                        // This can happen if multiple intents overwrote each other before we read
+                        // The increment happened in PublishIntent, so decrement still needed (in finally)
                         continue;
                     }
 
@@ -251,7 +259,8 @@ internal sealed class IntentController<TRange, TData, TDomain>
                     await _executionController.PublishExecutionRequest(
                         intent: intent,
                         desiredRange: decision.DesiredRange!.Value,
-                        desiredNoRebalanceRange: decision.DesiredNoRebalanceRange
+                        desiredNoRebalanceRange: decision.DesiredNoRebalanceRange,
+                        loopCancellationToken: _loopCancellation.Token
                     ).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (_loopCancellation.Token.IsCancellationRequested)
@@ -266,9 +275,12 @@ internal sealed class IntentController<TRange, TData, TDomain>
                 }
                 finally
                 {
-                    // Decrement activity counter for intent processing
-                    // This ALWAYS happens after processing a real intent, even if skip or exception
-                    _activityCounter.DecrementActivity();
+                    // Only decrement if we successfully consumed a semaphore signal
+                    // This prevents negative counter when disposal cancels WaitAsync
+                    if (consumedSignal)
+                    {
+                        _activityCounter.DecrementActivity();
+                    }
                 }
             }
         }

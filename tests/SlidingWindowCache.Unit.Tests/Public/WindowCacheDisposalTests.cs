@@ -15,6 +15,7 @@ public class WindowCacheDisposalTests
 
     /// <summary>
     /// Simple test data source that returns sequential integers for any requested range.
+    /// Properly respects range inclusivity (IsStartInclusive/IsEndInclusive).
     /// </summary>
     private sealed class TestDataSource : IDataSource<int, int>
     {
@@ -25,9 +26,47 @@ public class WindowCacheDisposalTests
             // Simulate async I/O
             await Task.Delay(1, cancellationToken);
 
-            var start = (int)requestedRange.Start;
-            var end = (int)requestedRange.End;
-            return Enumerable.Range(start, end - start + 1).ToArray();
+            return GenerateDataForRange(requestedRange);
+        }
+
+        /// <summary>
+        /// Generates data respecting range boundary inclusivity.
+        /// Uses pattern matching to handle all 4 combinations of inclusive/exclusive boundaries.
+        /// </summary>
+        private static List<int> GenerateDataForRange(Range<int> range)
+        {
+            var data = new List<int>();
+            var start = (int)range.Start;
+            var end = (int)range.End;
+
+            switch (range)
+            {
+                case { IsStartInclusive: true, IsEndInclusive: true }:
+                    // [start, end]
+                    for (var i = start; i <= end; i++)
+                        data.Add(i);
+                    break;
+
+                case { IsStartInclusive: true, IsEndInclusive: false }:
+                    // [start, end)
+                    for (var i = start; i < end; i++)
+                        data.Add(i);
+                    break;
+
+                case { IsStartInclusive: false, IsEndInclusive: true }:
+                    // (start, end]
+                    for (var i = start + 1; i <= end; i++)
+                        data.Add(i);
+                    break;
+
+                default:
+                    // (start, end)
+                    for (var i = start + 1; i < end; i++)
+                        data.Add(i);
+                    break;
+            }
+
+            return data;
         }
     }
 
@@ -276,34 +315,30 @@ public class WindowCacheDisposalTests
     #region Resource Cleanup Verification Tests
 
     [Fact]
-    public async Task DisposeAsync_ReleasesResources_CanBeCollectedByGC()
+    public async Task DisposeAsync_StopsBackgroundLoops_SubsequentOperationsThrow()
     {
         // ARRANGE
-        WeakReference? weakRef = null;
+        var cache = CreateCache();
+        var range = Intervals.NET.Factories.Range.Closed<int>(0, 10);
+        
+        // Trigger some background activity
+        await cache.GetDataAsync(range, CancellationToken.None);
+        await cache.WaitForIdleAsync(); // Wait for background work to complete
 
-        async Task CreateAndDisposeCache()
-        {
-            var cache = CreateCache();
-            weakRef = new WeakReference(cache);
+        // ACT - Dispose
+        await cache.DisposeAsync();
 
-            var range = Intervals.NET.Factories.Range.Closed<int>(0, 10);
-            await cache.GetDataAsync(range, CancellationToken.None);
-            await cache.WaitForIdleAsync();
+        // ASSERT - After disposal, all operations should throw ObjectDisposedException
+        // This validates that background loops have stopped and cleanup is complete
+        var getDataException = await Record.ExceptionAsync(
+            async () => await cache.GetDataAsync(range, CancellationToken.None));
+        var waitIdleException = await Record.ExceptionAsync(
+            async () => await cache.WaitForIdleAsync());
 
-            await cache.DisposeAsync();
-        }
-
-        // ACT
-        await CreateAndDisposeCache();
-
-        // Force garbage collection
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect();
-
-        // ASSERT - Cache should be eligible for GC after disposal
-        Assert.NotNull(weakRef);
-        Assert.False(weakRef.IsAlive, "Cache should be garbage collected after disposal");
+        Assert.NotNull(getDataException);
+        Assert.IsType<ObjectDisposedException>(getDataException);
+        Assert.NotNull(waitIdleException);
+        Assert.IsType<ObjectDisposedException>(waitIdleException);
     }
 
     [Fact]

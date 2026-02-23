@@ -10,7 +10,7 @@ This document provides essential information for AI coding agents working on the
 - Single-Writer Architecture: Only rebalance execution mutates cache state
 - Decision-Driven Execution: Multi-stage validation prevents thrashing
 - Smart Eventual Consistency: Converges to optimal state while avoiding unnecessary work
-- Mostly Lock-Free Concurrency: Volatile/Interlocked operations; AsyncActivityCounter uses lock (under review)
+- Fully Lock-Free Concurrency: Volatile/Interlocked operations, including fully lock-free AsyncActivityCounter
 - User Path Priority: User requests never block on rebalance operations
 
 ## Build Commands
@@ -309,7 +309,7 @@ refactor: AsyncActivityCounter lock has been removed and replaced with lock-free
 |------|-------------|-------|
 | `README.md` | Public API changes, new features | User-facing examples, configuration |
 | `docs/invariants.md` | Architectural invariants changed | System constraints, concurrency rules |
-| `docs/concurrency-model.md` | Concurrency mechanisms changed | Thread safety, synchronization primitives |
+| `docs/architecture-model.md` | Concurrency mechanisms changed | Thread safety, synchronization primitives |
 | `docs/component-map.md` | New components, major refactoring | Component catalog, dependencies |
 | `docs/actors-and-responsibilities.md` | Component responsibilities changed | Actor roles, explicit responsibilities |
 | `docs/cache-state-machine.md` | State transitions changed | State machine specification |
@@ -324,7 +324,7 @@ refactor: AsyncActivityCounter lock has been removed and replaced with lock-free
 
 **Before making changes, consult these critical documents:**
 - `docs/invariants.md` - System invariants (33KB) - READ THIS FIRST
-- `docs/concurrency-model.md` - Concurrency architecture
+- `docs/architecture-model.md` - Architecture and concurrency model
 - `docs/actors-and-responsibilities.md` - Component responsibilities
 - `docs/component-map.md` - Detailed component catalog (86KB)
 - `README.md` - User guide and examples (32KB)

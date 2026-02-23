@@ -20,16 +20,47 @@ public class ExecutionStrategySelectionTests
             Range<int> range,
             CancellationToken cancellationToken)
         {
+            return Task.FromResult(GenerateDataForRange(range));
+        }
+
+        /// <summary>
+        /// Generates data respecting range boundary inclusivity.
+        /// Uses pattern matching to handle all 4 combinations of inclusive/exclusive boundaries.
+        /// </summary>
+        private static IEnumerable<string> GenerateDataForRange(Range<int> range)
+        {
             var data = new List<string>();
             var start = (int)range.Start;
             var end = (int)range.End;
-            
-            // Generate data respecting range inclusivity (assuming closed ranges for simplicity)
-            for (int i = start; i <= end; i++)
+
+            switch (range)
             {
-                data.Add($"Item_{i}");
+                case { IsStartInclusive: true, IsEndInclusive: true }:
+                    // [start, end]
+                    for (var i = start; i <= end; i++)
+                        data.Add($"Item_{i}");
+                    break;
+
+                case { IsStartInclusive: true, IsEndInclusive: false }:
+                    // [start, end)
+                    for (var i = start; i < end; i++)
+                        data.Add($"Item_{i}");
+                    break;
+
+                case { IsStartInclusive: false, IsEndInclusive: true }:
+                    // (start, end]
+                    for (var i = start + 1; i <= end; i++)
+                        data.Add($"Item_{i}");
+                    break;
+
+                default:
+                    // (start, end)
+                    for (var i = start + 1; i < end; i++)
+                        data.Add($"Item_{i}");
+                    break;
             }
-            return Task.FromResult<IEnumerable<string>>(data);
+
+            return data;
         }
     }
 

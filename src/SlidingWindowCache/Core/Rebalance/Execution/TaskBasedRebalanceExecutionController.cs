@@ -155,6 +155,7 @@ internal sealed class TaskBasedRebalanceExecutionController<TRange, TData, TDoma
     /// <param name="intent">The rebalance intent containing delivered data and context.</param>
     /// <param name="desiredRange">The target cache range computed by the decision engine.</param>
     /// <param name="desiredNoRebalanceRange">The desired NoRebalanceRange to be set after execution completes.</param>
+    /// <param name="loopCancellationToken">Cancellation token from the intent processing loop. Included for API consistency but not used (task-based strategy never blocks).</param>
     /// <returns>A ValueTask that completes synchronously (fire-and-forget execution model).</returns>
     /// <remarks>
     /// <para><strong>Task Chaining Behavior:</strong></para>
@@ -162,6 +163,13 @@ internal sealed class TaskBasedRebalanceExecutionController<TRange, TData, TDoma
     /// This method chains the new execution request to the current execution task using volatile write for visibility.
     /// The chaining operation is lock-free (single-writer context - only intent processing loop calls this method).
     /// Returns immediately after chaining - actual execution happens asynchronously on the ThreadPool.
+    /// </para>
+    /// <para><strong>Cancellation Token Parameter:</strong></para>
+    /// <para>
+    /// The loopCancellationToken parameter is included for API consistency with
+    /// <see cref="IRebalanceExecutionController{TRange,TData,TDomain}.PublishExecutionRequest"/>.
+    /// Task-based strategy never blocks, so this token is not used. See
+    /// <see cref="ChannelBasedRebalanceExecutionController{TRange,TData,TDomain}"/> for usage in blocking scenarios.
     /// </para>
     /// <para><strong>Cancellation Coordination:</strong></para>
     /// <para>
@@ -182,7 +190,8 @@ internal sealed class TaskBasedRebalanceExecutionController<TRange, TData, TDoma
     public ValueTask PublishExecutionRequest(
         Intent<TRange, TData, TDomain> intent, 
         Range<TRange> desiredRange,
-        Range<TRange>? desiredNoRebalanceRange)
+        Range<TRange>? desiredNoRebalanceRange,
+        CancellationToken loopCancellationToken)
     {
         // Check disposal state using Volatile.Read (lock-free)
         if (Volatile.Read(ref _disposeState) != 0)

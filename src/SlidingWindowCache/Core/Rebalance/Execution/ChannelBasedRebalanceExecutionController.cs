@@ -176,7 +176,15 @@ internal sealed class ChannelBasedRebalanceExecutionController<TRange, TData, TD
     /// Gets the most recent execution request submitted to the execution controller.
     /// Returns null if no execution request has been submitted yet.
     /// </summary>
-    public ExecutionRequest<TRange, TData, TDomain>? LastExecutionRequest => _lastExecutionRequest;
+    /// <remarks>
+    /// <para><strong>Thread Safety:</strong></para>
+    /// <para>
+    /// Uses <see cref="Volatile.Read"/> to ensure proper memory visibility across threads.
+    /// This property can be safely accessed from multiple threads (intent loop, decision engine).
+    /// </para>
+    /// </remarks>
+    public ExecutionRequest<TRange, TData, TDomain>? LastExecutionRequest 
+        => Volatile.Read(ref _lastExecutionRequest);
 
     /// <summary>
     /// Publishes a rebalance execution request to the bounded channel for sequential processing.
@@ -184,6 +192,7 @@ internal sealed class ChannelBasedRebalanceExecutionController<TRange, TData, TD
     /// <param name="intent">The rebalance intent containing delivered data and context.</param>
     /// <param name="desiredRange">The target cache range computed by the decision engine.</param>
     /// <param name="desiredNoRebalanceRange">The desired NoRebalanceRange to be set after execution completes.</param>
+    /// <param name="loopCancellationToken">Cancellation token from the intent processing loop. Used to unblock WriteAsync during disposal.</param>
     /// <returns>A ValueTask representing the asynchronous write operation. Completes when the request is enqueued (may block if channel is full).</returns>
     /// <remarks>
     /// <para><strong>Backpressure Behavior:</strong></para>
@@ -191,6 +200,12 @@ internal sealed class ChannelBasedRebalanceExecutionController<TRange, TData, TD
     /// This method uses async write semantics with backpressure. When the bounded channel is at capacity,
     /// this method will AWAIT (not return) until space becomes available. This creates intentional
     /// backpressure that throttles the intent processing loop, preventing excessive request accumulation.
+    /// </para>
+    /// <para><strong>Cancellation Behavior:</strong></para>
+    /// <para>
+    /// The loopCancellationToken enables graceful shutdown during disposal. If the channel is full and
+    /// disposal begins, the token cancellation will unblock the WriteAsync operation, preventing disposal hangs.
+    /// On cancellation, the method cleans up resources and returns gracefully without throwing.
     /// </para>
     /// <para><strong>Execution Context:</strong></para>
     /// <para>
@@ -206,7 +221,8 @@ internal sealed class ChannelBasedRebalanceExecutionController<TRange, TData, TD
     public async ValueTask PublishExecutionRequest(
         Intent<TRange, TData, TDomain> intent, 
         Range<TRange> desiredRange,
-        Range<TRange>? desiredNoRebalanceRange)
+        Range<TRange>? desiredNoRebalanceRange,
+        CancellationToken loopCancellationToken)
     {
         // Check disposal state using Volatile.Read (lock-free)
         if (Volatile.Read(ref _disposeState) != 0)
@@ -233,10 +249,17 @@ internal sealed class ChannelBasedRebalanceExecutionController<TRange, TData, TD
 
         // Enqueue execution request to bounded channel
         // BACKPRESSURE: This will await if channel is at capacity, creating backpressure on intent processing loop
-        // This is the key mechanism for bounded channel strategy - the intent loop blocks here when full
+        // CANCELLATION: loopCancellationToken enables graceful shutdown during disposal
         try
         {
-            await _executionChannel.Writer.WriteAsync(request).ConfigureAwait(false);
+            await _executionChannel.Writer.WriteAsync(request, loopCancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (loopCancellationToken.IsCancellationRequested)
+        {
+            // Write cancelled during disposal - clean up and exit gracefully
+            // Don't throw - disposal is shutting down the loop
+            request.Dispose();
+            _activityCounter.DecrementActivity();
         }
         catch (Exception ex)
         {

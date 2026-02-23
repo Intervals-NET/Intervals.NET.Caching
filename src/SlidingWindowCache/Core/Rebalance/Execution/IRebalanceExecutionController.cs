@@ -75,6 +75,7 @@ internal interface IRebalanceExecutionController<TRange, TData, TDomain>
     /// <param name="intent">The rebalance intent containing delivered data and context.</param>
     /// <param name="desiredRange">The target cache range computed by the decision engine.</param>
     /// <param name="desiredNoRebalanceRange">The desired NoRebalanceRange to be set after execution completes.</param>
+    /// <param name="loopCancellationToken">Cancellation token from the intent processing loop. Used to unblock asynchronous operations during disposal.</param>
     /// <returns>A ValueTask representing the asynchronous operation. May complete synchronously (task-based strategy) or asynchronously (channel-based strategy with backpressure).</returns>
     /// <remarks>
     /// <para><strong>Execution Context:</strong></para>
@@ -87,12 +88,19 @@ internal interface IRebalanceExecutionController<TRange, TData, TDomain>
     /// <item><description>
     /// <strong>Task-Based:</strong> Chains execution to previous task, never blocks.
     /// Returns ValueTask.CompletedTask immediately (synchronous completion). Fire-and-forget scheduling.
+    /// loopCancellationToken parameter included for API consistency but not used.
     /// </description></item>
     /// <item><description>
     /// <strong>Channel-Based:</strong> Enqueues to bounded channel. Asynchronously awaits WriteAsync if channel is full
     /// (backpressure mechanism - intentional throttling of intent processing loop).
+    /// loopCancellationToken enables cancellation of blocking WriteAsync during disposal.
     /// </description></item>
     /// </list>
+    /// <para><strong>Cancellation Behavior:</strong></para>
+    /// <para>
+    /// When loopCancellationToken is cancelled (during disposal), channel-based strategy can exit gracefully
+    /// from blocked WriteAsync operations, preventing disposal hangs.
+    /// </para>
     /// <para><strong>Thread Safety:</strong></para>
     /// <para>
     /// This method is called from a single-threaded context (IntentController's processing loop),
@@ -102,7 +110,8 @@ internal interface IRebalanceExecutionController<TRange, TData, TDomain>
     ValueTask PublishExecutionRequest(
         Intent<TRange, TData, TDomain> intent,
         Range<TRange> desiredRange,
-        Range<TRange>? desiredNoRebalanceRange);
+        Range<TRange>? desiredNoRebalanceRange,
+        CancellationToken loopCancellationToken);
 
     /// <summary>
     /// Gets the most recent execution request submitted to the execution controller.

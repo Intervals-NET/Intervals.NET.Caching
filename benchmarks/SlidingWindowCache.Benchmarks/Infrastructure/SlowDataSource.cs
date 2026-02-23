@@ -66,18 +66,40 @@ public sealed class SlowDataSource : IDataSource<int, int>
     }
 
     /// <summary>
-    /// Generates deterministic data for a range.
+    /// Generates deterministic data for a range, respecting boundary inclusivity.
     /// Each position i in the range produces value i.
-    /// Matches SynchronousDataSource data generation for consistency.
+    /// Uses pattern matching to handle all 4 combinations of inclusive/exclusive boundaries.
     /// </summary>
     private IEnumerable<int> GenerateDataForRange(Range<int> range)
     {
-        var start = range.Start.Value;
-        var count = (int)range.Span(_domain).Value;
+        var start = (int)range.Start;
+        var end = (int)range.End;
 
-        for (var i = 0; i < count; i++)
+        switch (range)
         {
-            yield return start + i;
+            case { IsStartInclusive: true, IsEndInclusive: true }:
+                // [start, end]
+                for (var i = start; i <= end; i++)
+                    yield return i;
+                break;
+
+            case { IsStartInclusive: true, IsEndInclusive: false }:
+                // [start, end)
+                for (var i = start; i < end; i++)
+                    yield return i;
+                break;
+
+            case { IsStartInclusive: false, IsEndInclusive: true }:
+                // (start, end]
+                for (var i = start + 1; i <= end; i++)
+                    yield return i;
+                break;
+
+            default:
+                // (start, end)
+                for (var i = start + 1; i < end; i++)
+                    yield return i;
+                break;
         }
     }
 }
