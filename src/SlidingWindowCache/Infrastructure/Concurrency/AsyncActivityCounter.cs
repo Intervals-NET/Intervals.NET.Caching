@@ -131,7 +131,7 @@ internal sealed class AsyncActivityCounter
         {
             // Create new TCS for this busy period
             var newTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            
+
             // Publish new TCS with release fence (Volatile.Write)
             // Ensures TCS construction completes before reference becomes visible
             Volatile.Write(ref _idleTcs, newTcs);
@@ -203,7 +203,7 @@ internal sealed class AsyncActivityCounter
             // Read current TCS with acquire fence (Volatile.Read)
             // Ensures we observe TCS published by Volatile.Write in IncrementActivity
             var tcs = Volatile.Read(ref _idleTcs);
-            
+
             // Signal idle state - TrySetResult is thread-safe and idempotent
             // Multiple threads might see count=0 simultaneously, but only first TrySetResult succeeds
             tcs.TrySetResult(true);
@@ -259,7 +259,7 @@ internal sealed class AsyncActivityCounter
         // Snapshot current TCS with acquire fence (Volatile.Read)
         // Ensures we observe TCS published by Volatile.Write in IncrementActivity
         var tcs = Volatile.Read(ref _idleTcs);
-        
+
         // Use Task.WaitAsync for simplified cancellation (available in .NET 6+)
         // If already completed, returns immediately
         // If pending, waits until signaled or cancellation token fires

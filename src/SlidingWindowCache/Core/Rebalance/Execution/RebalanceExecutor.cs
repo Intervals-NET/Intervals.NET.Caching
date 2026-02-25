@@ -70,10 +70,10 @@ internal sealed class RebalanceExecutor<TRange, TData, TDomain>
     /// This executor is intentionally simple - no analytical decisions, no necessity checks.
     /// Decision logic has been validated by DecisionEngine before invocation.
     /// </para>
-/// <para><strong>Serialization:</strong> The active <c>IRebalanceExecutionController</c> actor guarantees single-threaded
-/// execution (via task chaining or channel-based sequential processing depending on configuration).
-/// No semaphore needed — the actor ensures only one execution runs at a time.
-/// Cancellation allows fast exit from superseded operations.</para>
+    /// <para><strong>Serialization:</strong> The active <c>IRebalanceExecutionController</c> actor guarantees single-threaded
+    /// execution (via task chaining or channel-based sequential processing depending on configuration).
+    /// No semaphore needed — the actor ensures only one execution runs at a time.
+    /// Cancellation allows fast exit from superseded operations.</para>
     /// </remarks>
     public async Task ExecuteAsync(
         Intent<TRange, TData, TDomain> intent,

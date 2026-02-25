@@ -429,7 +429,7 @@ public sealed class WindowCache<TRange, TData, TDomain>
                 // Dispose the UserRequestHandler which cascades to all internal actors
                 // Disposal order: UserRequestHandler -> IntentController -> RebalanceExecutionController
                 await _userRequestHandler.DisposeAsync().ConfigureAwait(false);
-                
+
                 // Signal successful completion
                 tcs.TrySetResult(true);
             }
@@ -451,12 +451,12 @@ public sealed class WindowCache<TRange, TData, TDomain>
             // Brief spin-wait for TCS publication (should be very fast - CPU-only operation)
             TaskCompletionSource<bool>? tcs;
             var spinWait = new SpinWait();
-            
+
             while ((tcs = Volatile.Read(ref _disposalCompletionSource)) == null)
             {
                 spinWait.SpinOnce();
             }
-            
+
             // Await disposal completion without CPU burn
             // If winner threw exception, this will re-throw the same exception
             await tcs.Task.ConfigureAwait(false);

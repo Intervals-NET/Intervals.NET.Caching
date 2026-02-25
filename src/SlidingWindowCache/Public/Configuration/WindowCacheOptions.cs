@@ -65,7 +65,7 @@ public record WindowCacheOptions
         }
 
         // Validate that thresholds don't overlap (sum must not exceed 1.0)
-        if (leftThreshold.HasValue && rightThreshold.HasValue && 
+        if (leftThreshold.HasValue && rightThreshold.HasValue &&
             (leftThreshold.Value + rightThreshold.Value) > 1.0)
         {
             throw new ArgumentException(

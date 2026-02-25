@@ -85,7 +85,7 @@ namespace SlidingWindowCache.Core.Rebalance.Execution;
 /// </para>
 /// <para>See also: <see cref="ChannelBasedRebalanceExecutionController{TRange,TData,TDomain}"/> for bounded alternative with backpressure</para>
 /// </remarks>
-internal sealed class TaskBasedRebalanceExecutionController<TRange, TData, TDomain> 
+internal sealed class TaskBasedRebalanceExecutionController<TRange, TData, TDomain>
     : IRebalanceExecutionController<TRange, TData, TDomain>
     where TRange : IComparable<TRange>
     where TDomain : IRangeDomain<TRange>
@@ -146,7 +146,7 @@ internal sealed class TaskBasedRebalanceExecutionController<TRange, TData, TDoma
     /// Gets the most recent execution request submitted to the execution controller.
     /// Returns null if no execution request has been submitted yet.
     /// </summary>
-    public ExecutionRequest<TRange, TData, TDomain>? LastExecutionRequest => 
+    public ExecutionRequest<TRange, TData, TDomain>? LastExecutionRequest =>
         Volatile.Read(ref _lastExecutionRequest);
 
     /// <summary>
@@ -188,7 +188,7 @@ internal sealed class TaskBasedRebalanceExecutionController<TRange, TData, TDoma
     /// </para>
     /// </remarks>
     public ValueTask PublishExecutionRequest(
-        Intent<TRange, TData, TDomain> intent, 
+        Intent<TRange, TData, TDomain> intent,
         Range<TRange> desiredRange,
         Range<TRange>? desiredNoRebalanceRange,
         CancellationToken loopCancellationToken)
@@ -218,7 +218,7 @@ internal sealed class TaskBasedRebalanceExecutionController<TRange, TData, TDoma
             desiredNoRebalanceRange,
             cancellationTokenSource
         );
-        
+
         // Store as last request (for cancellation coordination and diagnostics)
         Volatile.Write(ref _lastExecutionRequest, request);
 

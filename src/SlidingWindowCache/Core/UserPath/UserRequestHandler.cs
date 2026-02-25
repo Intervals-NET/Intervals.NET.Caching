@@ -146,7 +146,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
                 // Cache has never been populated - fetch data ONLY for requested range
                 _cacheDiagnostics.DataSourceFetchSingleRange();
                 var fetchedChunk = await _dataSource.FetchAsync(requestedRange, cancellationToken);
-                
+
                 // Handle boundary: chunk.Range may be null or truncated
                 if (fetchedChunk.Range.HasValue)
                 {
@@ -202,7 +202,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
                         // Compute actual available range (intersection of requested and assembled)
                         // assembledData.Range is always non-null (ExtendCacheAsync returns valid RangeData)
                         actualRange = assembledData.Range.Intersect(requestedRange);
-                        
+
                         // Slice to exact request
                         var slicedData = assembledData[requestedRange];
                         resultData = new ReadOnlyMemory<TData>(slicedData.Data.ToArray());
@@ -215,7 +215,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
                         // NOTE: The logic is similar to cold start
                         _cacheDiagnostics.DataSourceFetchSingleRange();
                         var fetchedChunk = await _dataSource.FetchAsync(requestedRange, cancellationToken).ConfigureAwait(false);
-                        
+
                         // Handle boundary: chunk.Range may be null or truncated
                         if (fetchedChunk.Range.HasValue)
                         {

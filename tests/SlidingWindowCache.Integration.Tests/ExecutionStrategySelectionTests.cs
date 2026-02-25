@@ -106,7 +106,7 @@ public class ExecutionStrategySelectionTests
             leftCacheSize: 1.0,
             rightCacheSize: 2.0,
             readMode: UserCacheReadMode.Snapshot
-            // rebalanceQueueCapacity not specified - defaults to null
+        // rebalanceQueueCapacity not specified - defaults to null
         );
 
         await using var cache = new WindowCache<int, string, IntegerFixedStepDomain>(

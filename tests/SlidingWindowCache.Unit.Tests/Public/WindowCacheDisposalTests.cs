@@ -321,7 +321,7 @@ public class WindowCacheDisposalTests
         // ARRANGE
         var cache = CreateCache();
         var range = Intervals.NET.Factories.Range.Closed<int>(0, 10);
-        
+
         // Trigger some background activity
         await cache.GetDataAsync(range, CancellationToken.None);
         await cache.WaitForIdleAsync(); // Wait for background work to complete

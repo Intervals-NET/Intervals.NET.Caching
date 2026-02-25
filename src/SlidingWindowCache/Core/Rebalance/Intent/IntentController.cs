@@ -218,7 +218,7 @@ internal sealed class IntentController<TRange, TData, TDomain>
                 {
                     // Wait for signal from user thread
                     await _intentSignal.WaitAsync(_loopCancellation.Token).ConfigureAwait(false);
-                    
+
                     // Signal successfully consumed - we must decrement in finally
                     consumedSignal = true;
 

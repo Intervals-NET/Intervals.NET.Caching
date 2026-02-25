@@ -314,8 +314,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     [Theory]
     [MemberData(nameof(A3_8_TestData))]
     public async Task Invariant_A3_8_UserPathNeverMutatesCache(
-        string scenario, int reqStart, int reqEnd, int priorStart, int priorEnd, bool hasPriorRequest,
-        string storageName, UserCacheReadMode readMode)
+int reqStart, int reqEnd, int priorStart, int priorEnd, bool hasPriorRequest, UserCacheReadMode readMode)
     {
         // ARRANGE
         var options = TestHelpers.CreateDefaultOptions(
@@ -1101,7 +1100,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     /// <param name="readMode">Storage read mode: Snapshot or CopyOnRead</param>
     [Theory]
     [MemberData(nameof(StorageStrategyTestData))]
-    public async Task Invariant_F36a_RebalanceNormalizesCache(string storageName, UserCacheReadMode readMode)
+    public async Task Invariant_F36a_RebalanceNormalizesCache(UserCacheReadMode readMode)
     {
         // ARRANGE
         var options = TestHelpers.CreateDefaultOptions(
@@ -1135,7 +1134,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     /// <param name="readMode">Storage read mode: Snapshot or CopyOnRead</param>
     [Theory]
     [MemberData(nameof(StorageStrategyTestData))]
-    public async Task Invariant_F40_F41_F42_PostExecutionGuarantees(string storageName, UserCacheReadMode readMode)
+    public async Task Invariant_F40_F41_F42_PostExecutionGuarantees(UserCacheReadMode readMode)
     {
         // ARRANGE
         var options = TestHelpers.CreateDefaultOptions(
