@@ -102,8 +102,8 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
                         scenario[3], // priorStart
                         scenario[4], // priorEnd
                         scenario[5], // hasPriorRequest
-                        storage[0],  // storageName
-                        storage[1]   // readMode
+                        storage[0], // storageName
+                        storage[1] // readMode
                     ];
                 }
             }
@@ -314,7 +314,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     [Theory]
     [MemberData(nameof(A3_8_TestData))]
     public async Task Invariant_A3_8_UserPathNeverMutatesCache(
-int reqStart, int reqEnd, int priorStart, int priorEnd, bool hasPriorRequest, UserCacheReadMode readMode)
+        string scenario, int reqStart, int reqEnd, int priorStart, int priorEnd, bool hasPriorRequest, string storageName, UserCacheReadMode readMode)
     {
         // ARRANGE
         var options = TestHelpers.CreateDefaultOptions(
@@ -697,7 +697,8 @@ int reqStart, int reqEnd, int priorStart, int priorEnd, bool hasPriorRequest, Us
         for (var i = 0; i < 10; i++)
         {
             var start = 100 + i * 2;
-            tasks.Add(cache.GetDataAsync(TestHelpers.CreateRange(start, start + 10), CancellationToken.None).AsTask().ContinueWith(t => t.Result.Data));
+            tasks.Add(cache.GetDataAsync(TestHelpers.CreateRange(start, start + 10), CancellationToken.None).AsTask()
+                .ContinueWith(t => t.Result.Data));
         }
 
         await Task.WhenAll(tasks);
@@ -1100,7 +1101,7 @@ int reqStart, int reqEnd, int priorStart, int priorEnd, bool hasPriorRequest, Us
     /// <param name="readMode">Storage read mode: Snapshot or CopyOnRead</param>
     [Theory]
     [MemberData(nameof(StorageStrategyTestData))]
-    public async Task Invariant_F36a_RebalanceNormalizesCache(UserCacheReadMode readMode)
+    public async Task Invariant_F36a_RebalanceNormalizesCache(string storageName, UserCacheReadMode readMode)
     {
         // ARRANGE
         var options = TestHelpers.CreateDefaultOptions(
@@ -1134,7 +1135,7 @@ int reqStart, int reqEnd, int priorStart, int priorEnd, bool hasPriorRequest, Us
     /// <param name="readMode">Storage read mode: Snapshot or CopyOnRead</param>
     [Theory]
     [MemberData(nameof(StorageStrategyTestData))]
-    public async Task Invariant_F40_F41_F42_PostExecutionGuarantees(UserCacheReadMode readMode)
+    public async Task Invariant_F40_F41_F42_PostExecutionGuarantees(string storageName, UserCacheReadMode readMode)
     {
         // ARRANGE
         var options = TestHelpers.CreateDefaultOptions(
@@ -1407,7 +1408,8 @@ int reqStart, int reqEnd, int priorStart, int priorEnd, bool hasPriorRequest, Us
     /// <param name="queueCapacity">Queue capacity: null = task-based (unbounded), >= 1 = channel-based (bounded)</param>
     [Theory]
     [MemberData(nameof(ExecutionStrategyTestData))]
-    public async Task ConcurrencyScenario_RapidRequestsBurstWithCancellation(string executionStrategy, int? queueCapacity)
+    public async Task ConcurrencyScenario_RapidRequestsBurstWithCancellation(string executionStrategy,
+        int? queueCapacity)
     {
         // ARRANGE
         var options = TestHelpers.CreateDefaultOptions(
@@ -1420,7 +1422,8 @@ int reqStart, int reqEnd, int priorStart, int priorEnd, bool hasPriorRequest, Us
         for (var i = 0; i < 20; i++)
         {
             var start = 100 + i * 5;
-            tasks.Add(cache.GetDataAsync(TestHelpers.CreateRange(start, start + 10), CancellationToken.None).AsTask().ContinueWith(t => t.Result.Data));
+            tasks.Add(cache.GetDataAsync(TestHelpers.CreateRange(start, start + 10), CancellationToken.None).AsTask()
+                .ContinueWith(t => t.Result.Data));
         }
 
         var results = await Task.WhenAll(tasks);
