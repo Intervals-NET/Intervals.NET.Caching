@@ -91,7 +91,7 @@ namespace SlidingWindowCache.Core.Rebalance.Execution;
 /// </para>
 /// <para>See also: <see cref="TaskBasedRebalanceExecutionController{TRange,TData,TDomain}"/> for unbounded alternative</para>
 /// </remarks>
-internal sealed class ChannelBasedRebalanceExecutionController<TRange, TData, TDomain> 
+internal sealed class ChannelBasedRebalanceExecutionController<TRange, TData, TDomain>
     : IRebalanceExecutionController<TRange, TData, TDomain>
     where TRange : IComparable<TRange>
     where TDomain : IRangeDomain<TRange>
@@ -155,7 +155,7 @@ internal sealed class ChannelBasedRebalanceExecutionController<TRange, TData, TD
         _debounceDelay = debounceDelay;
         _cacheDiagnostics = cacheDiagnostics;
         _activityCounter = activityCounter;
-        
+
         // Initialize bounded channel with single reader/writer semantics
         // Bounded capacity enables backpressure on IntentController actor
         // SingleReader: only execution loop reads; SingleWriter: only IntentController writes
@@ -167,7 +167,7 @@ internal sealed class ChannelBasedRebalanceExecutionController<TRange, TData, TD
                 AllowSynchronousContinuations = false,
                 FullMode = BoundedChannelFullMode.Wait // Block on WriteAsync when full (backpressure)
             });
-        
+
         // Start execution loop immediately - runs for cache lifetime
         _executionLoopTask = ProcessExecutionRequestsAsync();
     }
@@ -183,7 +183,7 @@ internal sealed class ChannelBasedRebalanceExecutionController<TRange, TData, TD
     /// This property can be safely accessed from multiple threads (intent loop, decision engine).
     /// </para>
     /// </remarks>
-    public ExecutionRequest<TRange, TData, TDomain>? LastExecutionRequest 
+    public ExecutionRequest<TRange, TData, TDomain>? LastExecutionRequest
         => Volatile.Read(ref _lastExecutionRequest);
 
     /// <summary>
@@ -219,7 +219,7 @@ internal sealed class ChannelBasedRebalanceExecutionController<TRange, TData, TD
     /// </para>
     /// </remarks>
     public async ValueTask PublishExecutionRequest(
-        Intent<TRange, TData, TDomain> intent, 
+        Intent<TRange, TData, TDomain> intent,
         Range<TRange> desiredRange,
         Range<TRange>? desiredNoRebalanceRange,
         CancellationToken loopCancellationToken)

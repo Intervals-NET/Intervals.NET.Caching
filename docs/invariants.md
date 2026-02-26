@@ -234,6 +234,22 @@ without polling or timing dependencies.
 - *Observable via*: Returned data length and content
 - *Test verifies*: Data matches requested range exactly (no more, no less)
 
+**A.10a** 🔵 **[Architectural]** `GetDataAsync` returns `RangeResult<TRange, TData>` containing both the actual range fulfilled and the corresponding data.
+
+**Formal Specification:**
+- Return type: `ValueTask<RangeResult<TRange, TData>>`
+- `RangeResult.Range` indicates the actual range returned (may differ from requested in bounded data sources)
+- `RangeResult.Data` contains `ReadOnlyMemory<TData>` for the returned range
+- `Range` is nullable to signal data unavailability without exceptions
+- When `Range` is non-null, `Data.Length` MUST equal `Range.Span(domain)`
+
+**Rationale:** 
+- Explicit boundary contracts between cache and consumers
+- Bounded data sources can signal truncation or unavailability gracefully
+- No exceptions for normal boundary conditions (out-of-bounds is expected, not exceptional)
+
+**Related Documentation:** [Boundary Handling Guide](boundary-handling.md) — comprehensive coverage of RangeResult usage patterns, bounded data source implementation, partial fulfillment handling, and testing.
+
 ### A.3 Cache Mutation Rules (User Path)
 
 **A.7** 🔵 **[Architectural]** The User Path may read from cache and `IDataSource` but **does not mutate cache state**.
@@ -712,17 +728,20 @@ The Rebalance Decision Path and Rebalance Execution Path MUST execute asynchrono
 **Implementation:** See [component-map.md - Async Execution Model](#implementation) for enforcement mechanism details.
 - 🔵 **[Architectural — Covered by same test as G.43]**
 
-### G.45: Rebalance Execution Path performs I/O only in background execution context
+### G.45: I/O responsibilities are separated between User Path and Rebalance Execution Path
 
 **Formal Specification:**
-All I/O operations (data fetching via IDataSource) MUST occur exclusively in the background execution context. The User Path MUST complete and return to the caller before any background I/O operations begin.
+I/O operations (data fetching via IDataSource) are divided by responsibility:
+- **User Path** MAY call `IDataSource.FetchAsync` exclusively to serve the user's immediate requested range (Scenarios U1 Cold Start and U5 Full Cache Miss / Jump). This I/O is unavoidable because the user request cannot be served from cache.
+- **Rebalance Execution Path** calls `IDataSource.FetchAsync` exclusively for background cache normalization (expanding or rebuilding the cache beyond the requested range).
+- No component other than these two may call `IDataSource.FetchAsync`.
 
 **Architectural Properties:**
-- User Path is I/O-free: Returns before IDataSource.FetchAsync called
-- Background I/O isolation: Data fetching confined to Rebalance Execution Path
-- No user-facing latency: I/O costs do not impact user request time
+- User Path I/O is request-scoped: only fetches exactly the RequestedRange, never more
+- Background I/O is normalization-scoped: fetches missing segments to reach DesiredCacheRange
+- Responsibilities never overlap: User Path never fetches beyond RequestedRange; Rebalance Execution never serves user requests directly
 
-**Rationale:** Isolates expensive I/O operations from user-facing request path to minimize latency.
+**Rationale:** Separates the latency-critical user-serving fetch (minimal, unavoidable) from the background optimization fetch (potentially large, deferrable). User Path I/O is bounded by the requested range; background I/O is bounded by cache geometry policy.
 
 **Implementation:** See [component-map.md - I/O Isolation](#implementation) for enforcement mechanism details.
 - 🔵 **[Architectural — Covered by same test as G.43]**

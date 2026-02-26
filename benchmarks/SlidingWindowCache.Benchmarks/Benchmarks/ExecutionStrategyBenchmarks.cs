@@ -245,7 +245,7 @@ public class ExecutionStrategyBenchmarks
 
         // Build initial range for first request
         var initialRange = Intervals.NET.Factories.Range.Closed<int>(
-            InitialStart, 
+            InitialStart,
             InitialStart + BaseSpanSize - 1
         );
 

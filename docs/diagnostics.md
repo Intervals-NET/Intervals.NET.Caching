@@ -191,10 +191,12 @@ var cache = new WindowCache<int, string, IntegerFixedStepDomain>(
 ### User Path Events
 
 #### `UserRequestServed()`
-**Tracks:** Completion of user request (data returned and intent published)  
-**Location:** `UserRequestHandler.HandleRequestAsync` (final step)  
-**Scenarios:** All user scenarios (U1-U5): cold start, full hit, partial hit, full miss/jump  
-**Interpretation:** Total number of user requests successfully served
+**Tracks:** Completion of user request (data returned to caller)  
+**Location:** `UserRequestHandler.HandleRequestAsync` (final step, inside `!exceptionOccurred` block)  
+**Scenarios:** All user scenarios (U1-U5) and physical boundary miss (full vacuum)  
+**Fires when:** No exception occurred — regardless of whether a rebalance intent was published  
+**Does NOT fire when:** An exception propagated out of `HandleRequestAsync`  
+**Interpretation:** Total number of user requests that completed without exception (including boundary misses where `Range == null`)
 
 **Example Usage:**
 ```csharp
@@ -337,6 +339,36 @@ Assert.Equal(1, diagnostics.DataSourceFetchMissingSegments);
 
 ---
 
+#### `DataSegmentUnavailable()`
+**Tracks:** A fetched chunk returned a `null` Range — the requested segment does not exist in the data source  
+**Location:** `CacheDataExtensionService.UnionAll` (when a `RangeChunk.Range` is null)  
+**Context:** User Thread (Partial Cache Hit — Scenario 3) **and** Background Thread (Rebalance Execution)  
+**Invariants:** G.48 (IDataSource Boundary Semantics), A.9a (Cache Contiguity)  
+**Interpretation:** Physical boundary encountered; the unavailable segment is silently skipped to preserve cache contiguity
+
+**Typical Scenarios:**
+- Database with min/max ID bounds — extension tries to expand beyond available range
+- Time-series data with temporal limits — requesting future/past data not yet/no longer available
+- Paginated API with maximum pages — attempting to fetch beyond last page
+
+**Important:** This is purely informational. The system gracefully skips unavailable segments during `UnionAll`, and cache contiguity is preserved. No action is required by the caller.
+
+**Example Usage:**
+```csharp
+// BoundedDataSource has data in [1000, 9999]
+// Request [500, 1500] overlaps lower boundary — partial cache hit fetches [500, 999] which returns null
+var result = await cache.GetDataAsync(Range.Closed(500, 1500), ct);
+await cache.WaitForIdleAsync();
+
+// At least one unavailable segment was encountered during extension
+Assert.True(diagnostics.DataSegmentUnavailable >= 1);
+
+// Cache contiguity preserved — result is the intersection of requested and available
+Assert.Equal(Range.Closed(1000, 1500), result.Range);
+```
+
+---
+
 ### Rebalance Intent Lifecycle Events
 
 #### `RebalanceIntentPublished()`
@@ -349,7 +381,7 @@ Assert.Equal(1, diagnostics.DataSourceFetchMissingSegments);
 ```csharp
 await cache.GetDataAsync(Range.Closed(100, 200), ct);
 
-// Every user request publishes exactly one intent
+// Intent is published when data was successfully assembled (not on physical boundary misses)
 Assert.Equal(1, diagnostics.RebalanceIntentPublished);
 ```
 

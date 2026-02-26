@@ -1,6 +1,7 @@
 using Intervals.NET;
 using Intervals.NET.Domain.Default.Numeric;
 using SlidingWindowCache.Infrastructure.Instrumentation;
+using SlidingWindowCache.Integration.Tests.TestInfrastructure;
 using SlidingWindowCache.Public;
 using SlidingWindowCache.Public.Configuration;
 
@@ -40,7 +41,7 @@ public class RebalanceExceptionHandlingTests : IDisposable
                 if (callCount == 1)
                 {
                     // First call (user request) succeeds
-                    return GenerateTestData(range);
+                    return FaultyDataSource<int, string>.GenerateStringData(range);
                 }
 
                 // Second call (rebalance) fails
@@ -99,7 +100,7 @@ public class RebalanceExceptionHandlingTests : IDisposable
                 }
 
                 // Other calls succeed
-                return GenerateTestData(range);
+                return FaultyDataSource<int, string>.GenerateStringData(range);
             }
         );
 
@@ -131,8 +132,8 @@ public class RebalanceExceptionHandlingTests : IDisposable
 
         // Assert: Both requests succeeded despite rebalance failure
         Assert.Equal(2, _diagnostics.UserRequestServed);
-        Assert.Equal(11, data1.Length);
-        Assert.Equal(11, data2.Length);
+        Assert.Equal(11, data1.Data.Length);
+        Assert.Equal(11, data2.Data.Length);
 
         // Verify at least one rebalance failed
         Assert.True(_diagnostics.RebalanceExecutionFailed >= 1,
@@ -159,7 +160,7 @@ public class RebalanceExceptionHandlingTests : IDisposable
                 if (callCount == 1)
                 {
                     // First call (user request) succeeds
-                    return GenerateTestData(range);
+                    return FaultyDataSource<int, string>.GenerateStringData(range);
                 }
 
                 // Second call (rebalance) fails
@@ -198,39 +199,6 @@ public class RebalanceExceptionHandlingTests : IDisposable
     }
 
     #region Helper Classes
-
-    /// <summary>
-    /// Faulty data source for testing exception handling.
-    /// </summary>
-    private class FaultyDataSource<TRange, TData> : IDataSource<TRange, TData>
-        where TRange : IComparable<TRange>
-    {
-        private readonly Func<Range<TRange>, IEnumerable<TData>> _fetchSingleRange;
-
-        public FaultyDataSource(Func<Range<TRange>, IEnumerable<TData>> fetchSingleRange)
-        {
-            _fetchSingleRange = fetchSingleRange;
-        }
-
-        public Task<IEnumerable<TData>> FetchAsync(Range<TRange> range, CancellationToken cancellationToken)
-        {
-            var data = _fetchSingleRange(range);
-            return Task.FromResult(data);
-        }
-
-        public Task<IEnumerable<TData>> FetchAsync(IEnumerable<Range<TRange>> ranges,
-            CancellationToken cancellationToken)
-        {
-            var allData = new List<TData>();
-            foreach (var range in ranges)
-            {
-                var data = _fetchSingleRange(range);
-                allData.AddRange(data);
-            }
-
-            return Task.FromResult<IEnumerable<TData>>(allData);
-        }
-    }
 
     /// <summary>
     /// Production-ready diagnostics implementation that logs failures.
@@ -319,17 +287,10 @@ public class RebalanceExceptionHandlingTests : IDisposable
         public void RebalanceSkippedSameRange()
         {
         }
-    }
 
-    private static IEnumerable<string> GenerateTestData(Intervals.NET.Range<int> range)
-    {
-        var data = new List<string>();
-        for (var i = range.Start.Value; i <= range.End.Value; i++)
+        public void DataSegmentUnavailable()
         {
-            data.Add($"Item-{i}");
         }
-
-        return data;
     }
 
     #endregion

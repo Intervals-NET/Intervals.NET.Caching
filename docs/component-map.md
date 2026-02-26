@@ -807,7 +807,8 @@ public interface ICacheDiagnostics
 - `void RebalanceExecutionCancelled()` - Records execution cancellation mid-flight
 
 **Rebalance Skip Optimization Events:**
-- `void RebalanceSkippedNoRebalanceRange()` - Records skip due to NoRebalanceRange policy
+- `void RebalanceSkippedCurrentNoRebalanceRange()` - Records skip due to current cache NoRebalanceRange (Stage 1)
+- `void RebalanceSkippedPendingNoRebalanceRange()` - Records skip due to pending rebalance NoRebalanceRange (Stage 2, anti-thrashing)
 - `void RebalanceSkippedSameRange()` - Records skip due to same-range optimization
 
 **Implementations**:
