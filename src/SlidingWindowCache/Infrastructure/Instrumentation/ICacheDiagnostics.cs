@@ -14,9 +14,11 @@ public interface ICacheDiagnostics
 
     /// <summary>
     /// Records a completed user request served by the User Path.
-    /// Called at the end of UserRequestHandler.HandleRequestAsync after data is returned to the user and intent is published.
-    /// Tracks completion of all user scenarios: cold start (U1), full cache hit (U2, U3), partial cache hit (U4), and full cache miss/jump (U5).
-    /// Location: UserRequestHandler.HandleRequestAsync (final step)
+    /// Called at the end of UserRequestHandler.HandleRequestAsync after data is returned to the user.
+    /// Fires for ALL successfully completed requests (no exception), regardless of whether a rebalance intent was published.
+    /// This includes boundary misses (full vacuum / out-of-physical-bounds requests) where assembledData is null and no intent is published.
+    /// Tracks completion of all user scenarios: cold start (U1), full cache hit (U2, U3), partial cache hit (U4), full cache miss/jump (U5), and physical boundary miss.
+    /// Location: UserRequestHandler.HandleRequestAsync (final step, inside !exceptionOccurred block)
     /// </summary>
     void UserRequestServed();
 
@@ -90,23 +92,23 @@ public interface ICacheDiagnostics
 
     /// <summary>
     /// Called when a data segment is unavailable because the DataSource returned a null Range.
-    /// This typically occurs when rebalancing attempts to prefetch data beyond physical boundaries
+    /// This typically occurs when prefetching or extending the cache hits physical boundaries
     /// (e.g., database min/max IDs, time-series with temporal limits, paginated APIs with max pages).
     /// </summary>
     /// <remarks>
-    /// <para><strong>Context:</strong> Background Thread (Rebalance Execution)</para>
+    /// <para><strong>Context:</strong> User Thread (Partial Cache Hit — Scenario 3) and Background Thread (Rebalance Execution)</para>
     /// <para>
     /// This is informational only - the system handles boundaries gracefully by skipping
     /// unavailable segments during cache union (UnionAll), preserving cache contiguity (Invariant A.9a).
     /// </para>
     /// <para><strong>Typical Scenarios:</strong></para>
     /// <list type="bullet">
-    /// <item><description>Database with min/max ID bounds - rebalance tries to extend beyond available range</description></item>
+    /// <item><description>Database with min/max ID bounds - extension tries to expand beyond available range</description></item>
     /// <item><description>Time-series data with temporal limits - requesting future/past data not yet/no longer available</description></item>
     /// <item><description>Paginated API with maximum pages - attempting to fetch beyond last page</description></item>
     /// </list>
     /// <para>
-    /// Location: RebalanceExecutor.ExecuteAsync (after fetching extension chunks from DataSource)
+    /// Location: CacheDataExtensionService.UnionAll (when a fetched chunk has a null Range)
     /// </para>
     /// <para>
     /// Related: Invariant G.48 (IDataSource Boundary Semantics), Invariant A.9a (Cache Contiguity)

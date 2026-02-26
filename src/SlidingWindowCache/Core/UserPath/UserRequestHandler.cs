@@ -135,11 +135,13 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
         var isColdStart = !_state.LastRequested.HasValue;
 
         RangeData<TRange, TData, TDomain>? assembledData = null;
-        Range<TRange>? actualRange = null;
-        ReadOnlyMemory<TData> resultData;
+        var exceptionOccurred = false;
 
         try
         {
+            Range<TRange>? actualRange;
+            ReadOnlyMemory<TData> resultData;
+
             if (isColdStart)
             {
                 // Scenario 1: Cold Start
@@ -157,7 +159,6 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
                 else
                 {
                     // No data available for requested range
-                    // Use default RangeData (empty)
                     assembledData = null;
                     actualRange = null;
                     resultData = ReadOnlyMemory<TData>.Empty;
@@ -177,9 +178,10 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
 
                     _cacheDiagnostics.UserRequestFullCacheHit();
 
+                    actualRange = requestedRange; // Fully in cache, so actual = requested
+
                     // Return a requested range data using the cache storage's Read method, which may return a view or a copy depending on the strategy
                     resultData = cacheStorage.Read(requestedRange);
-                    actualRange = requestedRange; // Fully in cache, so actual = requested
                 }
                 else
                 {
@@ -213,7 +215,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
                         else
                         {
                             // No actual intersection after extension (defensive fallback)
-                            assembledData = default;
+                            assembledData = null;
                             resultData = ReadOnlyMemory<TData>.Empty;
                         }
                     }
@@ -224,7 +226,8 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
                         // Fetch ONLY the requested range from IDataSource
                         // NOTE: The logic is similar to cold start
                         _cacheDiagnostics.DataSourceFetchSingleRange();
-                        var fetchedChunk = await _dataSource.FetchAsync(requestedRange, cancellationToken).ConfigureAwait(false);
+                        var fetchedChunk = await _dataSource.FetchAsync(requestedRange, cancellationToken)
+                            .ConfigureAwait(false);
 
                         // Handle boundary: chunk.Range may be null or truncated
                         if (fetchedChunk.Range.HasValue)
@@ -236,8 +239,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
                         else
                         {
                             // No data available for requested range
-                            // Use default RangeData (empty)
-                            assembledData = default;
+                            assembledData = null;
                             actualRange = null;
                             resultData = ReadOnlyMemory<TData>.Empty;
                         }
@@ -246,38 +248,41 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
                     }
                 }
             }
+
+            // Return RangeResult with actual available range and data
+            return new RangeResult<TRange, TData>(actualRange, resultData);
+        }
+        catch
+        {
+            // In case of any exception during request handling, we want to ensure that we do not publish an intent with potentially inconsistent data. The exception will propagate to the caller, but we set a flag to prevent intent publication in the finally block.
+            exceptionOccurred = true;
+            throw;
         }
         finally
         {
-            // Always publish intent and increment counter, even for boundary misses.
-            // This ensures:
-            // 1. Consistent diagnostics - every user request is counted
-            // 2. Rebalance system is aware of access patterns (even failed attempts)
-            // 3. Intent represents "user requested this range" not "data was available"
-            // 
-            // Exception case: If assembledData is NULL due to exception during fetch,
-            // we skip publishing to avoid triggering redundant failing rebalances.
-            // In boundary miss case (actualRange = null), assembledData will be default(RangeData),
-            // which is still a valid (empty) RangeData structure we can publish.
-            var shouldPublishIntent = assembledData is not null || actualRange == null;
-            
-            if (shouldPublishIntent)
+            var shouldPublishIntent = assembledData is not null;
+
+            if (!exceptionOccurred)
             {
-                // For boundary misses (actualRange = null), assembledData is null, so use default(RangeData)
-                // which represents an empty but valid RangeData structure (struct default is never null)
-                var intentData = assembledData ?? default(RangeData<TRange, TData, TDomain>);
-                var intent = new Intent<TRange, TData, TDomain>(requestedRange, intentData!);
+                // Publish intent only when there was a physical data hit (assembledData is not null).
+                // Full vacuum (out-of-physical-bounds) requests produce no intent — there is no
+                // meaningful cache shift to signal to the rebalance pipeline.
+                // If an exception occurred, we skip both intent and served-counter to avoid recording
+                // incomplete or inconsistent state.
+                if (shouldPublishIntent)
+                {
+                    var intent = new Intent<TRange, TData, TDomain>(requestedRange, assembledData!);
 
-                // Publish rebalance intent with assembled data range (fire-and-forget)
-                // Rebalance Execution will use this as the authoritative source
-                _intentController.PublishIntent(intent);
+                    // Publish rebalance intent with assembled data range (fire-and-forget)
+                    // Rebalance Execution will use this as the authoritative source
+                    _intentController.PublishIntent(intent);
+                }
 
+                // UserRequestServed fires for ALL non-exception completions, including boundary misses
+                // where assembledData == null (full vacuum / out-of-physical-bounds).
                 _cacheDiagnostics.UserRequestServed();
             }
         }
-
-        // Return RangeResult with actual available range and data
-        return new RangeResult<TRange, TData>(actualRange, resultData);
     }
 
     /// <summary>

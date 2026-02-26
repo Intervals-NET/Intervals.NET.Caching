@@ -219,7 +219,7 @@ public class BoundedDatabaseSource : IDataSource<int, Record>
         if (fulfillable == null)
         {
             return new RangeChunk<int, Record>(
-                requested,  // Echo back requested range
+                null,  // Range must be null (not requested) to signal no data available
                 Array.Empty<Record>()  // Empty data
             );
         }
@@ -281,7 +281,7 @@ public class TimeSeriesSource : IDataSource<DateTime, Measurement>
         if (fulfillable == null)
         {
             return new RangeChunk<DateTime, Measurement>(
-                requested,
+                null,  // Range must be null (not requested) to signal no data available
                 Array.Empty<Measurement>()
             );
         }

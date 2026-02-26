@@ -167,6 +167,40 @@ public sealed class BoundaryHandlingTests : IAsyncDisposable
         Assert.Equal(9999, result.Data.Span[8999]);
     }
 
+    /// <summary>
+    /// When a request is completely outside the physical bounds of the data source,
+    /// the user path must:
+    ///   - Return RangeResult with null Range and empty Data (full vacuum)
+    ///   - Count the request as served (UserRequestServed == 1) — the request completed without exception
+    ///   - NOT publish a rebalance intent (RebalanceIntentPublished == 0) — no meaningful data hit to signal
+    /// 
+    /// This validates the boundary between "request completed" and "intent published":
+    /// UserRequestServed fires whenever !exceptionOccurred, even on full vacuum.
+    /// Intent is only published when assembledData is not null (physical data hit occurred).
+    /// </summary>
+    [Fact]
+    public async Task UserPath_PhysicalDataMiss_CountsAsServed_ButDoesNotPublishIntent()
+    {
+        // ARRANGE - Bounded data source has data only in [1000, 9999]
+        var cache = CreateCache();
+
+        // Request completely below physical bounds (full vacuum — no data whatsoever)
+        var requestBelowBounds = Intervals.NET.Factories.Range.Closed<int>(0, 999);
+
+        // ACT
+        var result = await cache.GetDataAsync(requestBelowBounds, CancellationToken.None);
+
+        // ASSERT - No data returned (full vacuum)
+        Assert.Null(result.Range);
+        Assert.True(result.Data.IsEmpty);
+
+        // ASSERT - Request was completed without exception → counts as served
+        Assert.Equal(1, _cacheDiagnostics.UserRequestServed);
+
+        // ASSERT - No physical data hit → no rebalance intent published
+        Assert.Equal(0, _cacheDiagnostics.RebalanceIntentPublished);
+    }
+
     #endregion
 
     #region Rebalance Path - Boundary Handling
