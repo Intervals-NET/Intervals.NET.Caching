@@ -58,7 +58,7 @@ The cache implements a **single-writer** concurrency model:
 
 Only `RebalanceExecutor` may write to `CacheState` fields:
 - Cache data and range (via `Cache.Rematerialize()` atomic swap)
-- `LastRequested` property (via `internal set` - restricted to rebalance execution)
+- `IsInitialized` property (via `internal set` - restricted to rebalance execution)
 - `NoRebalanceRange` property (via `internal set` - restricted to rebalance execution)
 
 All other components have read-only access to cache state (public getters only).

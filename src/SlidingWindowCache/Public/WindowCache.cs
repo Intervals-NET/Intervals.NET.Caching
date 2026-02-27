@@ -1,4 +1,4 @@
-using Intervals.NET;
+﻿using Intervals.NET;
 using Intervals.NET.Domain.Abstractions;
 using SlidingWindowCache.Core.Planning;
 using SlidingWindowCache.Core.Rebalance.Decision;
@@ -7,10 +7,10 @@ using SlidingWindowCache.Core.Rebalance.Intent;
 using SlidingWindowCache.Core.State;
 using SlidingWindowCache.Core.UserPath;
 using SlidingWindowCache.Infrastructure.Concurrency;
-using SlidingWindowCache.Infrastructure.Instrumentation;
 using SlidingWindowCache.Infrastructure.Storage;
 using SlidingWindowCache.Public.Configuration;
 using SlidingWindowCache.Public.Dto;
+using SlidingWindowCache.Public.Instrumentation;
 
 namespace SlidingWindowCache.Public;
 

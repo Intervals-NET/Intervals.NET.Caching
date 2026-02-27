@@ -1,7 +1,6 @@
 using Intervals.NET;
 using Intervals.NET.Domain.Abstractions;
 using SlidingWindowCache.Infrastructure.Storage;
-using SlidingWindowCache.Public;
 
 namespace SlidingWindowCache.Core.State;
 
@@ -38,13 +37,16 @@ internal sealed class CacheState<TRange, TData, TDomain>
     public ICacheStorage<TRange, TData, TDomain> Storage { get; }
 
     /// <summary>
-    /// The last requested range that triggered a cache access.
+    /// Indicates whether the cache has been populated at least once (i.e., a rebalance execution
+    /// has completed successfully at least once).
     /// </summary>
     /// <remarks>
     /// SINGLE-WRITER: Only Rebalance Execution Path may write to this field, via <see cref="UpdateCacheState"/>.
     /// User Path is read-only with respect to cache state.
+    /// <c>false</c> means the cache is in a cold/uninitialized state; <c>true</c> means it has
+    /// been populated at least once and the User Path may read from the storage.
     /// </remarks>
-    public Range<TRange>? LastRequested { get; private set; }
+    public bool IsInitialized { get; private set; }
 
     /// <summary>
     /// The range within which no rebalancing should occur.
@@ -77,7 +79,7 @@ internal sealed class CacheState<TRange, TData, TDomain>
     /// This is the ONLY method that may write to the mutable fields on this class.
     /// </summary>
     /// <param name="normalizedData">The normalized range data to write into storage.</param>
-    /// <param name="requestedRange">The original range requested by the user, stored as <see cref="LastRequested"/>.</param>
+    /// <param name="requestedRange">The original range requested by the user; used to populate the storage and mark the cache as initialized.</param>
     /// <param name="noRebalanceRange">The pre-computed no-rebalance range for the new state.</param>
     /// <remarks>
     /// <para><strong>Single-Writer Contract:</strong></para>
@@ -93,7 +95,7 @@ internal sealed class CacheState<TRange, TData, TDomain>
         Range<TRange>? noRebalanceRange)
     {
         Storage.Rematerialize(normalizedData);
-        LastRequested = requestedRange;
+        IsInitialized = true;
         NoRebalanceRange = noRebalanceRange;
     }
 }

@@ -24,7 +24,10 @@ internal sealed class SnapshotReadStorage<TRange, TData, TDomain> : ICacheStorag
     where TDomain : IRangeDomain<TRange>
 {
     private readonly TDomain _domain;
-    private TData[] _storage = [];
+    // volatile: Rematerialize() (rebalance thread) and Read() (user thread) access this field
+    // concurrently without a lock. volatile provides the acquire/release fence needed to ensure
+    // the user thread always observes the latest array reference published by the rebalance thread.
+    private volatile TData[] _storage = [];
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SnapshotReadStorage{TRange,TData,TDomain}"/> class.

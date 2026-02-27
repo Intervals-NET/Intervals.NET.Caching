@@ -1,10 +1,10 @@
 using Intervals.NET.Domain.Default.Numeric;
 using Intervals.NET.Domain.Extensions.Fixed;
 using Intervals.NET.Extensions;
-using SlidingWindowCache.Infrastructure.Instrumentation;
 using SlidingWindowCache.Tests.Infrastructure.Helpers;
 using SlidingWindowCache.Public;
 using SlidingWindowCache.Public.Configuration;
+using SlidingWindowCache.Public.Instrumentation;
 
 namespace SlidingWindowCache.Invariants.Tests;
 

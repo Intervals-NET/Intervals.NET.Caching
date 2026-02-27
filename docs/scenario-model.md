@@ -22,8 +22,8 @@ The following terms are used consistently across all scenarios:
 - **RequestedRange**  
   A range requested by the user.
 
-- **LastRequestedRange**  
-  The most recent range served by the User Path.
+- **IsInitialized**  
+  Whether the cache has been initialized (i.e., Rebalance Execution has written to the cache at least once).
 
 - **CurrentCacheRange**  
   The range of data currently stored in the cache.
@@ -72,7 +72,7 @@ The User Path is responsible only for:
 
 ### Preconditions
 
-- `LastRequestedRange == null`
+- `IsInitialized == false`
 - `CurrentCacheRange == null`
 - `CacheData == null`
 
@@ -85,49 +85,47 @@ The User Path is responsible only for:
 4. A rebalance intent is published (fire-and-forget) with the fetched data
 5. Data is immediately returned to the user
 6. Rebalance execution (background) stores the data as CacheData,  
-   sets CurrentCacheRange to RequestedRange, and sets LastRequestedRange to RequestedRange
+   sets CurrentCacheRange to RequestedRange, and sets IsInitialized to true
 
 **Note:**  
 The User Path does not expand the cache beyond RequestedRange.
 
 ---
 
-## User Scenario U2 — Full Cache Hit (Exact Match with LastRequestedRange)
+## User Scenario U2 — Full Cache Hit (Within NoRebalanceRange)
 
 ### Preconditions
 
-- Cache is initialized
-- `RequestedRange == LastRequestedRange`
+- `IsInitialized == true`
 - `CurrentCacheRange.Contains(RequestedRange) == true`
+- `NoRebalanceRange.Contains(RequestedRange) == true`
 
 ### Action Sequence
 
 1. User requests RequestedRange
 2. Cache detects a full cache hit
 3. Data is read from CacheData
-4. LastRequestedRange is updated
-5. Rebalance is triggered asynchronously  
-   (because `NoRebalanceRange.Contains(RequestedRange)` may be false)
-6. Data is returned to the user
+4. Rebalance intent is published but Decision Engine skips execution  
+   (because `NoRebalanceRange.Contains(RequestedRange) == true`)
+5. Data is returned to the user
 
 ---
 
-## User Scenario U3 — Full Cache Hit (Shifted Range)
+## User Scenario U3 — Full Cache Hit (Outside NoRebalanceRange)
 
 ### Preconditions
 
-- Cache is initialized
-- `RequestedRange != LastRequestedRange`
+- `IsInitialized == true`
 - `CurrentCacheRange.Contains(RequestedRange) == true`
+- `NoRebalanceRange.Contains(RequestedRange) == false`
 
 ### Action Sequence
 
 1. User requests RequestedRange
 2. Cache detects that all requested data is available
 3. Subrange is read from CacheData
-4. LastRequestedRange is updated
-5. Rebalance is triggered asynchronously
-6. Data is returned to the user
+4. Rebalance is triggered asynchronously
+5. Data is returned to the user
 
 ---
 
@@ -135,7 +133,7 @@ The User Path does not expand the cache beyond RequestedRange.
 
 ### Preconditions
 
-- Cache is initialized
+- `IsInitialized == true`
 - `CurrentCacheRange.Intersects(RequestedRange) == true`
 - `CurrentCacheRange.Contains(RequestedRange) == false`
 
@@ -148,9 +146,8 @@ The User Path does not expand the cache beyond RequestedRange.
     - merges cached and newly fetched data (cache expansion)
     - does **not** trim excess data
     - updates CurrentCacheRange to cover both old and new data
-5. LastRequestedRange is updated
-6. Rebalance is triggered asynchronously
-7. RequestedRange data is returned to the user
+5. Rebalance is triggered asynchronously
+6. RequestedRange data is returned to the user
 
 **Note:**  
 Cache expansion is permitted here because RequestedRange intersects CurrentCacheRange,
@@ -162,7 +159,7 @@ preserving cache contiguity. Excess data may temporarily remain in CacheData for
 
 ### Preconditions
 
-- Cache is initialized
+- `IsInitialized == true`
 - `CurrentCacheRange.Intersects(RequestedRange) == false`
 
 ### Action Sequence
@@ -174,9 +171,8 @@ preserving cache contiguity. Excess data may temporarily remain in CacheData for
 5. Cache:
     - **fully replaces** CacheData with new data
     - **fully replaces** CurrentCacheRange with RequestedRange
-6. LastRequestedRange is updated
-7. Rebalance is triggered asynchronously
-8. Data is returned to the user
+6. Rebalance is triggered asynchronously
+7. Data is returned to the user
 
 **Critical Note:**  
 Partial cache expansion is FORBIDDEN in this case, as it would create logical gaps

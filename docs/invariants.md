@@ -261,7 +261,7 @@ without polling or timing dependencies.
 **Formal Specification:**
 - User Path has read-only access to cache state
 - No write operations permitted in User Path
-- Cache, LastRequested, and NoRebalanceRange are immutable from User Path perspective
+- Cache, IsInitialized, and NoRebalanceRange are immutable from User Path perspective
 
 **Rationale:** Enforces single-writer architecture, eliminating write-write races and simplifying concurrency reasoning.
 
@@ -272,7 +272,7 @@ without polling or timing dependencies.
 **Formal Specification:**
 - User Path is strictly read-only with respect to cache state
 - User Path never triggers cache rematerialization
-- User Path never updates LastRequested or NoRebalanceRange
+- User Path never updates IsInitialized or NoRebalanceRange
 - All cache mutations exclusively performed by Rebalance Execution (single-writer)
 
 **Rationale:** Enforces single-writer architecture at the strictest level, preventing any mutation-related bugs in User Path.
@@ -644,7 +644,7 @@ leftThreshold.HasValue && rightThreshold.HasValue
 
 **Formal Specification:**
 - Only one component has write permission to cache state
-- Exclusive mutation authority: Cache, LastRequested, NoRebalanceRange
+- Exclusive mutation authority: Cache, IsInitialized, NoRebalanceRange
 - All other components are read-only
 
 **Rationale:** Single-writer architecture eliminates all write-write races and simplifies concurrency reasoning.
@@ -656,7 +656,7 @@ leftThreshold.HasValue && rightThreshold.HasValue
    - **Expanding to DesiredCacheRange** by fetching only truly missing ranges
    - **Trimming excess data** outside `DesiredCacheRange`
    - **Writing to cache** via `Cache.Rematerialize()`
-   - **Writing to LastRequested** with original requested range
+   - **Writing to IsInitialized** = true after successful rebalance
    - **Recomputing NoRebalanceRange** based on final cache range
 - *Observable via*: After rebalance, cache serves data from expanded range
 - *Test verifies*: Cache covers larger area after rebalance completes

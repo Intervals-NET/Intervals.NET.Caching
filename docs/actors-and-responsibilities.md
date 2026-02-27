@@ -51,7 +51,7 @@ The UserRequestHandler NEVER invokes directly decision logic - it just publishes
 - ❌ **NEVER computes DesiredCacheRange** (belongs to GeometryPolicy)
 - ❌ **NEVER decides whether to rebalance** (belongs to DecisionEngine)
 - ❌ **NEVER writes to cache** (no Rematerialize calls)
-- ❌ **NEVER writes to LastRequested**
+- ❌ **NEVER writes to IsInitialized**
 - ❌ **NEVER writes to NoRebalanceRange**
 
 **Responsibility Type:** ensures and enforces fast, correct user access with strict read-only boundaries
@@ -220,7 +220,7 @@ The **ONLY component** that mutates cache state (single-writer architecture). Pe
 **Single-Writer Guarantee:**
 Rebalance Executor is the ONLY component that mutates:
 - Cache data and range (via `Cache.Rematerialize()`)
-- `LastRequested` field
+- `IsInitialized` field
 - `NoRebalanceRange` field
 
 This eliminates race conditions and ensures consistent cache state.
@@ -244,7 +244,7 @@ Executor is **mechanically simple** with no analytical logic:
   - Expanding to DesiredCacheRange by fetching only truly missing ranges
   - Trimming excess data outside DesiredCacheRange
   - Writing to Cache.Rematerialize()
-  - Writing to LastRequested
+  - Writing to IsInitialized (= true)
   - Recomputing NoRebalanceRange
 - 36. May replace / expand / shrink cache to achieve normalization
 - 37. Requests data only for missing subranges (not covered by delivered data)
@@ -292,9 +292,9 @@ This table maps **actors** to the scenarios they participate in and clarifies **
 
 | Scenario                                | User Path                                                                                                               | Decision Engine                                  | Geometry Policy            | IntentController                         | Rebalance Executor                                                                     | Cache State Manager                                    | Notes                                      |
 |-----------------------------------------|-------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------|----------------------------|------------------------------------------|----------------------------------------------------------------------------------------|--------------------------------------------------------|--------------------------------------------|
-| **U1 – Cold Cache**                     | Requests data from IDataSource, returns data to user, publishes rebalance intent                                        | –                                                | Computes DesiredCacheRange | Receives intent                          | Executes rebalance asynchronously (writes LastRequested, CurrentCacheRange, CacheData) | Validates atomic update of CacheData/CurrentCacheRange | User served directly                       |
+| **U1 – Cold Cache**                     | Requests data from IDataSource, returns data to user, publishes rebalance intent                                        | –                                                | Computes DesiredCacheRange | Receives intent                          | Executes rebalance asynchronously (writes IsInitialized, CurrentCacheRange, CacheData) | Validates atomic update of CacheData/CurrentCacheRange | User served directly                       |
 | **U2 – Full Cache Hit (Exact)**         | Reads from cache, publishes rebalance intent                                                                            | Checks NoRebalanceRange                          | Computes DesiredCacheRange | Receives intent                          | Executes if rebalance required                                                         | Monitors consistency                                   | Minimal I/O                                |
-| **U3 – Full Cache Hit (Shifted)**       | Reads subrange from cache, publishes rebalance intent                                                                   | Checks NoRebalanceRange                          | Computes DesiredCacheRange | Receives intent                          | Executes if rebalance required                                                         | Monitors consistency                                   | Cache hit but different LastRequestedRange |
+| **U3 – Full Cache Hit (Shifted)**       | Reads subrange from cache, publishes rebalance intent                                                                   | Checks NoRebalanceRange                          | Computes DesiredCacheRange | Receives intent                          | Executes if rebalance required                                                         | Monitors consistency                                   | Cache hit but shifted range |
 | **U4 – Partial Cache Hit**              | Reads intersection, requests missing from IDataSource, merges locally, returns data to user, publishes rebalance intent | Checks NoRebalanceRange                          | Computes DesiredCacheRange | Receives intent                          | Executes merge and normalization                                                       | Ensures atomic merge & consistency                     | Temporary excess data allowed              |
 | **U5 – Full Cache Miss (Jump)**         | Requests full range from IDataSource, returns data to user, publishes rebalance intent                                  | Checks NoRebalanceRange                          | Computes DesiredCacheRange | Receives intent                          | Executes full normalization                                                            | Ensures atomic replacement                             | No cached data usable                      |
 | **D1 – NoRebalanceRange Block**         | –                                                                                                                       | Checks NoRebalanceRange, decides no execution    | –                          | Receives intent (blocked)                | –                                                                                      | –                                                      | Fast path skip                             |

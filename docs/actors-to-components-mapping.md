@@ -177,7 +177,7 @@ It delegates all behavioral logic to internal actors.
     - from IDataSource
     - or mixed
 - Updates:
-    - LastRequestedRange
+    - IsInitialized (set to true after first rebalance execution)
     - CacheData / CurrentCacheRange **only to cover RequestedRange**
 - Triggers rebalance intent
 - Never blocks on rebalance

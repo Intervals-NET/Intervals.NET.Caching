@@ -1,4 +1,4 @@
-﻿namespace SlidingWindowCache.Infrastructure.Instrumentation;
+﻿namespace SlidingWindowCache.Public.Instrumentation;
 
 /// <summary>
 /// Instance-based diagnostics interface for tracking cache behavioral events in DEBUG mode.

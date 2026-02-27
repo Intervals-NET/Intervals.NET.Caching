@@ -3,9 +3,9 @@ using Intervals.NET.Data;
 using Intervals.NET.Data.Extensions;
 using Intervals.NET.Domain.Abstractions;
 using Intervals.NET.Extensions;
-using SlidingWindowCache.Infrastructure.Instrumentation;
 using SlidingWindowCache.Public;
 using SlidingWindowCache.Public.Dto;
+using SlidingWindowCache.Public.Instrumentation;
 
 namespace SlidingWindowCache.Core.Rebalance.Execution;
 

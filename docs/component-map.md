@@ -772,14 +772,14 @@ internal sealed class CopyOnReadStorage<TRange, TData, TDomain> : ICacheStorage<
 
 ---
 
-### 3. Diagnostics Infrastructure
+### 3. Diagnostics (Public)
 
 #### 🟧 ICacheDiagnostics
 ```csharp
 public interface ICacheDiagnostics
 ```
 
-**File**: `src/SlidingWindowCache/Infrastructure/Instrumentation/ICacheDiagnostics.cs`
+**File**: `src/SlidingWindowCache/Public/Instrumentation/ICacheDiagnostics.cs`
 
 **Type**: Interface (public)
 
@@ -836,7 +836,7 @@ public interface ICacheDiagnostics
 public class EventCounterCacheDiagnostics : ICacheDiagnostics
 ```
 
-**File**: `src/SlidingWindowCache/Infrastructure/Instrumentation/EventCounterCacheDiagnostics.cs`
+**File**: `src/SlidingWindowCache/Public/Instrumentation/EventCounterCacheDiagnostics.cs`
 
 **Type**: Class (public, thread-safe)
 
@@ -883,7 +883,7 @@ public class EventCounterCacheDiagnostics : ICacheDiagnostics
 public class NoOpDiagnostics : ICacheDiagnostics
 ```
 
-**File**: `src/SlidingWindowCache/Infrastructure/Instrumentation/NoOpDiagnostics.cs`
+**File**: `src/SlidingWindowCache/Public/Instrumentation/NoOpDiagnostics.cs`
 
 **Type**: Class (public, singleton-compatible)
 
@@ -925,7 +925,7 @@ internal sealed class CacheState<TRange, TData, TDomain>
 
 **State Components**:
 - Cache storage instance (ICacheStorage implementation)
-- Last requested range (tracks user's most recent request)
+- IsInitialized flag (tracks whether cache has been initialized)
 - No-rebalance range (stable region where rebalancing is suppressed)
 - Domain instance (for range calculations)
 
@@ -935,11 +935,11 @@ internal sealed class CacheState<TRange, TData, TDomain>
 
 **Shared with** (read/write):
 - **UserRequestHandler** ⊳ (READ-ONLY)
-  - Reads: `Cache.Range`, `Cache.Read()`, `Cache.ToRangeData()`, `LastRequested`
+  - Reads: `Cache.Range`, `Cache.Read()`, `Cache.ToRangeData()`, `IsInitialized`
   - ❌ Does NOT write to CacheState
 - **RebalanceExecutor** ⊲⊳ (SOLE WRITER)
   - Reads: `Cache.Range`, `Cache.ToRangeData()`
-  - Writes: `Cache.Rematerialize()`, `NoRebalanceRange`, `LastRequested`
+  - Writes: `Cache.Rematerialize()`, `NoRebalanceRange`, `IsInitialized`
 - **RebalanceDecisionEngine** ⊳ (via IntentController.ProcessIntentsAsync)
   - Reads: `NoRebalanceRange`, `Cache.Range`
 
@@ -983,14 +983,14 @@ public async ValueTask<ReadOnlyMemory<TData>> HandleRequestAsync(
 ```
 
 **Operation Flow**:
-1. **Check cold start** - `_state.LastRequested.HasValue`
+1. **Check cold start** - `!_state.IsInitialized`
 2. **Serve from cache or data source** - varies by scenario (cold start / full hit / partial hit / full miss)
 3. **Publish rebalance intent** - `_intentController.PublishIntent(intent)` with assembled data (fire-and-forget)
 4. **Return data** - return assembled `ReadOnlyMemory<TData>`
 
 **Reads from**:
 - ⊳ `_state.Cache` (Range, Read, ToRangeData)
-- ⊳ `_state.LastRequested` (cold-start detection)
+- ⊳ `_state.IsInitialized` (cold-start detection)
 - ⊳ `_state.Domain`
 
 **Writes to**:
@@ -1004,7 +1004,7 @@ public async ValueTask<ReadOnlyMemory<TData>> HandleRequestAsync(
 **Characteristics**:
 - ✅ Executes in **User Thread**
 - ✅ Always serves user requests (never waits for rebalance)
-- ✅ **READ-ONLY with respect to CacheState** (never writes Cache, LastRequested, or NoRebalanceRange)
+- ✅ **READ-ONLY with respect to CacheState** (never writes Cache, IsInitialized, or NoRebalanceRange)
 - ✅ Always triggers rebalance intent after serving
 - ❌ **Never** trims or normalizes cache
 - ❌ **Never** invokes decision logic
@@ -1376,7 +1376,7 @@ internal sealed class RebalanceExecutor<TRange, TData, TDomain>
 
 **Writes to**:
 - ⊲ `_state.Cache` (via Rematerialize - normalizes to DesiredCacheRange)
-- ⊲ `_state.LastRequested`
+- ⊲ `_state.IsInitialized`
 - ⊲ `_state.NoRebalanceRange`
 
 **Uses**:
@@ -1725,7 +1725,7 @@ Creates and wires all internal components in dependency order:
 │                                                     │   │   │   │   │
 │  ❌ NEVER writes to CacheState                      │   │   │   │   │
 │  ❌ NEVER calls Cache.Rematerialize()               │   │   │   │   │
-│  ❌ NEVER writes LastRequested or NoRebalanceRange  │   │   │   │   │
+│  ❌ NEVER writes IsInitialized or NoRebalanceRange  │   │   │   │   │
 └─────────────────────────────────────────────────────┼───┼───┼───┼───┘
                                                       │   │   │   │
         ══════════════════════════════════════════════╪═══╪═══╪═══╪═══
@@ -1807,7 +1807,7 @@ Creates and wires all internal components in dependency order:
 │   8. UpdateCacheState(rebalanced, requestedRange, desiredNRR)      │ │
 │      └─ _state.Cache.Rematerialize(rebalanced) ────────────────┐   │ │
 │      └─ _state.NoRebalanceRange = desiredNRR ──────────────────┼───┤ │
-│      └─ _state.LastRequested = requestedRange ─────────────────┼───┤ │
+│      └─ _state.IsInitialized = true ───────────────────┼───┤ │
 │   finally: _executionSemaphore.Release()                        │   │ │
 └─────────────────────────────────────────────────────────────────┼───┼─┘
                                                                   │   │
@@ -1817,12 +1817,12 @@ Creates and wires all internal components in dependency order:
 │                                                                      │  │
 │  Properties:                                                         │  │
 │   ├─ ICacheStorage Cache ◄─ RebalanceExecutor (SOLE WRITER) ─────────┤  │
-│   ├─ Range? LastRequested ◄─ RebalanceExecutor                      │  │
+│   ├─ bool IsInitialized ◄─ RebalanceExecutor                      │  │
 │   ├─ Range? NoRebalanceRange ◄─ RebalanceExecutor                   │  │
 │   └─ TDomain Domain (readonly)                                       │  │
 │                                                                      │  │
 │  Read by:                                                            │  │
-│   ├─ UserRequestHandler (Cache.Range, Cache.Read, Cache.ToRangeData, LastRequested)
+│   ├─ UserRequestHandler (Cache.Range, Cache.Read, Cache.ToRangeData, IsInitialized)
 │   ├─ RebalanceExecutor (Cache.Range, Cache.ToRangeData)              │  │
 │   └─ RebalanceDecisionEngine (NoRebalanceRange, Cache.Range)         │  │
 └──────────────────────────────────────────────────────────────────────┼──┘
@@ -1897,8 +1897,8 @@ Creates and wires all internal components in dependency order:
   - **Purpose**: Normalize cache to DesiredCacheRange using delivered data from intent
   - **When**: Rebalance execution completes (background)
   - **Scope**: Expands, trims, or replaces cache as needed
-- ✏️ Writes `LastRequested` property
-  - **Purpose**: Record the range that triggered this rebalance
+- ✏️ Writes `IsInitialized` property
+  - **Purpose**: Mark cache as initialized after first successful rebalance
   - **When**: After successful rebalance execution
 - ✏️ Writes `NoRebalanceRange` property
   - **Purpose**: Update threshold zone after normalization
@@ -1907,7 +1907,7 @@ Creates and wires all internal components in dependency order:
 **UserRequestHandler** (READ-ONLY):
 - ❌ Does NOT write to CacheState
 - ❌ Does NOT call `Cache.Rematerialize()`
-- ❌ Does NOT write to `LastRequested` or `NoRebalanceRange`
+- ❌ Does NOT write to `IsInitialized` or `NoRebalanceRange`
 - ✅ Only reads from cache and IDataSource
 - ✅ Publishes intent with delivered data for Rebalance Execution to process
 
@@ -2118,7 +2118,7 @@ The Sliding Window Cache follows a **single consumer model** as documented in `d
 │                                  │   │ CACHE MUTATION           │       │
 │                                  │   │ (SINGLE WRITER)          │       │
 │                                  │   │ • Cache.Rematerialize()  │       │
-│                                  │   │ • LastRequested = ...    │       │
+│                                  │   │ • IsInitialized = true   │       │
 │                                  │   │ • NoRebalanceRange = ... │       │
 │                                  │   └──────────────────────────┘       │
 └─────────────────────────────────────────────────────────────────────────┘

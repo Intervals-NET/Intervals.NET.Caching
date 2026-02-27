@@ -1,4 +1,4 @@
-﻿namespace SlidingWindowCache.Infrastructure.Instrumentation;
+﻿namespace SlidingWindowCache.Public.Instrumentation;
 
 /// <summary>
 /// No-op implementation of ICacheDiagnostics for production use where performance is critical and diagnostics are not needed.

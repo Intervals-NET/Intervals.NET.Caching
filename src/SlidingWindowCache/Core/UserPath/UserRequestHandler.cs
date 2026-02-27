@@ -6,9 +6,9 @@ using Intervals.NET.Extensions;
 using SlidingWindowCache.Core.Rebalance.Execution;
 using SlidingWindowCache.Core.Rebalance.Intent;
 using SlidingWindowCache.Core.State;
-using SlidingWindowCache.Infrastructure.Instrumentation;
 using SlidingWindowCache.Public;
 using SlidingWindowCache.Public.Dto;
+using SlidingWindowCache.Public.Instrumentation;
 
 namespace SlidingWindowCache.Core.UserPath;
 
@@ -109,7 +109,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     /// <item><description>✅ May READ from cache</description></item>
     /// <item><description>✅ May READ from IDataSource</description></item>
     /// <item><description>❌ NEVER writes to Cache (no Rematerialize calls)</description></item>
-    /// <item><description>❌ NEVER writes to LastRequested</description></item>
+        /// <item><description>❌ NEVER writes to IsInitialized</description></item>
     /// <item><description>❌ NEVER writes to NoRebalanceRange</description></item>
     /// </list>
     /// </para>
@@ -134,7 +134,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
 
         // Check if cache is cold (never used) - use ToRangeData to detect empty cache
         var cacheStorage = _state.Storage;
-        var isColdStart = !_state.LastRequested.HasValue;
+        var isColdStart = !_state.IsInitialized;
 
         RangeData<TRange, TData, TDomain>? assembledData = null;
         var exceptionOccurred = false;
@@ -309,15 +309,15 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
             .ConfigureAwait(false);
 
         // Handle boundary: chunk.Range may be null or truncated
-        if (fetchedChunk.Range.HasValue)
+        if (!fetchedChunk.Range.HasValue)
         {
-            var assembledData = fetchedChunk.Data.ToRangeData(fetchedChunk.Range.Value, _state.Domain);
-            var actualRange = fetchedChunk.Range.Value;
-            var resultData = new ReadOnlyMemory<TData>(assembledData.Data.ToArray());
-            return (assembledData, actualRange, resultData);
+            // No data available for requested range (physical boundary miss)
+            return (null, null, ReadOnlyMemory<TData>.Empty);
         }
 
-        // No data available for requested range (physical boundary miss)
-        return (null, null, ReadOnlyMemory<TData>.Empty);
+        var assembledData = fetchedChunk.Data.ToRangeData(fetchedChunk.Range.Value, _state.Domain);
+        var actualRange = fetchedChunk.Range.Value;
+        var resultData = new ReadOnlyMemory<TData>(assembledData.Data.ToArray());
+        return (assembledData, actualRange, resultData);
     }
 }

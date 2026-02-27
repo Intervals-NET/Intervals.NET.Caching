@@ -828,7 +828,7 @@ For production systems, consider:
 ### Using Diagnostics
 
 ```csharp
-using SlidingWindowCache.Infrastructure.Instrumentation;
+using SlidingWindowCache.Public.Instrumentation;
 
 // Create diagnostics instance
 var diagnostics = new EventCounterCacheDiagnostics();

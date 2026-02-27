@@ -85,10 +85,14 @@ internal sealed class CopyOnReadStorage<TRange, TData, TDomain> : ICacheStorage<
     private readonly object _lock = new();
 
     // Active storage: serves data to Read() operations; never mutated while _lock is held by Read()
+    // volatile is NOT needed: both Read() and the swap in Rematerialize() access this field
+    // exclusively under _lock, which provides full acquire/release fence semantics.
     private List<TData> _activeStorage = [];
 
     // Staging buffer: write-only during Rematerialize(); reused across operations
     // This buffer may grow but never shrinks, amortizing allocation cost
+    // volatile is NOT needed: _stagingBuffer is only accessed by the rebalance thread outside the lock,
+    // and inside _lock during the swap — it never crosses thread boundaries directly.
     private List<TData> _stagingBuffer = [];
 
     /// <summary>

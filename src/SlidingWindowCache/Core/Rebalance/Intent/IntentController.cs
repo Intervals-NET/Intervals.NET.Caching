@@ -4,7 +4,7 @@ using SlidingWindowCache.Core.Rebalance.Decision;
 using SlidingWindowCache.Core.Rebalance.Execution;
 using SlidingWindowCache.Core.State;
 using SlidingWindowCache.Infrastructure.Concurrency;
-using SlidingWindowCache.Infrastructure.Instrumentation;
+using SlidingWindowCache.Public.Instrumentation;
 
 namespace SlidingWindowCache.Core.Rebalance.Intent;
 

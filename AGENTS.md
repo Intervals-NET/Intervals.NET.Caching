@@ -132,7 +132,7 @@ using Intervals.NET;
 using Intervals.NET.Domain.Abstractions;
 using SlidingWindowCache.Core.Planning;
 using SlidingWindowCache.Core.State;
-using SlidingWindowCache.Infrastructure.Instrumentation;
+using SlidingWindowCache.Public.Instrumentation;
 ```
 
 ### XML Documentation
@@ -207,7 +207,7 @@ catch (Exception ex)
 ### Concurrency Patterns
 
 **Single-Writer Architecture (CRITICAL):**
-- User Path: READ-ONLY (never mutates Cache, LastRequested, or NoRebalanceRange)
+- User Path: READ-ONLY (never mutates Cache, IsInitialized, or NoRebalanceRange)
 - Rebalance Execution: SINGLE WRITER (sole authority for cache mutations)
 - Serialization: Channel-based with single reader/single writer (intent processing loop)
 
@@ -342,6 +342,7 @@ refactor: AsyncActivityCounter lock has been removed and replaced with lock-free
 - `src/SlidingWindowCache/Public/WindowCache.cs` - Main cache facade
 - `src/SlidingWindowCache/Public/IDataSource.cs` - Data source contract
 - `src/SlidingWindowCache/Public/Configuration/` - Configuration classes
+- `src/SlidingWindowCache/Public/Instrumentation/` - Diagnostics
 
 **Core Logic:**
 - `src/SlidingWindowCache/Core/UserPath/` - User request handling (read-only)
@@ -351,7 +352,6 @@ refactor: AsyncActivityCounter lock has been removed and replaced with lock-free
 
 **Infrastructure:**
 - `src/SlidingWindowCache/Infrastructure/Storage/` - Storage strategies
-- `src/SlidingWindowCache/Infrastructure/Instrumentation/` - Diagnostics
 - `src/SlidingWindowCache/Infrastructure/Concurrency/` - Async coordination
 
 ## CI/CD

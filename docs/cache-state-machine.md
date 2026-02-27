@@ -18,7 +18,7 @@ The cache exists in one of three states:
 - **Characteristics:**
   - `CurrentCacheRange == null`
   - `CacheData == null`
-  - `LastRequestedRange == null`
+  - `IsInitialized == false`
   - `NoRebalanceRange == null`
 
 ### 2. **Initialized**
@@ -88,7 +88,7 @@ The cache exists in one of three states:
 - **Mutation:** Performed by Rebalance Execution ONLY (single-writer)
   - Set `CacheData` = delivered data from intent
   - Set `CurrentCacheRange` = delivered range
-  - Set `LastRequestedRange` = `RequestedRange`
+  - Set `IsInitialized` = true
 - **Atomicity:** Changes applied atomically (Invariant 12)
 - **Postcondition:** Cache enters `Initialized` state after rebalance execution completes
 - **Note:** User Path is read-only; initial cache population is performed by Rebalance Execution
@@ -105,7 +105,7 @@ The cache exists in one of three states:
   6. **Work avoidance:** If validation rejects (NoRebalanceRange containment, pending coverage, Desired==Current), no cancellation occurs and execution skipped entirely
   7. Rebalance Execution writes to cache (background, only if validated as necessary)
 - **Mutation:** Performed by Rebalance Execution ONLY (single-writer architecture)
-  - User Path does NOT mutate cache, LastRequested, or NoRebalanceRange (read-only)
+  - User Path does NOT mutate cache, IsInitialized, or NoRebalanceRange (read-only)
   - Rebalance Execution normalizes cache to DesiredCacheRange (only if validated)
 - **Concurrency:** User Path is read-only; no race conditions
 - **Cancellation Model:** Mechanical coordination tool (prevents concurrent executions), NOT decision mechanism; validation determines necessity
@@ -120,7 +120,7 @@ The cache exists in one of three states:
   - Merge delivered data with fetched data
   - Trim to `DesiredCacheRange` (normalization)
   - Set `CacheData` and `CurrentCacheRange` via `Rematerialize()`
-  - Set `LastRequestedRange` = original requested range from intent
+  - Set `IsInitialized` = true
   - Recompute `NoRebalanceRange`
 - **Atomicity:** Changes applied atomically (Invariant 12)
 - **Postcondition:** Cache returns to stable `Initialized` state
@@ -149,14 +149,14 @@ The cache exists in one of three states:
 |---------------|---------------------|----------------------------------------------------------------------------------------------------------------------|
 | Uninitialized | ❌ None              | ✅ Initial cache write (after first user request)                                                                     |
 | Initialized   | ❌ None              | ❌ Not active                                                                                                         |
-| Rebalancing   | ❌ None              | ✅ All cache mutations (expand, trim, write to cache/LastRequested/NoRebalanceRange)<br>⚠️ MUST yield on cancellation |
+| Rebalancing   | ❌ None              | ✅ All cache mutations (expand, trim, write to cache/IsInitialized/NoRebalanceRange)<br>⚠️ MUST yield on cancellation |
 
 ### Mutation Rules Summary
 
 **User Path mutations (Invariant 8 - NEW):**
 - ❌ **NONE** - User Path is read-only with respect to cache state
 - User Path NEVER calls `Cache.Rematerialize()`
-- User Path NEVER writes to `LastRequested`
+- User Path NEVER writes to `IsInitialized`
 - User Path NEVER writes to `NoRebalanceRange`
 
 **Rebalance Execution mutations (Invariant 36, 36a):**
@@ -164,7 +164,7 @@ The cache exists in one of three states:
 2. Expanding to `DesiredCacheRange` (fetch only truly missing ranges)
 3. Trimming excess data outside `DesiredCacheRange`
 4. Writing to `Cache.Rematerialize()` (cache data and range)
-5. Writing to `LastRequested`
+5. Writing to `IsInitialized` (= true)
 6. Recomputing and writing to `NoRebalanceRange`
 
 **Single-Writer Architecture (Invariant -1):**
@@ -237,7 +237,7 @@ User requests [100, 200]
 → User Path returns data to user immediately
 → User Path publishes intent with delivered data
 → Rebalance Execution writes to cache (first cache write)
-→ Sets CacheData, CurrentCacheRange, LastRequested
+→ Sets CacheData, CurrentCacheRange, IsInitialized
 → Triggers rebalance (fire-and-forget)
 State: Initialized
 ```
@@ -285,7 +285,7 @@ State: Rebalancing (R2 executing - will eventually replace cache)
 This state machine enforces three critical architectural constraints:
 
 1. **Single-Writer Architecture:** Only Rebalance Execution mutates cache state (Invariant 36)
-2. **User Path Read-Only:** User Path never mutates cache, LastRequested, or NoRebalanceRange (Invariant 8)
+2. **User Path Read-Only:** User Path never mutates cache, IsInitialized, or NoRebalanceRange (Invariant 8)
 3. **User Priority via Cancellation:** User requests cancel rebalance to prevent interference, not for mutation exclusion (Invariants 0, 0a)
 
 The state machine guarantees:

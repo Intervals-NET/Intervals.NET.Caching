@@ -1,6 +1,6 @@
 ﻿using System.Diagnostics;
 
-namespace SlidingWindowCache.Infrastructure.Instrumentation;
+namespace SlidingWindowCache.Public.Instrumentation;
 
 /// <summary>
 /// Default implementation of <see cref="ICacheDiagnostics"/> that uses thread-safe counters to track cache events and metrics.

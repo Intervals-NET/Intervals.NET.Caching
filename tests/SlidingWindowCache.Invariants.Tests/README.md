@@ -68,8 +68,8 @@ Converted tests:
 
 ## Implementation Details
 
-### 1. Instrumentation Infrastructure
-- **Location**: `src/SlidingWindowCache/Infrastructure/Instrumentation/`
+### 1. Instrumentation (Public)
+- **Location**: `src/SlidingWindowCache/Public/Instrumentation/`
 - **Files**:
   - `ICacheDiagnostics.cs` - Public interface for cache event tracking
   - `EventCounterCacheDiagnostics.cs` - Thread-safe counter implementation
@@ -199,7 +199,7 @@ not actual cache mutations. Actual mutations only occur in Rebalance Execution v
 
 **UserRequestHandler.cs**:
 - **REMOVED**: All `_state.Cache.Rematerialize()` calls (User Path is now read-only)
-- **REMOVED**: `_state.LastRequested` writes (only Rebalance Execution writes)
+- **REMOVED**: `_state.IsInitialized` writes (only Rebalance Execution writes)
 - **ADDED**: Cold start detection using cache data enumeration
 - **ADDED**: Materialization of assembled data to array (for user + intent)
 - **ADDED**: Creation of `RangeData` for intent with delivered data
@@ -215,12 +215,12 @@ not actual cache mutations. Actual mutations only occur in Rebalance Execution v
 **RebalanceExecutor.cs**:
 - **ADDED**: Accept `requestedRange` and `deliveredData` parameters
 - **CHANGED**: Uses delivered data from intent as base (not current cache)
-- **ADDED**: Writes to `_state.LastRequested` (sole writer)
+- **ADDED**: Writes to `_state.IsInitialized` (sole writer)
 - **ADDED**: Writes to `_state.NoRebalanceRange` (already was sole writer)
-- **RESPONSIBILITY**: Sole writer of all cache state (Cache, LastRequested, NoRebalanceRange)
+- **RESPONSIBILITY**: Sole writer of all cache state (Cache, IsInitialized, NoRebalanceRange)
 
 **CacheState.cs**:
-- **CHANGED**: `LastRequested` and `NoRebalanceRange` setters to `internal`
+- **CHANGED**: `IsInitialized` and `NoRebalanceRange` setters to `internal`
 - **PURPOSE**: Enforce single-writer pattern at compile time
 
 **Storage Classes**:

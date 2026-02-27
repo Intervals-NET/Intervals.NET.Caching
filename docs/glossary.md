@@ -49,7 +49,7 @@ Mathematical domain for range operations. Must implement `IRangeDomain<TRange>`.
 ## Architectural Patterns
 
 ### Single-Writer Architecture
-Only ONE component (`RebalanceExecutor`) mutates shared state (Cache, LastRequested, NoRebalanceRange). All others read-only. Eliminates write-write conflicts. See [Architecture Model](architecture-model.md#single-writer-architecture) | [Component Map - Implementation](component-map.md#single-writer-architecture).
+Only ONE component (`RebalanceExecutor`) mutates shared state (Cache, IsInitialized, NoRebalanceRange). All others read-only. Eliminates write-write conflicts. See [Architecture Model](architecture-model.md#single-writer-architecture) | [Component Map - Implementation](component-map.md#single-writer-architecture).
 
 ### Decision-Driven Execution
 Multi-stage validation pipeline separating decisions from execution. `RebalanceDecisionEngine` is sole authority for rebalance necessity. Execution proceeds only if all stages pass. Prevents thrashing. See [Architecture Model](architecture-model.md#decision-driven-execution) | [Invariants D.29](invariants.md#d-rebalance-decision-path-invariants).
@@ -114,7 +114,7 @@ Delays execution (e.g., 100ms) to let bursts settle. Cancels previous if new sch
 **Activity**: Operation tracked by `AsyncActivityCounter`. System idle when count = 0.  
 **Idle State**: No intents/rebalances executing. **"Was Idle" NOT "Is Idle"** - `WaitForIdleAsync()` = was idle at some point. See [Invariants H.49](invariants.md#h-activity-tracking--idle-detection-invariants).  
 **Stabilization**: Reaching stable state (rebalances done, cache = desired, no pending intents). Not persistent.  
-**Cache State**: Mutable container (`Cache`, `LastRequested`, `NoRebalanceRange`). Only mutated by `RebalanceExecutor`. See [Invariant F.36](invariants.md#f-rebalance-execution-invariants).  
+**Cache State**: Mutable container (`Cache`, `IsInitialized`, `NoRebalanceRange`). Only mutated by `RebalanceExecutor`. See [Invariant F.36](invariants.md#f-rebalance-execution-invariants).  
 **Execution Request**: Rebalance request from `IntentController` → `RebalanceExecutionController`. Contains desired ranges, intent data, cancellation token.
 
 ---
