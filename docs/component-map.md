@@ -166,15 +166,15 @@ The system uses a **multi-stage rebalance decision pipeline**, not a cancellatio
 
 ### Component Responsibilities in Decision Model
 
-| Component | Role | Decision Authority |
-|-----------|------|-------------------|
-| **UserRequestHandler** | Read-only; publishes intents with delivered data | No decision authority |
-| **IntentController** | Manages intent lifecycle; runs background processing loop | No decision authority |
-| **IRebalanceExecutionController** | Debounce + execution serialization | No decision authority |
-| **RebalanceDecisionEngine** | **SOLE AUTHORITY** for necessity determination | **Yes - THE authority** |
-| **NoRebalanceSatisfactionPolicy** | Stage 1 & 2 validation (NoRebalanceRange check) | Analytical input |
-| **ProportionalRangePlanner** | Computes desired cache geometry | Analytical input |
-| **RebalanceExecutor** | Mechanical execution; assumes validated necessity | No decision authority |
+| Component                         | Role                                                      | Decision Authority      |
+|-----------------------------------|-----------------------------------------------------------|-------------------------|
+| **UserRequestHandler**            | Read-only; publishes intents with delivered data          | No decision authority   |
+| **IntentController**              | Manages intent lifecycle; runs background processing loop | No decision authority   |
+| **IRebalanceExecutionController** | Debounce + execution serialization                        | No decision authority   |
+| **RebalanceDecisionEngine**       | **SOLE AUTHORITY** for necessity determination            | **Yes - THE authority** |
+| **NoRebalanceSatisfactionPolicy** | Stage 1 & 2 validation (NoRebalanceRange check)           | Analytical input        |
+| **ProportionalRangePlanner**      | Computes desired cache geometry                           | Analytical input        |
+| **RebalanceExecutor**             | Mechanical execution; assumes validated necessity         | No decision authority   |
 
 ### System Stability Principle
 
@@ -1212,7 +1212,7 @@ internal sealed class RebalanceDecisionEngine<TRange, TDomain>
 - ◇ `_planner.Plan()` - Stage 3: Compute DesiredCacheRange
 - ◇ `_noRebalancePlanner.Plan()` - Stage 3: Compute DesiredNoRebalanceRange
 
-**Returns**: `RebalanceDecision<TRange>` (struct with `ShouldSchedule`, `DesiredRange`, `DesiredNoRebalanceRange`, `Reason`)
+**Returns**: `RebalanceDecision<TRange>` (struct with `IsExecutionRequired`, `DesiredRange`, `DesiredNoRebalanceRange`, `Reason`)
 
 **Ownership**: Owned by IntentController, invoked exclusively in `IntentController.ProcessIntentsAsync`
 
@@ -1698,197 +1698,191 @@ Creates and wires all internal components in dependency order:
                     │ GetDataAsync(range, ct)
                     ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  WindowCache<TRange, TData, TDomain>  [Public Facade]              │
+│  WindowCache<TRange, TData, TDomain>  [Public Facade]               │
 │  🟦 CLASS (sealed, public)                                          │
-│                                                                      │
+│                                                                     │
 │  Constructor creates and wires:                                     │
-│   ├─ 🟦 CacheState ──────────────────────────┐ (shared mutable)   │
-│   ├─ 🟦 UserRequestHandler ──────────────────┼───┐                 │
-│   ├─ 🟦 CacheDataExtensionService ───────────┼───┼───┐             │
-│   ├─ 🟦 IntentController ────────────────────┼───┼───┼───┐         │
-│   │   └─ 🟧 IRebalanceExecutionController ───┼───┼───┼───┼───┐     │
-│   ├─ 🟦 RebalanceDecisionEngine ─────────────┼───┼───┼───┼───┼───┐ │
-│   │   ├─ 🟩 NoRebalanceSatisfactionPolicy      │   │   │   │   │   │ │
-│   │   └─ 🟩 ProportionalRangePlanner          │   │   │   │   │   │ │
-│   └─ 🟦 RebalanceExecutor ────────────────────┼───┼───┼───┼───┼───┤ │
-│                                                │   │   │   │   │   │ │
-│  GetDataAsync() → delegates to UserRequestHandler                   │
-└────────────────────────────────────────────────┼───┼───┼───┼───┼───┼─┘
-                                                 │   │   │   │   │   │
-        ═════════════════════════════════════════╪═══╪═══╪═══╪═══╪═══╪═
-        USER THREAD                              │   │   │   │   │   │
-        ═════════════════════════════════════════╪═══╪═══╪═══╪═══╪═══╪═
-                                                 │   │   │   │   │   │
-┌────────────────────────────────────────────────▼───┼───┼───┼───┼───┤
-│  UserRequestHandler  [Fast Path Actor — READ-ONLY] │   │   │   │   │
-│  🟦 CLASS (sealed)                                  │   │   │   │   │
-│                                                     │   │   │   │   │
-│  HandleRequestAsync(range, ct):                    │   │   │   │   │
-│   1. Check cold start / cache coverage ────────────┼───┤   │   │   │
-│   2. Fetch missing via _cacheExtensionService ─────┼───┼───┤   │   │
-│      or _dataSource (cold start / full miss)        │   │   │   │   │
-│   3. Publish intent with assembled data ────────────┼───┼───┼───┼───┤
-│   4. Return ReadOnlyMemory<TData> to user           │   │   │   │   │
-│                                                     │   │   │   │   │
-│  ❌ NEVER writes to CacheState                      │   │   │   │   │
-│  ❌ NEVER calls Cache.Rematerialize()               │   │   │   │   │
-│  ❌ NEVER writes IsInitialized or NoRebalanceRange  │   │   │   │   │
-└─────────────────────────────────────────────────────┼───┼───┼───┼───┘
-                                                      │   │   │   │
-        ══════════════════════════════════════════════╪═══╪═══╪═══╪═══
-        BACKGROUND / THREADPOOL                       │   │   │   │
-        ══════════════════════════════════════════════╪═══╪═══╪═══╪═══
-                                                      │   │   │   │
-┌─────────────────────────────────────────────────────▼───┼───┼───┼───┐
-│  IntentController  [Intent Lifecycle + Background Loop] │   │   │   │
-│  🟦 CLASS (sealed)                                       │   │   │   │
-│                                                          │   │   │   │
-│  Fields:                                                 │   │   │   │
-│   ├─ IRebalanceExecutionController _executionController ─▼───┼───┤   │
-│   └─ Intent? _pendingIntent (Interlocked.Exchange)           │   │   │
-│                                                              │   │   │
-│  PublishIntent(intent)  [User Thread]:                       │   │   │
-│   1. Interlocked.Exchange(_pendingIntent, intent)            │   │   │
-│   2. _activityCounter.IncrementActivity()                    │   │   │
-│   3. _intentSignal.Release()  → wakes ProcessIntentsAsync    │   │   │
-│                                                              │   │   │
-│  ProcessIntentsAsync()  [Background Loop]:                   │   │   │
-│   1. await _intentSignal.WaitAsync()                         │   │   │
-│   2. intent = Interlocked.Exchange(_pendingIntent, null)     │   │   │
-│   3. decision = _decisionEngine.Evaluate(intent, ...) ───────┼───┤   │
-│   4. if (!decision.ShouldSchedule) → skip                    │   │   │
-│   5. lastRequest?.Cancel()                                   │   │   │
-│   6. await _executionController.PublishExecutionRequest() ───┼───┤   │
-└──────────────────────────────────────────────────────────────┼───┼───┘
+│   ├─ 🟦 CacheState ──────────────────────────┐ (shared mutable)     │
+│   ├─ 🟦 UserRequestHandler ──────────────────┼───┐                  │
+│   ├─ 🟦 CacheDataExtensionService ───────────┼───┼───┐              │
+│   ├─ 🟦 IntentController ────────────────────┼───┼───┼───┐          │
+│   │   └─ 🟧 IRebalanceExecutionController ───┼───┼───┼───┼───┐      │
+│   ├─ 🟦 RebalanceDecisionEngine ─────────────┼───┼───┼───┼───┼───┐  │
+│   │   ├─ 🟩 NoRebalanceSatisfactionPolicy    │   │   │   │   │   │  │
+│   │   └─ 🟩 ProportionalRangePlanner         │   │   │   │   │   │  │
+│   └─ 🟦 RebalanceExecutor ───────────────────┼───┼───┼───┼───┼───┤  │
+│                                              │   │   │   │   │   │  │
+│  GetDataAsync() → delegates to UserRequestHandler│   │   │   │   │  │
+└──────────────────────────────────────────────┼───┼───┼───┼───┼───┼──┘
+                                               │   │   │   │   │   │
+ ══════════════════════════════════════════════╪═══╪═══╪═══╪═══╪═══╪═
+ USER THREAD                                   │   │   │   │   │   │
+ ══════════════════════════════════════════════╪═══╪═══╪═══╪═══╪═══╪═
+                                               │   │   │   │   │   │
+┌──────────────────────────────────────────────▼───┼───┼───┼───┼───┐
+│  UserRequestHandler [Fast Path Actor — READ-ONLY]│   │   │   │   │
+│  🟦 CLASS (sealed)                               │   │   │   │   │
+│                                                  │   │   │   │   │
+│  HandleRequestAsync(range, ct):                  │   │   │   │   │
+│   1. Check cold start / cache coverage ──────────┼───┤   │   │   │
+│   2. Fetch missing via _cacheExtensionService ───┼───┼───┤   │   │
+│      or _dataSource (cold start / full miss)     │   │   │   │   │
+│   3. Publish intent with assembled data ─────────┼───┼───┼───┼───┤
+│   4. Return ReadOnlyMemory<TData> to user        │   │   │   │   │
+│                                                  │   │   │   │   │
+│  ❌ NEVER writes to CacheState                   │   │   │   │   │
+│  ❌ NEVER calls Cache.Rematerialize()            │   │   │   │   │
+│  ❌ NEVER writes IsInitialized/NoRebalanceRange  │   │   │   │   │
+└──────────────────────────────────────────────────┼───┼───┼───┼───┘
+                                                   │   │   │   │
+═══════════════════════════════════════════════════╪═══╪═══╪═══╪═══
+BACKGROUND / THREADPOOL                            │   │   │   │
+═══════════════════════════════════════════════════╪═══╪═══╪═══╪═══
+                                                   │   │   │   │
+┌──────────────────────────────────────────────────▼───┼───┼───┼───┐
+│  IntentController [Lifecycle + Background Loop]  │   │   │   │   │
+│  🟦 CLASS (sealed)                               │   │   │   │   │
+│                                                  │   │   │   │   │
+│  Fields:                                         │   │   │   │   │
+│   ├─ RebalanceDecisionEngine _decisionEngine                 │   │
+│   ├─ CacheState _state                                       │   │
+│   ├─ IRebalanceExecutionController _executionController ─────▼───┤
+│   └─ Intent? _pendingIntent (Interlocked.Exchange)           │   │
+│                                                              │   │
+│  PublishIntent(intent)  [User Thread]:                       │   │
+│   1. Interlocked.Exchange(_pendingIntent, intent)            │   │
+│   2. _activityCounter.IncrementActivity()                    │   │
+│   3. _intentSignal.Release()  → wakes ProcessIntentsAsync    │   │
+│                                                              │   │
+│  ProcessIntentsAsync()  [Background Loop]:                   │   │
+│   1. await _intentSignal.WaitAsync()                         │   │
+│   2. intent = Interlocked.Exchange(_pendingIntent, null)     │   │
+│   3. decision = _decisionEngine.Evaluate(intent, ...) ───────┼───┤
+│   4. if (!decision.IsExecutionRequired) → skip               │   │
+│   5. lastRequest?.Cancel()                                   │   │
+│   6. await _executionController.PublishExecutionRequest() ───┼───┤
+└──────────────────────────────────────────────────────────────┼───┘
                                                                │   │
-┌──────────────────────────────────────────────────────────────▼───┼───┐
-│  RebalanceDecisionEngine  [Pure Decision Logic]                  │   │
+┌──────────────────────────────────────────────────────────────▼────┼───┐
+│  RebalanceDecisionEngine  [Pure Decision Logic]                   │   │
 │  🟦 CLASS (sealed)                                                │   │
 │                                                                   │   │
-│  Fields (value types):                                           │   │
+│  Fields (value types):                                            │   │
 │   ├─ 🟩 NoRebalanceSatisfactionPolicy _policy                     │   │
-│   ├─ 🟩 ProportionalRangePlanner _planner                        │   │
-│   └─ 🟩 NoRebalanceRangePlanner _noRebalancePlanner              │   │
+│   ├─ 🟩 ProportionalRangePlanner _planner                         │   │
+│   └─ 🟩 NoRebalanceRangePlanner _noRebalancePlanner               │   │
 │                                                                   │   │
-│  Evaluate(requested, cacheState, lastRequest):                   │   │
-│   1. Stage 1: _policy.ShouldRebalance(noRebalanceRange) → skip  │   │
-│   2. Stage 2: _policy.ShouldRebalance(pendingNRR) → skip        │   │
-│   3. Stage 3: desiredRange = _planner.Plan(requested)            │   │
-│   4. Stage 4: desiredRange == currentRange → skip                │   │
-│   5. Stage 5: return Schedule(desiredRange, desiredNRR)          │   │
+│  Evaluate(requested, cacheState, lastRequest):                    │   │
+│   1. Stage 1: _policy.ShouldRebalance(noRebalanceRange) → skip    │   │
+│   2. Stage 2: _policy.ShouldRebalance(pendingNRR) → skip          │   │
+│   3. Stage 3: desiredRange = _planner.Plan(requested)             │   │
+│   4. Stage 4: desiredRange == currentRange → skip                 │   │
+│   5. Stage 5: return Schedule(desiredRange, desiredNRR)           │   │
 │                                                                   │   │
-│  Returns: 🟩 RebalanceDecision<TRange>                           │   │
-│    (ShouldSchedule, DesiredRange, DesiredNoRebalanceRange, Reason)│   │
+│  Returns: 🟩 RebalanceDecision<TRange>                            │   │
+│    (IsExecutionRequired, DesiredRange,                            │   │
+│     DesiredNoRebalanceRange, Reason)                              │   │
 └───────────────────────────────────────────────────────────────────┼───┘
                                                                     │
-┌───────────────────────────────────────────────────────────────────▼──┐
-│  IRebalanceExecutionController  [Execution Serialization]            │
+┌───────────────────────────────────────────────────────────────────▼───┐
+│  IRebalanceExecutionController  [Execution Serialization]             │
 │  🟧 INTERFACE                                                         │
 │                                                                       │
 │  Implementations:                                                     │
-│   ├─ 🟦 TaskBasedRebalanceExecutionController (default)              │
-│   │   • Lock-free task chaining (Volatile.Write for single-writer)   │
-│   │   • Debounce via Task.Delay before executing                     │
-│   │   • PublishExecutionRequest returns ValueTask.CompletedTask      │
-│   └─ 🟦 ChannelBasedRebalanceExecutionController                     │
-│       • Bounded Channel<ExecutionRequest> with backpressure          │
-│       • Single reader loop processes requests sequentially           │
+│   ├─ 🟦 TaskBasedRebalanceExecutionController (default)               │
+│   │   • Lock-free task chaining (Volatile.Write for single-writer)    │
+│   │   • Debounce via Task.Delay before executing                      │
+│   │   • PublishExecutionRequest returns ValueTask.CompletedTask       │
+│   └─ 🟦 ChannelBasedRebalanceExecutionController                      │
+│       • Bounded Channel<ExecutionRequest> with backpressure           │
+│       • Single reader loop processes requests sequentially            │
 │                                                                       │
-│  ChainExecutionAsync / channel read loop:                            │
-│   1. await Task.Delay(debounceDelay, ct)  (cancellable)              │
-│   2. await _executor.ExecuteAsync(desiredRange, ct) ─────────────┐  │
-└──────────────────────────────────────────────────────────────────┼──┘
+│  ChainExecutionAsync / channel read loop:                             │
+│   1. await Task.Delay(debounceDelay, ct)  (cancellable)               │
+│   2. await _executor.ExecuteAsync(desiredRange, ct) ─────────────┐    │
+└──────────────────────────────────────────────────────────────────┼────┘
                                                                    │
-┌──────────────────────────────────────────────────────────────────▼──┐
-│  RebalanceExecutor  [Mutating Actor — SOLE WRITER]                   │
+┌──────────────────────────────────────────────────────────────────▼────┐
+│  RebalanceExecutor  [Mutating Actor — SOLE WRITER]                    │
 │  🟦 CLASS (sealed)                                                    │
 │                                                                       │
-│  ExecuteAsync(intent, desiredRange, desiredNRR, ct):                │
-│   1. await _executionSemaphore.WaitAsync(ct)  (serialize)           │
-│   2. baseRangeData = intent.AvailableRangeData                      │
-│   3. ct.ThrowIfCancellationRequested()                               │
-│   4. extended = await _cacheExtensionService.ExtendCacheAsync() ──┐ │
-│   5. ct.ThrowIfCancellationRequested()                               │ │
-│   6. rebalanced = extended[desiredRange] (trim)                     │ │
-│   7. ct.ThrowIfCancellationRequested()                               │ │
-│   8. UpdateCacheState(rebalanced, requestedRange, desiredNRR)      │ │
-│      └─ _state.Cache.Rematerialize(rebalanced) ────────────────┐   │ │
-│      └─ _state.NoRebalanceRange = desiredNRR ──────────────────┼───┤ │
-│      └─ _state.IsInitialized = true ───────────────────┼───┤ │
-│   finally: _executionSemaphore.Release()                        │   │ │
+│  ExecuteAsync(intent, desiredRange, desiredNRR, ct):                  │
+│   1. baseRangeData = intent.AssembledRangeData                        │
+│   2. ct.ThrowIfCancellationRequested()                                │
+│   3. extended = await _cacheExtensionService.ExtendCacheAsync() ────┐ │
+│   4. ct.ThrowIfCancellationRequested()                              │ │
+│   5. normalizedData = extended[desiredRange] (trim)                 │ │
+│   6. ct.ThrowIfCancellationRequested()                              │ │
+│   7. _state.UpdateCacheState(normalizedData, desiredNRR)            │ │
+│      └─ _state.Storage.Rematerialize(normalizedData) ───────────┐   │ │
+│      └─ _state.NoRebalanceRange = desiredNRR ───────────────────┼───┤ │
+│      └─ _state.IsInitialized = true ────────────────────────────┼───┤ │
 └─────────────────────────────────────────────────────────────────┼───┼─┘
                                                                   │   │
-┌─────────────────────────────────────────────────────────────────▼───┼──┐
-│  CacheState  [Shared Mutable State]                                 │  │
+┌─────────────────────────────────────────────────────────────────▼───┼───┐
+│  CacheState  [Shared Mutable State]                                  │  │
 │  🟦 CLASS (sealed)  ⚠️ SHARED                                        │  │
 │                                                                      │  │
 │  Properties:                                                         │  │
-│   ├─ ICacheStorage Cache ◄─ RebalanceExecutor (SOLE WRITER) ─────────┤  │
-│   ├─ bool IsInitialized ◄─ RebalanceExecutor                      │  │
-│   ├─ Range? NoRebalanceRange ◄─ RebalanceExecutor                   │  │
+│   ├─ ICacheStorage Storage ◄─ RebalanceExecutor (SOLE WRITER) ───────┤  │
+│   ├─ bool IsInitialized ◄─ RebalanceExecutor                         │  │
+│   ├─ Range? NoRebalanceRange ◄─ RebalanceExecutor                    │  │
 │   └─ TDomain Domain (readonly)                                       │  │
 │                                                                      │  │
 │  Read by:                                                            │  │
-│   ├─ UserRequestHandler (Cache.Range, Cache.Read, Cache.ToRangeData, IsInitialized)
-│   ├─ RebalanceExecutor (Cache.Range, Cache.ToRangeData)              │  │
-│   └─ RebalanceDecisionEngine (NoRebalanceRange, Cache.Range)         │  │
+│   ├─ UserRequestHandler (Storage.Range, Storage.Read,                │  │
+│   │                       Storage.ToRangeData, IsInitialized)        │  │
+│   ├─ RebalanceDecisionEngine (NoRebalanceRange, Storage.Range)       │  │
+│   └─ IntentController (Storage.Range, NoRebalanceRange)              │  │
 └──────────────────────────────────────────────────────────────────────┼──┘
                                                                        │
-┌──────────────────────────────────────────────────────────────────────▼──┐
-│  ICacheStorage<TRange, TData, TDomain>                                  │
+┌──────────────────────────────────────────────────────────────────────▼───┐
+│  ICacheStorage<TRange, TData, TDomain>                                   │
 │  🟧 INTERFACE                                                            │
 │                                                                          │
 │  Implementations:                                                        │
-│   ├─ 🟦 SnapshotReadStorage (TData[] array)                             │
-│   │   • Read: zero allocation (memory view)                             │
-│   │   • Write: expensive (allocates new array)                          │
+│   ├─ 🟦 SnapshotReadStorage (TData[] array)                              │
+│   │   • Read: zero allocation (memory view)                              │
+│   │   • Write: expensive (allocates new array)                           │
 │   │                                                                      │
-│   └─ 🟦 CopyOnReadStorage (List<TData>)                                 │
-│       • Read: allocates (copies to new array)                           │
-│       • Write: cheap (list operations)                                  │
+│   └─ 🟦 CopyOnReadStorage (List<TData>)                                  │
+│       • Read: allocates (copies to new array)                            │
+│       • Write: cheap (list operations)                                   │
 │                                                                          │
 │  Methods:                                                                │
-│   ├─ void Rematerialize(RangeData) ⊲ WRITE                              │
-│   ├─ ReadOnlyMemory<TData> Read(Range) ⊳ READ                           │
-│   └─ RangeData ToRangeData() ⊳ READ                                     │
+│   ├─ void Rematerialize(RangeData) ⊲ WRITE                               │
+│   ├─ ReadOnlyMemory<TData> Read(Range) ⊳ READ                            │
+│   └─ RangeData ToRangeData() ⊳ READ                                      │
 └──────────────────────────────────────────────────────────────────────────┘
                                                                            │
-┌──────────────────────────────────────────────────────────────────────────▼──┐
-│  CacheDataExtensionService  [Data Fetcher]                                  │
+┌──────────────────────────────────────────────────────────────────────────▼───┐
+│  CacheDataExtensionService  [Data Fetcher]                                   │
 │  🟦 CLASS (sealed)                                                           │
 │                                                                              │
-│  ExtendCacheAsync(current, requested, ct):                                  │
-│   1. missingRanges = CalculateMissingRanges()                               │
-│   2. fetched = await _dataSource.FetchAsync(missingRanges, ct) ◄────────┐  │
-│   3. return UnionAll(current, fetched) (merge, no trim)                 │  │
-│                                                                          │  │
-│  Shared by:                                                              │  │
-│   ├─ UserRequestHandler (extend to cover requested range — no mutation)  │  │
-│   └─ RebalanceExecutor (extend to desired range — feeds mutation)        │  │
+│  ExtendCacheAsync(current, requested, ct):                                   │
+│   1. missingRanges = CalculateMissingRanges()                                │
+│   2. fetched = await _dataSource.FetchAsync(missingRanges, ct) ◄──────────┐  │
+│   3. return UnionAll(current, fetched) (merge, no trim)                   │  │
+│                                                                           │  │
+│  Shared by:                                                               │  │
+│   ├─ UserRequestHandler (extend to cover requested range — no mutation)   │  │
+│   └─ RebalanceExecutor (extend to desired range — feeds mutation)         │  │
 └───────────────────────────────────────────────────────────────────────────┼──┘
                                                                             │
-┌───────────────────────────────────────────────────────────────────────────▼──┐
-│  IDataSource<TRangeType, TDataType>  [External Data Source]                  │
+┌────────────────────────────────────────────────────────────────────────────▼──┐
+│  IDataSource<TRangeType, TDataType>  [External Data Source]                   │
 │  🟧 INTERFACE (user-implemented)                                              │
 │                                                                               │
 │  Methods:                                                                     │
-│   ├─ FetchAsync(Range, CT) → Task<IEnumerable<TData>>                        │
-│   └─ FetchAsync(IEnumerable<Range>, CT) → Task<IEnumerable<RangeChunk>>     │
+│   ├─ FetchAsync(Range, CT) → Task<RangeChunk<TRange, TData>>                  │
+│   └─ FetchAsync(IEnumerable<Range>, CT) → Task<IEnumerable<RangeChunk>>       │
 │                                                                               │
 │  Characteristics:                                                             │
-│   ├─ User-provided implementation                                            │
-│   ├─ May perform I/O (network, disk, database)                               │
-│   ├─ Read-only (fetches data)                                                │
-│   └─ Should respect CancellationToken                                        │
+│   ├─ User-provided implementation                                             │
+│   ├─ May perform I/O (network, disk, database)                                │
+│   ├─ Read-only (fetches data)                                                 │
+│   └─ Should respect CancellationToken                                         │
 └───────────────────────────────────────────────────────────────────────────────┘
-```
-│                                                                           │
-│  Characteristics:                                                         │
-│   ├─ User-provided implementation                                        │
-│   ├─ May perform I/O (network, disk, database)                           │
-│   ├─ Read-only (fetches data)                                            │
-│   └─ Should respect CancellationToken                                    │
-└───────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -2271,12 +2265,12 @@ var sharedCache = new WindowCache<int, Data, IntDomain>(...);
 
 ### Value Types (Structs)
 
-| Component                | Mutability | Ownership              | Lifetime           |
-|--------------------------|------------|------------------------|--------------------|
+| Component                     | Mutability | Ownership              | Lifetime           |
+|-------------------------------|------------|------------------------|--------------------|
 | NoRebalanceSatisfactionPolicy | Readonly   | Copied into components | Component lifetime |
-| ProportionalRangePlanner | Readonly   | Copied into components | Component lifetime |
-| NoRebalanceRangePlanner  | Readonly   | Copied into components | Component lifetime |
-| RebalanceDecision        | Readonly   | Local variable         | Method scope       |
+| ProportionalRangePlanner      | Readonly   | Copied into components | Component lifetime |
+| NoRebalanceRangePlanner       | Readonly   | Copied into components | Component lifetime |
+| RebalanceDecision             | Readonly   | Local variable         | Method scope       |
 
 ### Other Types
 

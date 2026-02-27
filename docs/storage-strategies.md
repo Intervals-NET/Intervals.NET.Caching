@@ -1,7 +1,7 @@
 ﻿# Sliding Window Cache - Storage Strategies Guide
 
 > **📖 For component implementation details, see:**
-> - [Component Map - Storage Section](component-map.md#3-storage-implementations) - SnapshotReadStorage and CopyOnReadStorage architecture
+> - [Component Map - Storage Section](component-map.md#2-storage-layer) - SnapshotReadStorage and CopyOnReadStorage architecture
 
 ## Overview
 
@@ -16,15 +16,15 @@ This guide explains when to use each strategy and their trade-offs.
 
 ## Storage Strategy Comparison
 
-| Aspect                 | Snapshot Storage                  | CopyOnRead Storage                |
-|------------------------|-----------------------------------|-----------------------------------|
-| **Read Cost**          | O(1) - zero allocation            | O(n) - allocates and copies       |
-| **Rematerialize Cost** | O(n) - always allocates new array | O(1)* - reuses capacity           |
+| Aspect                 | Snapshot Storage                  | CopyOnRead Storage                      |
+|------------------------|-----------------------------------|-----------------------------------------|
+| **Read Cost**          | O(1) - zero allocation            | O(n) - allocates and copies             |
+| **Rematerialize Cost** | O(n) - always allocates new array | O(1)* - reuses capacity                 |
 | **Memory Pattern**     | Single array, replaced atomically | Dual buffers, swap synchronized by lock |
-| **Buffer Growth**      | Always allocates exact size       | Grows but never shrinks           |
-| **LOH Risk**           | High for >85KB arrays             | Lower (List growth strategy)      |
-| **Best For**           | Read-heavy workloads              | Rematerialization-heavy workloads |
-| **Typical Use Case**   | User-facing cache layer           | Background cache layer            |
+| **Buffer Growth**      | Always allocates exact size       | Grows but never shrinks                 |
+| **LOH Risk**           | High for >85KB arrays             | Lower (List growth strategy)            |
+| **Best For**           | Read-heavy workloads              | Rematerialization-heavy workloads       |
+| **Typical Use Case**   | User-facing cache layer           | Background cache layer                  |
 
 *Amortized O(1) when capacity is sufficient
 
@@ -285,11 +285,11 @@ This composition leverages the strengths of both strategies:
 
 ### CopyOnRead Storage
 
-| Operation            | Time | Allocation    | Notes                        |
-|----------------------|------|---------------|------------------------------|
-| Read                 | O(n) | n × sizeof(T) | Lock acquired + copy         |
-| Rematerialize (cold) | O(n) | n × sizeof(T) | Enumerate outside lock       |
-| Rematerialize (warm) | O(n) | 0 bytes**     | Enumerate outside lock       |
+| Operation            | Time | Allocation    | Notes                                  |
+|----------------------|------|---------------|----------------------------------------|
+| Read                 | O(n) | n × sizeof(T) | Lock acquired + copy                   |
+| Rematerialize (cold) | O(n) | n × sizeof(T) | Enumerate outside lock                 |
+| Rematerialize (warm) | O(n) | 0 bytes**     | Enumerate outside lock                 |
 | ToRangeData          | O(1) | 0 bytes*      | Not synchronized (rebalance path only) |
 
 *Returns lazy enumerable  

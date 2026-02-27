@@ -42,7 +42,7 @@ Mathematical domain for range operations. Must implement `IRangeDomain<TRange>`.
 **Desired Cache Range**: Target computed by `ProportionalRangePlanner`. See [Component Map](component-map.md#desired-range-computation).  
 **Available Range**: Intersection of Requested ∩ Current (immediately returnable).  
 **Missing Range**: Requested \ Current (must fetch).  
-**NoRebalanceRange**: Stability zone. Requests within skip rebalancing. See [Architecture Model](architecture-model.md#burst-resistance).
+**NoRebalanceRange**: Stability zone. Requests within skip rebalancing. See [Architecture Model](architecture-model.md#smart-eventual-consistency-model).
 
 ---
 
@@ -52,13 +52,13 @@ Mathematical domain for range operations. Must implement `IRangeDomain<TRange>`.
 Only ONE component (`RebalanceExecutor`) mutates shared state (Cache, IsInitialized, NoRebalanceRange). All others read-only. Eliminates write-write conflicts. See [Architecture Model](architecture-model.md#single-writer-architecture) | [Component Map - Implementation](component-map.md#single-writer-architecture).
 
 ### Decision-Driven Execution
-Multi-stage validation pipeline separating decisions from execution. `RebalanceDecisionEngine` is sole authority for rebalance necessity. Execution proceeds only if all stages pass. Prevents thrashing. See [Architecture Model](architecture-model.md#decision-driven-execution) | [Invariants D.29](invariants.md#d-rebalance-decision-path-invariants).
+Multi-stage validation pipeline separating decisions from execution. `RebalanceDecisionEngine` is sole authority for rebalance necessity. Execution proceeds only if all stages pass. Prevents thrashing. See [Architecture Model](architecture-model.md#rebalance-validation-vs-cancellation) | [Invariants D.29](invariants.md#d-rebalance-decision-path-invariants).
 
 ### Smart Eventual Consistency
 Cache converges to optimal state without blocking user requests. May temporarily serve from non-optimal range, rebalancing in background. See [Architecture Model - Consistency](architecture-model.md#smart-eventual-consistency-model).
 
 ### Burst Resistance
-Handles rapid request sequences without thrashing. Achieved via "latest intent wins" and NoRebalanceRange stability zones. See [Architecture Model](architecture-model.md#burst-resistance).
+Handles rapid request sequences without thrashing. Achieved via "latest intent wins" and NoRebalanceRange stability zones. See [Architecture Model](architecture-model.md#smart-eventual-consistency-model).
 
 ---
 
@@ -71,13 +71,13 @@ Public API facade. Exposes `GetDataAsync()`.
 Handles user requests on user thread. Assembles data, publishes intents. Never mutates cache ([Invariants A.7-A.8](invariants.md#a-user-path--fast-user-access-invariants)).
 
 ### IntentController
-Manages rebalance intent lifecycle. Evaluates `RebalanceDecisionEngine`, coordinates execution. Single-threaded background loop. See [Component Map](component-map.md#intentcontroller).
+Manages rebalance intent lifecycle. Evaluates `RebalanceDecisionEngine`, coordinates execution. Single-threaded background loop. See [Component Map](component-map.md#5-rebalance-system---intent-management).
 
 ### RebalanceDecisionEngine
 Sole authority for rebalance necessity. 5-stage validation pipeline. Pure, deterministic, side-effect free. See [Invariants D.25-D.29](invariants.md#d-rebalance-decision-path-invariants).
 
 ### RebalanceExecutionController
-Serializes/debounces executions. Implementations: `TaskBasedRebalanceExecutionController` (default), `ChannelBasedRebalanceExecutionController`. See [Component Map](component-map.md#rebalanceexecutioncontroller).
+Serializes/debounces executions. Implementations: `TaskBasedRebalanceExecutionController` (default), `ChannelBasedRebalanceExecutionController`. See [Component Map](component-map.md#7-rebalance-system---execution).
 
 ### RebalanceExecutor
 Performs cache mutations. Fetches, merges, trims, updates state. Only mutator ([Invariant F.36](invariants.md#f-rebalance-execution-invariants)).
@@ -93,16 +93,16 @@ Lock-free activity counter. Awaitable idle state. Tracks operations, signals "wa
 ## Operations & Processes
 
 ### Intent
-Signal containing requested range + delivered data. Published by `UserRequestHandler` for rebalance evaluation. Signals, not commands (may be skipped). "Latest wins" - newer replaces older atomically. See [Invariants C.17-C.24](invariants.md#c-intent--rebalance-lifecycle-invariants).
+Signal containing requested range + delivered data. Published by `UserRequestHandler` for rebalance evaluation. Signals, not commands (may be skipped). "Latest wins" - newer replaces older atomically. See [Invariants C.17-C.24](invariants.md#c-rebalance-intent--temporal-invariants).
 
 ### Rebalance
-Background process adjusting cache to desired range. Phases: (1) Decision (5-stage), (2) Execution (fetch/merge/trim), (3) Mutation (atomic). See [Architecture Model](architecture-model.md#rebalance-lifecycle).
+Background process adjusting cache to desired range. Phases: (1) Decision (5-stage), (2) Execution (fetch/merge/trim), (3) Mutation (atomic). See [Architecture Model](architecture-model.md#smart-eventual-consistency-model).
 
 ### User Path
 Handles user requests. Runs on user thread until intent published. Read-only. See [Invariants A.7-A.9](invariants.md#a-user-path--fast-user-access-invariants).
 
 ### Background Path
-Rebalance processing. Runs on background threads (IntentController, RebalanceExecutionController, RebalanceExecutor). See [Architecture Model](architecture-model.md#execution-contexts).
+Rebalance processing. Runs on background threads (IntentController, RebalanceExecutionController, RebalanceExecutor). See [Architecture Model](architecture-model.md#deterministic-background-job-synchronization).
 
 ### Debouncing
 Delays execution (e.g., 100ms) to let bursts settle. Cancels previous if new scheduled during window. Prevents thrashing.
@@ -123,7 +123,7 @@ Delays execution (e.g., 100ms) to let bursts settle. Cancels previous if new sch
 
 **Volatile Read/Write**: Memory barriers. `Write` = release fence, `Read` = acquire fence. Lock-free publishing.  
 **Interlocked Ops**: Atomic operations (`Increment`, `Decrement`, `Exchange`, `CompareExchange`).  
-**Acquire-Release**: Memory ordering. Writes before "release" visible after "acquire". See [Architecture Model](architecture-model.md#memory-model).
+**Acquire-Release**: Memory ordering. Writes before "release" visible after "acquire". See [Architecture Model](architecture-model.md#lock-free-implementation).
 
 ---
 

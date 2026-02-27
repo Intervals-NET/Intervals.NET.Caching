@@ -690,10 +690,10 @@ The `rebalanceQueueCapacity` configuration parameter controls how the cache seri
 
 ### Strategy Overview
 
-| Configuration | Implementation | Queue Behavior | Best For |
-|---------------|----------------|----------------|----------|
-| `null` (default) | Task-based | Unbounded accumulation via task chaining | **99% of use cases** - typical workloads with moderate burst patterns |
-| `>= 1` (e.g., `10`) | Channel-based | Bounded queue with backpressure | Extreme high-frequency scenarios (1000+ rapid requests with I/O latency) |
+| Configuration       | Implementation | Queue Behavior                           | Best For                                                                 |
+|---------------------|----------------|------------------------------------------|--------------------------------------------------------------------------|
+| `null` (default)    | Task-based     | Unbounded accumulation via task chaining | **99% of use cases** - typical workloads with moderate burst patterns    |
+| `>= 1` (e.g., `10`) | Channel-based  | Bounded queue with backpressure          | Extreme high-frequency scenarios (1000+ rapid requests with I/O latency) |
 
 ### Unbounded Execution (Default - Recommended)
 
@@ -867,8 +867,8 @@ see [Diagnostics Guide](docs/diagnostics.md).**
 
 **Goal**: Get up and running with working code and common patterns.
 
-1. **[README - Quick Start](#-quick-start)** - Basic usage examples (you're already here!)
-2. **[README - Configuration Guide](#configuration)** - Understand the 5 key parameters
+1. **[README - Quick Start](#-usage-example)** - Basic usage examples (you're already here!)
+2. **[README - Configuration Guide](#-configuration)** - Understand the 5 key parameters
 3. **[Boundary Handling](docs/boundary-handling.md)** - RangeResult usage, bounded data sources, partial fulfillment
 4. **[Storage Strategies](docs/storage-strategies.md)** - Choose Snapshot vs CopyOnRead for your use case
 5. **[Glossary - Common Misconceptions](docs/glossary.md#common-misconceptions)** - Avoid common pitfalls
