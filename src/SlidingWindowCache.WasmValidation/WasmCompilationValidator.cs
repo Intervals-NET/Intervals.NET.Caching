@@ -18,7 +18,7 @@ internal sealed class SimpleDataSource : IDataSource<int, int>
         // Range.Start and Range.End are RangeValue<int>, use implicit conversion to int
         var start = range.Start.Value;
         var end = range.End.Value;
-        var data = Enumerable.Range(start, end - start + 1);
+        var data = Enumerable.Range(start, end - start + 1).ToArray();
         return Task.FromResult(new RangeChunk<int, int>(range, data));
     }
 
@@ -31,9 +31,9 @@ internal sealed class SimpleDataSource : IDataSource<int, int>
         {
             var start = r.Start.Value;
             var end = r.End.Value;
-            return new RangeChunk<int, int>(r, Enumerable.Range(start, end - start + 1));
-        });
-        return Task.FromResult(chunks);
+            return new RangeChunk<int, int>(r, Enumerable.Range(start, end - start + 1).ToArray());
+        }).ToList();
+        return Task.FromResult<IEnumerable<RangeChunk<int, int>>>(chunks);
     }
 }
 

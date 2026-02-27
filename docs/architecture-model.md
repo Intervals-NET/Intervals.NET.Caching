@@ -451,7 +451,7 @@ WindowCache.DisposeAsync()
 All public operations check disposal state using lock-free reads:
 
 ```csharp
-public ValueTask<ReadOnlyMemory<TData>> GetDataAsync(...)
+public ValueTask<RangeResult<TRange, TData>> GetDataAsync(...)
 {
     // Check disposal state (lock-free)
     if (Volatile.Read(ref _disposeState) != 0)

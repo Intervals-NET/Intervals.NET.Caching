@@ -14,18 +14,18 @@ namespace SlidingWindowCache.Tests.Infrastructure.DataSources;
 public sealed class FaultyDataSource<TRange, TData> : IDataSource<TRange, TData>
     where TRange : IComparable<TRange>
 {
-    private readonly Func<Range<TRange>, IEnumerable<TData>> _fetchSingleRange;
+    private readonly Func<Range<TRange>, IReadOnlyList<TData>> _fetchSingleRange;
 
     /// <summary>
     /// Initializes a new instance.
     /// </summary>
     /// <param name="fetchSingleRange">
     /// Callback invoked for every single-range fetch. May throw to simulate failures,
-    /// or return any <see cref="IEnumerable{T}"/> to control the returned data.
+    /// or return any <see cref="IReadOnlyList{T}"/> to control the returned data.
     /// The <see cref="RangeChunk{TRange,TData}.Range"/> in the result is always set to
     /// the requested range — this class does not support returning a null Range.
     /// </param>
-    public FaultyDataSource(Func<Range<TRange>, IEnumerable<TData>> fetchSingleRange)
+    public FaultyDataSource(Func<Range<TRange>, IReadOnlyList<TData>> fetchSingleRange)
     {
         _fetchSingleRange = fetchSingleRange;
     }
@@ -56,7 +56,7 @@ public sealed class FaultyDataSource<TRange, TData> : IDataSource<TRange, TData>
     /// Generates sequential string items ("Item-N") for a closed integer range.
     /// Convenience helper for tests using <c>IDataSource&lt;int, string&gt;</c>.
     /// </summary>
-    public static IEnumerable<string> GenerateStringData(Range<int> range)
+    public static IReadOnlyList<string> GenerateStringData(Range<int> range)
     {
         var data = new List<string>();
         for (var i = range.Start.Value; i <= range.End.Value; i++)

@@ -3,6 +3,18 @@
 /// <summary>
 /// Options for configuring the behavior of the sliding window cache.
 /// </summary>
+/// <remarks>
+/// <para><strong>Warning — record <c>with</c>-expressions bypass constructor validation:</strong></para>
+/// <para>
+/// Because <see cref="WindowCacheOptions"/> is a <c>record</c> type, C# allows creating mutated copies
+/// via <c>with</c>-expressions (e.g., <c>options with { LeftThreshold = 0.9, RightThreshold = 0.9 }</c>).
+/// <c>with</c>-expressions do NOT invoke the constructor, so all validation guards are bypassed.
+/// </para>
+/// <para>
+/// Always construct <see cref="WindowCacheOptions"/> using the primary constructor to ensure
+/// all invariants (range sizes ≥ 0, threshold sum ≤ 1.0, queue capacity > 0) are enforced.
+/// </para>
+/// </remarks>
 public record WindowCacheOptions
 {
     /// <summary>
@@ -62,6 +74,18 @@ public record WindowCacheOptions
         {
             throw new ArgumentOutOfRangeException(nameof(rightThreshold),
                 "RightThreshold must be greater than or equal to 0.");
+        }
+
+        if (leftThreshold is > 1.0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(leftThreshold),
+                "LeftThreshold must not exceed 1.0.");
+        }
+
+        if (rightThreshold is > 1.0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(rightThreshold),
+                "RightThreshold must not exceed 1.0.");
         }
 
         // Validate that thresholds don't overlap (sum must not exceed 1.0)

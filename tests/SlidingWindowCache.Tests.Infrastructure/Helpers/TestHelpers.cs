@@ -66,8 +66,8 @@ public static class TestHelpers
     {
         // Mimic ProportionalRangePlanner.Plan() logic
         var size = requestedRange.Span(domain);
-        var left = (long)(size.Value * options.LeftCacheSize);
-        var right = (long)(size.Value * options.RightCacheSize);
+        var left = (long)Math.Round(size.Value * options.LeftCacheSize);
+        var right = (long)Math.Round(size.Value * options.RightCacheSize);
 
         return requestedRange.Expand(domain, left, right);
     }
@@ -343,7 +343,8 @@ public static class TestHelpers
         var started = cacheDiagnostics.RebalanceExecutionStarted;
         var completed = cacheDiagnostics.RebalanceExecutionCompleted;
         var executionsCancelled = cacheDiagnostics.RebalanceExecutionCancelled;
-        Assert.Equal(started, completed + executionsCancelled);
+        var failed = cacheDiagnostics.RebalanceExecutionFailed;
+        Assert.Equal(started, completed + executionsCancelled + failed);
     }
 
     /// <summary>

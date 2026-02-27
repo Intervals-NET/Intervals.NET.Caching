@@ -591,6 +591,30 @@ public class WindowCacheOptionsTests
     }
 
     [Fact]
+    public void RecordEquality_WithDifferentRebalanceQueueCapacity_AreNotEqual()
+    {
+        // ARRANGE
+        var options1 = new WindowCacheOptions(
+            leftCacheSize: 1.0,
+            rightCacheSize: 1.0,
+            readMode: UserCacheReadMode.Snapshot,
+            rebalanceQueueCapacity: null
+        );
+
+        var options2 = new WindowCacheOptions(
+            leftCacheSize: 1.0,
+            rightCacheSize: 1.0,
+            readMode: UserCacheReadMode.Snapshot,
+            rebalanceQueueCapacity: 5
+        );
+
+        // ACT & ASSERT
+        Assert.NotEqual(options1, options2);
+        Assert.False(options1 == options2);
+        Assert.True(options1 != options2);
+    }
+
+    [Fact]
     public void RecordEquality_WithDifferentDebounceDelay_AreNotEqual()
     {
         // ARRANGE

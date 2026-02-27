@@ -1,8 +1,8 @@
-using Intervals.NET;
 using Intervals.NET.Domain.Default.Numeric;
 using SlidingWindowCache.Public;
 using SlidingWindowCache.Public.Configuration;
 using SlidingWindowCache.Public.Dto;
+using SlidingWindowCache.Tests.Infrastructure.DataSources;
 
 namespace SlidingWindowCache.Integration.Tests;
 
@@ -12,59 +12,8 @@ namespace SlidingWindowCache.Integration.Tests;
 /// </summary>
 public class ExecutionStrategySelectionTests
 {
-    #region Test Data Source
-
-    private class TestDataSource : IDataSource<int, string>
-    {
-        public Task<RangeChunk<int, string>> FetchAsync(
-            Range<int> range,
-            CancellationToken cancellationToken)
-        {
-            return Task.FromResult(new RangeChunk<int, string>(range, GenerateDataForRange(range)));
-        }
-
-        /// <summary>
-        /// Generates data respecting range boundary inclusivity.
-        /// Uses pattern matching to handle all 4 combinations of inclusive/exclusive boundaries.
-        /// </summary>
-        private static IEnumerable<string> GenerateDataForRange(Range<int> range)
-        {
-            var data = new List<string>();
-            var start = (int)range.Start;
-            var end = (int)range.End;
-
-            switch (range)
-            {
-                case { IsStartInclusive: true, IsEndInclusive: true }:
-                    // [start, end]
-                    for (var i = start; i <= end; i++)
-                        data.Add($"Item_{i}");
-                    break;
-
-                case { IsStartInclusive: true, IsEndInclusive: false }:
-                    // [start, end)
-                    for (var i = start; i < end; i++)
-                        data.Add($"Item_{i}");
-                    break;
-
-                case { IsStartInclusive: false, IsEndInclusive: true }:
-                    // (start, end]
-                    for (var i = start + 1; i <= end; i++)
-                        data.Add($"Item_{i}");
-                    break;
-
-                default:
-                    // (start, end)
-                    for (var i = start + 1; i < end; i++)
-                        data.Add($"Item_{i}");
-                    break;
-            }
-
-            return data;
-        }
-    }
-
-    #endregion
+    private static IDataSource<int, string> CreateDataSource() =>
+        new SimpleTestDataSource<string>(i => $"Item_{i}");
 
     #region Task-Based Strategy Tests (Unbounded - Default)
 
@@ -72,7 +21,7 @@ public class ExecutionStrategySelectionTests
     public async Task WindowCache_WithNullCapacity_UsesTaskBasedStrategy()
     {
         // ARRANGE
-        var dataSource = new TestDataSource();
+        var dataSource = CreateDataSource();
         var domain = new IntegerFixedStepDomain();
         var options = new WindowCacheOptions(
             leftCacheSize: 1.0,
@@ -100,7 +49,7 @@ public class ExecutionStrategySelectionTests
     public async Task WindowCache_WithDefaultParameters_UsesTaskBasedStrategy()
     {
         // ARRANGE
-        var dataSource = new TestDataSource();
+        var dataSource = CreateDataSource();
         var domain = new IntegerFixedStepDomain();
         var options = new WindowCacheOptions(
             leftCacheSize: 1.0,
@@ -128,7 +77,7 @@ public class ExecutionStrategySelectionTests
     public async Task TaskBasedStrategy_UnderLoad_MaintainsSerialExecution()
     {
         // ARRANGE
-        var dataSource = new TestDataSource();
+        var dataSource = CreateDataSource();
         var domain = new IntegerFixedStepDomain();
         var options = new WindowCacheOptions(
             leftCacheSize: 0.5,
@@ -176,7 +125,7 @@ public class ExecutionStrategySelectionTests
     public async Task WindowCache_WithBoundedCapacity_UsesChannelBasedStrategy()
     {
         // ARRANGE
-        var dataSource = new TestDataSource();
+        var dataSource = CreateDataSource();
         var domain = new IntegerFixedStepDomain();
         var options = new WindowCacheOptions(
             leftCacheSize: 1.0,
@@ -204,7 +153,7 @@ public class ExecutionStrategySelectionTests
     public async Task ChannelBasedStrategy_UnderLoad_MaintainsSerialExecution()
     {
         // ARRANGE
-        var dataSource = new TestDataSource();
+        var dataSource = CreateDataSource();
         var domain = new IntegerFixedStepDomain();
         var options = new WindowCacheOptions(
             leftCacheSize: 0.5,
@@ -248,7 +197,7 @@ public class ExecutionStrategySelectionTests
     public async Task ChannelBasedStrategy_WithCapacityOne_WorksCorrectly()
     {
         // ARRANGE - Minimum capacity (strictest backpressure)
-        var dataSource = new TestDataSource();
+        var dataSource = CreateDataSource();
         var domain = new IntegerFixedStepDomain();
         var options = new WindowCacheOptions(
             leftCacheSize: 0.5,
@@ -288,7 +237,7 @@ public class ExecutionStrategySelectionTests
     public async Task TaskBasedStrategy_DisposalCompletesGracefully()
     {
         // ARRANGE
-        var dataSource = new TestDataSource();
+        var dataSource = CreateDataSource();
         var domain = new IntegerFixedStepDomain();
         var options = new WindowCacheOptions(
             leftCacheSize: 1.0,
@@ -318,7 +267,7 @@ public class ExecutionStrategySelectionTests
     public async Task ChannelBasedStrategy_DisposalCompletesGracefully()
     {
         // ARRANGE
-        var dataSource = new TestDataSource();
+        var dataSource = CreateDataSource();
         var domain = new IntegerFixedStepDomain();
         var options = new WindowCacheOptions(
             leftCacheSize: 1.0,

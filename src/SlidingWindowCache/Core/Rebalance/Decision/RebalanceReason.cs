@@ -6,6 +6,11 @@ namespace SlidingWindowCache.Core.Rebalance.Decision;
 internal enum RebalanceReason
 {
     /// <summary>
+    /// Default unspecified value. This value should never appear in practice.
+    /// </summary>
+    Unspecified = 0,
+
+    /// <summary>
     /// Request falls within the current cache's no-rebalance range (Stage 1 stability).
     /// </summary>
     WithinCurrentNoRebalanceRange,

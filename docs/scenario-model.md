@@ -143,9 +143,9 @@ The User Path does not expand the cache beyond RequestedRange.
 2. Cache computes intersection with CurrentCacheRange
 3. Missing part is synchronously requested from IDataSource
 4. Cache:
-    - merges cached and newly fetched data (cache expansion)
+    - merges cached and newly fetched data **locally** (in-memory assembly, not stored to cache)
     - does **not** trim excess data
-    - updates CurrentCacheRange to cover both old and new data
+    - does **not** update CurrentCacheRange (User Path is READ-ONLY with respect to cache state)
 5. Rebalance is triggered asynchronously
 6. RequestedRange data is returned to the user
 
@@ -400,7 +400,7 @@ The Sliding Window Cache follows these rules:
 
 ### Expected Behavior
 
-1. **U₂ cancels any pending rebalance work before performing its own cache mutations**
+1. **The new intent from U₂ supersedes R₁: IntentController's decision pipeline cancels any pending rebalance work when validation confirms new execution is necessary**
 2. User Path for U₂ executes normally and immediately
 3. A new rebalance trigger R₂ is issued
 4. R₁ is cancelled or marked obsolete
@@ -421,7 +421,7 @@ No rebalance work is executed based on outdated user intent. User Path always ha
 
 ### Expected Behavior
 
-1. **U₂ cancels ongoing rebalance execution R₁ before performing its own cache mutations**
+1. **The new intent from U₂ supersedes R₁: IntentController's decision pipeline cancels the ongoing rebalance when validation confirms new execution is necessary**
 2. User Path for U₂ executes normally and immediately
 3. R₂ becomes the latest rebalance intent
 4. R₁ receives a cancellation signal

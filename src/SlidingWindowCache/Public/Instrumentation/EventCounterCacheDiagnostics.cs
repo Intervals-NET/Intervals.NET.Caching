@@ -26,24 +26,24 @@ public sealed class EventCounterCacheDiagnostics : ICacheDiagnostics
     private int _dataSegmentUnavailable;
     private int _rebalanceExecutionFailed;
 
-    public int UserRequestServed => _userRequestServed;
-    public int CacheExpanded => _cacheExpanded;
-    public int CacheReplaced => _cacheReplaced;
-    public int UserRequestFullCacheHit => _userRequestFullCacheHit;
-    public int UserRequestPartialCacheHit => _userRequestPartialCacheHit;
-    public int UserRequestFullCacheMiss => _userRequestFullCacheMiss;
-    public int DataSourceFetchSingleRange => _dataSourceFetchSingleRange;
-    public int DataSourceFetchMissingSegments => _dataSourceFetchMissingSegments;
-    public int DataSegmentUnavailable => _dataSegmentUnavailable;
-    public int RebalanceIntentPublished => _rebalanceIntentPublished;
-    public int RebalanceExecutionStarted => _rebalanceExecutionStarted;
-    public int RebalanceExecutionCompleted => _rebalanceExecutionCompleted;
-    public int RebalanceExecutionCancelled => _rebalanceExecutionCancelled;
-    public int RebalanceSkippedCurrentNoRebalanceRange => _rebalanceSkippedCurrentNoRebalanceRange;
-    public int RebalanceSkippedPendingNoRebalanceRange => _rebalanceSkippedPendingNoRebalanceRange;
-    public int RebalanceSkippedSameRange => _rebalanceSkippedSameRange;
-    public int RebalanceScheduled => _rebalanceScheduled;
-    public int RebalanceExecutionFailed => _rebalanceExecutionFailed;
+    public int UserRequestServed => Volatile.Read(ref _userRequestServed);
+    public int CacheExpanded => Volatile.Read(ref _cacheExpanded);
+    public int CacheReplaced => Volatile.Read(ref _cacheReplaced);
+    public int UserRequestFullCacheHit => Volatile.Read(ref _userRequestFullCacheHit);
+    public int UserRequestPartialCacheHit => Volatile.Read(ref _userRequestPartialCacheHit);
+    public int UserRequestFullCacheMiss => Volatile.Read(ref _userRequestFullCacheMiss);
+    public int DataSourceFetchSingleRange => Volatile.Read(ref _dataSourceFetchSingleRange);
+    public int DataSourceFetchMissingSegments => Volatile.Read(ref _dataSourceFetchMissingSegments);
+    public int DataSegmentUnavailable => Volatile.Read(ref _dataSegmentUnavailable);
+    public int RebalanceIntentPublished => Volatile.Read(ref _rebalanceIntentPublished);
+    public int RebalanceExecutionStarted => Volatile.Read(ref _rebalanceExecutionStarted);
+    public int RebalanceExecutionCompleted => Volatile.Read(ref _rebalanceExecutionCompleted);
+    public int RebalanceExecutionCancelled => Volatile.Read(ref _rebalanceExecutionCancelled);
+    public int RebalanceSkippedCurrentNoRebalanceRange => Volatile.Read(ref _rebalanceSkippedCurrentNoRebalanceRange);
+    public int RebalanceSkippedPendingNoRebalanceRange => Volatile.Read(ref _rebalanceSkippedPendingNoRebalanceRange);
+    public int RebalanceSkippedSameRange => Volatile.Read(ref _rebalanceSkippedSameRange);
+    public int RebalanceScheduled => Volatile.Read(ref _rebalanceScheduled);
+    public int RebalanceExecutionFailed => Volatile.Read(ref _rebalanceExecutionFailed);
 
     /// <inheritdoc/>
     void ICacheDiagnostics.CacheExpanded() => Interlocked.Increment(ref _cacheExpanded);
@@ -119,6 +119,14 @@ public sealed class EventCounterCacheDiagnostics : ICacheDiagnostics
     /// <summary>
     /// Resets all counters to zero. Use this before each test to ensure clean state.
     /// </summary>
+    /// <remarks>
+    /// <para><strong>Warning — not atomic:</strong> This method resets each counter individually using
+    /// <see cref="Volatile.Write"/>. In a concurrent environment, another thread may increment a counter
+    /// between two consecutive resets, leaving the object in a partially-reset state. Only call this
+    /// method when you can guarantee that no other thread is mutating the counters (e.g., after
+    /// <c>WaitForIdleAsync</c> in tests).
+    /// </para>
+    /// </remarks>
     public void Reset()
     {
         Volatile.Write(ref _userRequestServed, 0);

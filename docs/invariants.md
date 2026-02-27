@@ -455,7 +455,7 @@ The system uses a **multi-stage rebalance decision pipeline**, not a cancellatio
 
 #### Multi-Stage Decision Pipeline
 
-The Rebalance Decision Engine validates rebalance necessity through three sequential stages:
+The Rebalance Decision Engine validates rebalance necessity through five stages:
 
 **Stage 1 — Current Cache NoRebalanceRange Validation**
 - **Purpose**: Fast-path check against current cache state
@@ -750,7 +750,7 @@ I/O operations (data fetching via IDataSource) are divided by responsibility:
 **Implementation:** See [component-map.md - I/O Isolation](#implementation) for enforcement mechanism details.
 - 🔵 **[Architectural — Covered by same test as G.43]**
 
-**G.46** 🟢 **[Behavioral — Tests: `Invariant_G46_UserCancellationDuringFetch`, `Invariant_G46_RebalanceCancellation`]** Cancellation **must be supported** for all scenarios:
+**G.46** 🟢 **[Behavioral — Tests: `Invariant_G46_UserCancellationDuringFetch`, `Invariant_F35_G46_RebalanceCancellationBehavior`]** Cancellation **must be supported** for all scenarios:
 1. **User-facing cancellation**: User-provided CancellationToken propagates through User Path to IDataSource.FetchAsync()
 2. **Background rebalance cancellation**: System supports cancellation of pending/ongoing rebalance execution
 - *Observable via*: 
@@ -758,7 +758,7 @@ I/O operations (data fetching via IDataSource) are divided by responsibility:
   - Rebalance cancellation: System stability and lifecycle integrity under concurrent requests
 - *Test verifies*: 
   - `Invariant_G46_UserCancellationDuringFetch`: Cancelling during IDataSource fetch throws OperationCanceledException
-  - `Invariant_G46_RebalanceCancellation`: Background rebalance supports cancellation mechanism (high-level guarantee)
+  - `Invariant_F35_G46_RebalanceCancellationBehavior`: Background rebalance supports cancellation mechanism (high-level guarantee)
 - *Important*: System does NOT guarantee cancellation on new requests. Cancellation MAY occur depending on Decision Engine scheduling validation. Focus is on system stability and cache consistency, not deterministic cancellation behavior.
 - *Related*: F.35 (detailed rebalance execution cancellation mechanics), A.0a (User Path priority via validation-driven cancellation)
 

@@ -30,12 +30,12 @@ internal readonly struct RebalanceDecision<TRange>
     public RebalanceReason Reason { get; }
 
     private RebalanceDecision(
-        bool shouldSchedule,
+        bool isExecutionRequired,
         Range<TRange>? desiredRange,
         Range<TRange>? desiredNoRebalanceRange,
         RebalanceReason reason)
     {
-        IsExecutionRequired = shouldSchedule;
+        IsExecutionRequired = isExecutionRequired;
         DesiredRange = desiredRange;
         DesiredNoRebalanceRange = desiredNoRebalanceRange;
         Reason = reason;

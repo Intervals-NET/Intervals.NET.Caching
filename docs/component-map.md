@@ -39,14 +39,14 @@ This document provides a comprehensive catalog of all components in the Sliding 
 
 **By Type**:
 - 🟦 **Classes (Reference Types)**: 12
-- 🟩 **Structs (Value Types)**: 3
+- 🟩 **Structs (Value Types)**: 4
 - 🟧 **Interfaces**: 3
 - 🟪 **Enums**: 1
-- 🟨 **Records**: 2
+- 🟨 **Records**: 3
 
 **By Mutability**:
 - **Immutable**: 12 components
-- **Mutable**: 5 components (CacheState, IntentManager._currentIntentCts, Storage implementations)
+- **Mutable**: 5 components (CacheState, IntentController._pendingIntent, Storage implementations)
 
 **By Execution Context**:
 - **User Thread**: 2 (UserRequestHandler, IntentController.PublishIntent)
@@ -101,7 +101,7 @@ This document provides a comprehensive catalog of all components in the Sliding 
     │       ├── implements → 🟦 TaskBasedRebalanceExecutionController (default)
     │       └── implements → 🟦 ChannelBasedRebalanceExecutionController (optional)
     ├── 🟦 RebalanceDecisionEngine<TRange, TDomain>
-    │   ├── owns → 🟩 ThresholdRebalancePolicy<TRange, TDomain>
+    │   ├── owns → 🟩 NoRebalanceSatisfactionPolicy<TRange>
     │   └── owns → 🟩 ProportionalRangePlanner<TRange, TDomain>
     ├── 🟦 RebalanceExecutor<TRange, TData, TDomain>
     └── 🟦 CacheDataExtensionService<TRange, TData, TDomain>
@@ -135,7 +135,7 @@ The system uses a **multi-stage rebalance decision pipeline**, not a cancellatio
 **Pipeline Stages** (all must pass for execution):
 
 1. **Stage 1: Current Cache NoRebalanceRange Validation**
-   - Component: `ThresholdRebalancePolicy.ShouldRebalance()`
+   - Component: `NoRebalanceSatisfactionPolicy.ShouldRebalance()`
    - Check: Is RequestedRange contained in NoRebalanceRange(CurrentCacheRange)?
    - Purpose: Fast-path rejection if current cache provides sufficient buffer
    - Result: Skip if contained (no I/O needed)
@@ -147,11 +147,20 @@ The system uses a **multi-stage rebalance decision pipeline**, not a cancellatio
    - Result: Skip if pending rebalance covers request
    - Note: May be implemented via cancellation timing optimization
 
-3. **Stage 3: DesiredCacheRange vs CurrentCacheRange Equality**
+3. **Stage 3: DesiredCacheRange Computation**
+   - Component: `ProportionalRangePlanner.Plan()` + `NoRebalanceRangePlanner.Plan()`
+   - Computes DesiredCacheRange and DesiredNoRebalanceRange from RequestedRange + config
+   - Purpose: Determine the target cache geometry
+
+4. **Stage 4: DesiredCacheRange vs CurrentCacheRange Equality**
    - Component: `RebalanceDecisionEngine.Evaluate` (pre-scheduling analytical check)
    - Check: Does computed DesiredCacheRange == CurrentCacheRange?
    - Purpose: Avoid no-op mutations
    - Result: Skip scheduling if cache already in optimal configuration
+
+5. **Stage 5: Schedule Execution**
+   - All previous stages passed — return execute decision with desired ranges
+   - Result: IntentController cancels previous pending execution and enqueues new one
 
 **Execution Rule**: Rebalance executes ONLY if ALL stages confirm necessity.
 
@@ -163,7 +172,7 @@ The system uses a **multi-stage rebalance decision pipeline**, not a cancellatio
 | **IntentController** | Manages intent lifecycle; runs background processing loop | No decision authority |
 | **IRebalanceExecutionController** | Debounce + execution serialization | No decision authority |
 | **RebalanceDecisionEngine** | **SOLE AUTHORITY** for necessity determination | **Yes - THE authority** |
-| **ThresholdRebalancePolicy** | Stage 1 validation (NoRebalanceRange check) | Analytical input |
+| **NoRebalanceSatisfactionPolicy** | Stage 1 & 2 validation (NoRebalanceRange check) | Analytical input |
 | **ProportionalRangePlanner** | Computes desired cache geometry | Analytical input |
 | **RebalanceExecutor** | Mechanical execution; assumes validated necessity | No decision authority |
 
@@ -174,7 +183,7 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 **Work Avoidance Mechanisms:**
 - Stage 1: Avoid rebalance if current cache sufficient (NoRebalanceRange containment)
 - Stage 2: Avoid redundant rebalance if pending execution covers request (anti-thrashing)
-- Stage 3: Avoid no-op mutations if cache already optimal (Desired==Current)
+- Stage 4: Avoid no-op mutations if cache already optimal (Desired==Current)
 
 **Smart Eventual Consistency:**
 
@@ -227,7 +236,7 @@ This section bridges architectural invariants (documented in [invariants.md](inv
 - **Cooperative Cancellation**: Multiple checkpoints in execution pipeline check for cancellation
 
 **Source References**:
-- `src/SlidingWindowCache/Core/Intent/IntentManager.cs` - Cancellation token lifecycle management
+- `src/SlidingWindowCache/Core/Rebalance/Intent/IntentController.cs` - Cancellation token lifecycle management
 - `src/SlidingWindowCache/Core/Rebalance/Decision/RebalanceDecisionEngine.cs` - Multi-stage validation gates cancellation
 - `src/SlidingWindowCache/Core/Rebalance/Execution/RebalanceExecutor.cs` - Cancellation checkpoints (ThrowIfCancellationRequested)
 
@@ -237,12 +246,12 @@ This section bridges architectural invariants (documented in [invariants.md](inv
 
 **Enforcement Mechanism**:
 - **Latest-Wins Semantics**: Interlocked.Exchange replaces previous intent atomically
-- **Intent Singularity**: Single-writer architecture for intent state (IntentManager)
+- **Intent Singularity**: Single-writer architecture for intent state (IntentController)
 - **Early Exit Validation**: Cancellation checked after debounce delay before execution starts
 
 **Source References**:
-- `src/SlidingWindowCache/Core/Intent/IntentManager.cs` - Atomic intent replacement via Interlocked.Exchange
-- `src/SlidingWindowCache/Core/Intent/IntentController.cs` - Intent processing loop with early exit on cancellation
+- `src/SlidingWindowCache/Core/Rebalance/Intent/IntentController.cs` - Atomic intent replacement via Interlocked.Exchange
+- `src/SlidingWindowCache/Core/Rebalance/Intent/IntentController.cs` - Intent processing loop with early exit on cancellation
 
 ### UserRequestHandler Responsibilities
 
@@ -254,7 +263,7 @@ This section bridges architectural invariants (documented in [invariants.md](inv
 
 **Source References**:
 - `src/SlidingWindowCache/Core/UserPath/UserRequestHandler.cs` - Exclusive intent publisher, minimal work implementation
-- `src/SlidingWindowCache/Core/Intent/IntentController.cs` - Intent publication interface (internal visibility)
+- `src/SlidingWindowCache/Core/Rebalance/Intent/IntentController.cs` - Intent publication interface (internal visibility)
 
 ### Async Execution Model
 
@@ -266,7 +275,7 @@ This section bridges architectural invariants (documented in [invariants.md](inv
 - **Thread Context Separation**: User thread vs ThreadPool thread isolation
 
 **Source References**:
-- `src/SlidingWindowCache/Core/Intent/IntentController.cs` - ProcessIntentsAsync loop runs on background thread
+- `src/SlidingWindowCache/Core/Rebalance/Intent/IntentController.cs` - ProcessIntentsAsync loop runs on background thread
 - `src/SlidingWindowCache/Infrastructure/Execution/TaskBasedRebalanceExecutionController.cs` - Task.Run scheduling
 - `src/SlidingWindowCache/Infrastructure/Execution/ChannelBasedRebalanceExecutionController.cs` - Channel-based background execution
 
@@ -307,7 +316,7 @@ This section bridges architectural invariants (documented in [invariants.md](inv
 
 **Source References**:
 - `src/SlidingWindowCache/Core/Rebalance/Execution/RebalanceExecutor.cs` - Cancellation validation before cache mutation
-- `src/SlidingWindowCache/Core/Intent/IntentManager.cs` - Token lifecycle management
+- `src/SlidingWindowCache/Core/Rebalance/Intent/IntentController.cs` - Token lifecycle management
 
 ### Intent Singularity
 
@@ -319,7 +328,7 @@ This section bridges architectural invariants (documented in [invariants.md](inv
 - **No Queue Buildup**: At most one pending intent at any time
 
 **Source References**:
-- `src/SlidingWindowCache/Core/Intent/IntentManager.cs` - Interlocked.Exchange for atomic intent replacement
+- `src/SlidingWindowCache/Core/Rebalance/Intent/IntentController.cs` - Interlocked.Exchange for atomic intent replacement
 
 ### Cancellation Protocol
 
@@ -344,7 +353,7 @@ This section bridges architectural invariants (documented in [invariants.md](inv
 - **Decision Engine Authority**: All stages must pass for execution to proceed
 
 **Source References**:
-- `src/SlidingWindowCache/Core/Intent/IntentController.cs` - Cancellation check in ProcessIntentsAsync after debounce
+- `src/SlidingWindowCache/Core/Rebalance/Intent/IntentController.cs` - Cancellation check in ProcessIntentsAsync after debounce
 - `src/SlidingWindowCache/Core/Rebalance/Decision/RebalanceDecisionEngine.cs` - Multi-stage early exit logic
 
 ### Serial Execution Guarantee
@@ -357,8 +366,8 @@ This section bridges architectural invariants (documented in [invariants.md](inv
 - **Sequential Processing**: Intent processing loop ensures serial execution
 
 **Source References**:
-- `src/SlidingWindowCache/Core/Intent/IntentController.cs` - Sequential intent processing loop
-- `src/SlidingWindowCache/Core/Intent/IntentManager.cs` - Cancellation of previous execution before scheduling new
+- `src/SlidingWindowCache/Core/Rebalance/Intent/IntentController.cs` - Sequential intent processing loop
+- `src/SlidingWindowCache/Core/Rebalance/Intent/IntentController.cs` - Cancellation of previous execution before scheduling new
 
 ### Intent Data Contract
 
@@ -370,7 +379,7 @@ This section bridges architectural invariants (documented in [invariants.md](inv
 - **Type Safety**: Compiler enforces data presence
 
 **Source References**:
-- `src/SlidingWindowCache/Core/Intent/IntentController.cs` - PublishIntent(requestedRange, deliveredData) signature
+- `src/SlidingWindowCache/Core/Rebalance/Intent/IntentController.cs` - PublishIntent(requestedRange, deliveredData) signature
 - `src/SlidingWindowCache/Core/UserPath/UserRequestHandler.cs` - Single data materialization shared between paths
 
 ### Pure Decision Logic
@@ -385,7 +394,7 @@ This section bridges architectural invariants (documented in [invariants.md](inv
 
 **Source References**:
 - `src/SlidingWindowCache/Core/Rebalance/Decision/RebalanceDecisionEngine.cs` - Pure evaluation logic
-- `src/SlidingWindowCache/Core/Planning/ThresholdRebalancePolicy.cs` - Stateless struct
+- `src/SlidingWindowCache/Core/Planning/NoRebalanceSatisfactionPolicy.cs` - Stateless struct
 - `src/SlidingWindowCache/Core/Planning/ProportionalRangePlanner.cs` - Stateless struct
 
 ### Decision-Execution Separation
@@ -517,7 +526,7 @@ This section bridges architectural invariants (documented in [invariants.md](inv
 - **Documentation**: XML comments verify ordering at each publication site
 
 **Source References**:
-- `src/SlidingWindowCache/Core/Intent/IntentController.cs` - Increment before semaphore.Release
+- `src/SlidingWindowCache/Core/Rebalance/Intent/IntentController.cs` - Increment before semaphore.Release
 - `src/SlidingWindowCache/Infrastructure/Execution/` - Increment before channel.Writer.WriteAsync or Task.Run
 
 ### Activity Counter Cleanup
@@ -530,7 +539,7 @@ This section bridges architectural invariants (documented in [invariants.md](inv
 - **Catch Blocks**: Manual decrement in catch blocks for pre-execution failures
 
 **Source References**:
-- `src/SlidingWindowCache/Core/Intent/IntentController.cs` - Finally block in ProcessIntentsAsync loop
+- `src/SlidingWindowCache/Core/Rebalance/Intent/IntentController.cs` - Finally block in ProcessIntentsAsync loop
 - `src/SlidingWindowCache/Infrastructure/Execution/` - Finally blocks in execution controllers
 
 ---
@@ -572,7 +581,7 @@ public record WindowCacheOptions
 
 **Used by**: 
 - WindowCache (constructor)
-- ThresholdRebalancePolicy (threshold configuration)
+- NoRebalanceSatisfactionPolicy (threshold configuration)
 - ProportionalRangePlanner (size configuration)
 
 ---
@@ -1169,7 +1178,7 @@ internal sealed class RebalanceDecisionEngine<TRange, TDomain>
 **Role**: Pure Decision Logic - **SOLE AUTHORITY for Rebalance Necessity Determination**
 
 **Dependencies** (all readonly, value types):
-- ThresholdRebalancePolicy (threshold validation logic)
+- NoRebalanceSatisfactionPolicy (threshold validation logic)
 - ProportionalRangePlanner (cache range planning)
 - NoRebalanceRangePlanner (no-rebalance range planning)
 
@@ -1227,12 +1236,12 @@ internal sealed class RebalanceDecisionEngine<TRange, TDomain>
 
 ---
 
-#### 🟩 ThresholdRebalancePolicy<TRange, TDomain>
+#### 🟩 NoRebalanceSatisfactionPolicy<TRange>
 ```csharp
-internal readonly struct ThresholdRebalancePolicy<TRange, TDomain>
+internal readonly struct NoRebalanceSatisfactionPolicy<TRange>
 ```
 
-**File**: `src/SlidingWindowCache/Core/Rebalance/Decision/ThresholdRebalancePolicy.cs`
+**File**: `src/SlidingWindowCache/Core/Rebalance/Decision/NoRebalanceSatisfactionPolicy.cs`
 
 **Type**: Struct (readonly value type)
 
@@ -1240,7 +1249,6 @@ internal readonly struct ThresholdRebalancePolicy<TRange, TDomain>
 
 **Key Methods**:
 - **ShouldRebalance**: Determines if requested range is outside no-rebalance range
-- **GetNoRebalanceRange**: Computes no-rebalance range by shrinking cache range using threshold ratios
 
 **Characteristics**:
 - ✅ **Value type** (struct, passed by value)
@@ -1248,14 +1256,13 @@ internal readonly struct ThresholdRebalancePolicy<TRange, TDomain>
 - ✅ **Configuration-driven** (uses WindowCacheOptions)
 - ✅ **Stateless** (readonly fields)
 
-**Ownership**: Value type, copied into RebalanceDecisionEngine and RebalanceExecutor
+**Ownership**: Value type, copied into RebalanceDecisionEngine
 
 **Execution Context**: Background Thread (invoked by RebalanceDecisionEngine within intent processing loop - see IntentController.ProcessIntentsAsync)
 
 **Responsibilities**:
-- Compute NoRebalanceRange (shrinks cache by threshold ratios)
-- Check if requested range falls outside no-rebalance zone
-- Answers: **"When to rebalance"**
+- Check if requested range falls outside no-rebalance zone (Stages 1 & 2)
+- Answers: **"When to rebalance"** (decision evaluation only; planning delegated to `NoRebalanceRangePlanner`)
 
 **Invariants Enforced**:
 - 26: No rebalance if inside NoRebalanceRange
@@ -1701,7 +1708,7 @@ Creates and wires all internal components in dependency order:
 │   ├─ 🟦 IntentController ────────────────────┼───┼───┼───┐         │
 │   │   └─ 🟧 IRebalanceExecutionController ───┼───┼───┼───┼───┐     │
 │   ├─ 🟦 RebalanceDecisionEngine ─────────────┼───┼───┼───┼───┼───┐ │
-│   │   ├─ 🟩 ThresholdRebalancePolicy         │   │   │   │   │   │ │
+│   │   ├─ 🟩 NoRebalanceSatisfactionPolicy      │   │   │   │   │   │ │
 │   │   └─ 🟩 ProportionalRangePlanner          │   │   │   │   │   │ │
 │   └─ 🟦 RebalanceExecutor ────────────────────┼───┼───┼───┼───┼───┤ │
 │                                                │   │   │   │   │   │ │
@@ -1759,7 +1766,7 @@ Creates and wires all internal components in dependency order:
 │  🟦 CLASS (sealed)                                                │   │
 │                                                                   │   │
 │  Fields (value types):                                           │   │
-│   ├─ 🟩 ThresholdRebalancePolicy _policy                         │   │
+│   ├─ 🟩 NoRebalanceSatisfactionPolicy _policy                     │   │
 │   ├─ 🟩 ProportionalRangePlanner _planner                        │   │
 │   └─ 🟩 NoRebalanceRangePlanner _noRebalancePlanner              │   │
 │                                                                   │   │
@@ -2019,7 +2026,7 @@ The Sliding Window Cache follows a **single consumer model** as documented in `d
 | **RebalanceDecisionEngine**                                                  | 🔄 **Background** | Invoked in intent processing loop, CPU-only logic                     |
 | **ProportionalRangePlanner**                                                 | 🔄 **Background** | Invoked by DecisionEngine in intent processing loop                   |
 | **NoRebalanceRangePlanner**                                                  | 🔄 **Background** | Invoked by DecisionEngine in intent processing loop                   |
-| **ThresholdRebalancePolicy**                                                 | 🔄 **Background** | Invoked by DecisionEngine in intent processing loop                   |
+| **NoRebalanceSatisfactionPolicy**                                            | 🔄 **Background** | Invoked by DecisionEngine in intent processing loop                   |
 | **IRebalanceExecutionController.PublishExecutionRequest()**                  | 🔄 **Background** | Invoked by intent loop (task-based: sync, channel-based: async await) |
 | **TaskBasedRebalanceExecutionController.ChainExecutionAsync()**              | 🔄 **Background** | Task chain execution (sequential)                                     |
 | **ChannelBasedRebalanceExecutionController.ProcessExecutionRequestsAsync()** | 🔄 **Background** | Channel loop execution                                                |
@@ -2083,7 +2090,7 @@ The Sliding Window Cache follows a **single consumer model** as documented in `d
 │  .Evaluate()                     │ Stage 2: Pending NoRebalanceRange chk│
 │     ├─ Stage 3 ────────────────→ │ • ProportionalRangePlanner.Plan()    │
 │     │                            │ • NoRebalanceRangePlanner.Plan()     │
-│     ├─ ThresholdRebalancePolicy  │ Stage 4: Equality check              │
+│     ├─ NoRebalanceSatisfactionPolicy│ Stage 4: Equality check              │
 │     └─ Return Decision           │ Stage 5: Return decision             │
 │           ↓                      │                                      │
 │ If Skip: continue loop           │ • Diagnostics event                  │
@@ -2266,8 +2273,9 @@ var sharedCache = new WindowCache<int, Data, IntDomain>(...);
 
 | Component                | Mutability | Ownership              | Lifetime           |
 |--------------------------|------------|------------------------|--------------------|
-| ThresholdRebalancePolicy | Readonly   | Copied into components | Component lifetime |
+| NoRebalanceSatisfactionPolicy | Readonly   | Copied into components | Component lifetime |
 | ProportionalRangePlanner | Readonly   | Copied into components | Component lifetime |
+| NoRebalanceRangePlanner  | Readonly   | Copied into components | Component lifetime |
 | RebalanceDecision        | Readonly   | Local variable         | Method scope       |
 
 ### Other Types
@@ -2276,6 +2284,7 @@ var sharedCache = new WindowCache<int, Data, IntDomain>(...);
 |--------------------|--------------|------------------------|------------|
 | WindowCacheOptions | 🟨 Record    | Configuration          | Immutable  |
 | RangeChunk         | 🟨 Record    | Data transfer          | Immutable  |
+| Intent             | 🟨 Record    | Intent data container  | Immutable  |
 | UserCacheReadMode  | 🟪 Enum      | Configuration option   | Immutable  |
 | ICacheStorage      | 🟧 Interface | Storage abstraction    | -          |
 | IDataSource        | 🟧 Interface | External data contract | -          |
@@ -2294,7 +2303,7 @@ var sharedCache = new WindowCache<int, Data, IntDomain>(...);
 **Background Thread (Intent Processing Loop)**:
 - IntentController.ProcessIntentsAsync - Intent processing loop, decision orchestration
 - RebalanceDecisionEngine - Pure decision logic (CPU-only, deterministic)
-- ThresholdRebalancePolicy - Threshold validation (value type, inline)
+- NoRebalanceSatisfactionPolicy - Threshold validation (value type, inline)
 - ProportionalRangePlanner - Cache geometry planning (value type, inline)
 
 **Background ThreadPool (Execution)**:
@@ -2318,7 +2327,7 @@ var sharedCache = new WindowCache<int, Data, IntDomain>(...);
 
 **Decision Making**:
 - RebalanceDecisionEngine (orchestrator)
-- ThresholdRebalancePolicy (thresholds)
+- NoRebalanceSatisfactionPolicy (thresholds)
 - ProportionalRangePlanner (geometry)
 
 **Mutation**:
@@ -2349,7 +2358,7 @@ Components follow actor-like patterns with clear responsibilities and message pa
 **ICacheStorage** with two implementations (SnapshotReadStorage, CopyOnReadStorage) allows runtime selection of storage strategy.
 
 ### 6. Value Object Pattern
-**ThresholdRebalancePolicy**, **ProportionalRangePlanner**, **RebalanceDecision** are immutable value types with pure behavior.
+**NoRebalanceSatisfactionPolicy**, **ProportionalRangePlanner**, **RebalanceDecision** are immutable value types with pure behavior.
 
 ### 7. Shared Mutable State (Controlled)
 **CacheState** is intentionally shared mutable state, coordinated via CancellationToken (not locks).
@@ -2377,9 +2386,9 @@ Entire architecture assumes one logical consumer, avoiding traditional concurren
 The Sliding Window Cache is composed of **19 components** working together to provide fast, cache-aware data access with automatic rebalancing:
 
 - **10 classes** (reference types) provide the runtime behavior
-- **3 structs** (value types) provide pure, stateless logic
+- **4 structs** (value types) provide pure, stateless logic
 - **2 interfaces** define contracts for extensibility
-- **2 records** provide immutable configuration and data transfer
+- **3 records** provide immutable configuration and data transfer
 - **1 enum** defines storage strategy options
 
 The architecture follows a **single consumer model** with **no traditional synchronization primitives**, relying instead on **CancellationToken** for coordination between the fast User Path and the async Rebalance Path.

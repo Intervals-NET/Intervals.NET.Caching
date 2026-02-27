@@ -109,8 +109,8 @@ internal readonly struct ProportionalRangePlanner<TRange, TDomain>
 
         return requested.Expand(
             domain: _domain,
-            left: (long)left,
-            right: (long)right
+            left: (long)Math.Round(left),
+            right: (long)Math.Round(right)
         );
     }
 }

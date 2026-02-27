@@ -48,7 +48,7 @@ public sealed class WindowCache<TRange, TData, TDomain>
     // TaskCompletionSource for coordinating concurrent DisposeAsync calls
     // Allows loser threads to await disposal completion without CPU burn
     // Published via Volatile.Write when winner thread starts disposal
-    private TaskCompletionSource<bool>? _disposalCompletionSource;
+    private TaskCompletionSource? _disposalCompletionSource;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="WindowCache{TRange,TData,TDomain}"/> class.
@@ -76,7 +76,7 @@ public sealed class WindowCache<TRange, TData, TDomain>
     )
     {
         // Initialize diagnostics (use NoOpDiagnostics if null to avoid null checks in actors)
-        cacheDiagnostics ??= new NoOpDiagnostics();
+        cacheDiagnostics ??= NoOpDiagnostics.Instance;
         var cacheStorage = CreateCacheStorage(domain, options);
         var state = new CacheState<TRange, TData, TDomain>(cacheStorage, domain);
 
@@ -139,17 +139,15 @@ public sealed class WindowCache<TRange, TData, TDomain>
                 activityCounter
             );
         }
-        else
-        {
-            // Bounded strategy: Channel-based serialization with backpressure support
-            return new ChannelBasedRebalanceExecutionController<TRange, TData, TDomain>(
-                executor,
-                options.DebounceDelay,
-                cacheDiagnostics,
-                activityCounter,
-                options.RebalanceQueueCapacity.Value
-            );
-        }
+
+        // Bounded strategy: Channel-based serialization with backpressure support
+        return new ChannelBasedRebalanceExecutionController<TRange, TData, TDomain>(
+            executor,
+            options.DebounceDelay,
+            cacheDiagnostics,
+            activityCounter,
+            options.RebalanceQueueCapacity.Value
+        );
     }
 
     /// <summary>
@@ -261,7 +259,7 @@ public sealed class WindowCache<TRange, TData, TDomain>
     /// <para><strong>Thread Safety:</strong></para>
     /// <para>
     /// Uses lock-free synchronization via <see cref="Interlocked.CompareExchange"/>, <see cref="Volatile"/>,
-    /// and <see cref="TaskCompletionSource{TResult}"/> operations, consistent with the project's 
+    /// and <see cref="TaskCompletionSource"/> operations, consistent with the project's 
     /// "Mostly Lock-Free Concurrency" architecture principle.
     /// </para>
     /// <para><strong>Concurrent Disposal Coordination:</strong></para>
@@ -300,7 +298,7 @@ public sealed class WindowCache<TRange, TData, TDomain>
         if (previousState == 0)
         {
             // Winner thread - create TCS and perform disposal
-            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             Volatile.Write(ref _disposalCompletionSource, tcs);
 
             try
@@ -310,7 +308,7 @@ public sealed class WindowCache<TRange, TData, TDomain>
                 await _userRequestHandler.DisposeAsync().ConfigureAwait(false);
 
                 // Signal successful completion
-                tcs.TrySetResult(true);
+                tcs.TrySetResult();
             }
             catch (Exception ex)
             {
@@ -328,7 +326,7 @@ public sealed class WindowCache<TRange, TData, TDomain>
         {
             // Loser thread - await disposal completion asynchronously
             // Brief spin-wait for TCS publication (should be very fast - CPU-only operation)
-            TaskCompletionSource<bool>? tcs;
+            TaskCompletionSource? tcs;
             var spinWait = new SpinWait();
 
             while ((tcs = Volatile.Read(ref _disposalCompletionSource)) == null)

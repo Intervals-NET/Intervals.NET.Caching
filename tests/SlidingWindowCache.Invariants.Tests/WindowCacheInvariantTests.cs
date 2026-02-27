@@ -1148,15 +1148,14 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         // ACT: Request and wait for rebalance to complete
         await TestHelpers.ExecuteRequestAndWaitForRebalance(cache, TestHelpers.CreateRange(100, 110));
 
-        if (_cacheDiagnostics.RebalanceExecutionCompleted > 0)
-        {
-            // Verify rebalance was scheduled
-            TestHelpers.AssertRebalanceScheduled(_cacheDiagnostics, 1);
-
-            // After rebalance, cache should serve data from normalized range [100-11, 110+11] = [89, 121]
-            var normalizedData = await cache.GetDataAsync(TestHelpers.CreateRange(90, 120), CancellationToken.None);
-            TestHelpers.AssertUserDataCorrect(normalizedData.Data, TestHelpers.CreateRange(90, 120));
-        }
+        // ASSERT: At least one rebalance must complete for the post-execution guarantees to be meaningful
+        Assert.True(_cacheDiagnostics.RebalanceExecutionCompleted > 0,
+            "At least one rebalance must complete so that F.40/F.41/F.42 post-execution guarantees can be verified.");
+        // Verify rebalance was scheduled
+        TestHelpers.AssertRebalanceScheduled(_cacheDiagnostics, 1);
+        // After rebalance, cache should serve data from normalized range [100-10, 110+10] = [90, 120]
+        var normalizedData = await cache.GetDataAsync(TestHelpers.CreateRange(90, 120), CancellationToken.None);
+        TestHelpers.AssertUserDataCorrect(normalizedData.Data, TestHelpers.CreateRange(90, 120));
     }
 
     /// <summary>
@@ -1195,8 +1194,8 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         // ASSERT: Only missing segments should be fetched (incremental optimization)
         // The system should NOT refetch the entire [105, 120] range or full desired range
         // Depending on timing, this may be a partial hit with missing segments fetch
-        Assert.True(fetchedRanges.Count >= 0,
-            "Cache expansion should use incremental fetch (0 if already expanded enough, or missing segments only)");
+        Assert.True(fetchedRanges.Count > 0,
+            "Cache expansion should trigger at least one incremental fetch of missing segments");
 
         // If fetches occurred, verify they don't include already-cached data
         if (fetchedRanges.Count > 0)

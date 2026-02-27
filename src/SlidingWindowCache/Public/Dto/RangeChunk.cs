@@ -14,7 +14,7 @@ namespace SlidingWindowCache.Public.Dto;
 /// </param>
 /// <param name="Data">
 /// The data elements for the range.
-/// Empty enumerable when Range is null.
+/// Empty list when Range is null.
 /// </param>
 /// <remarks>
 /// <para><strong>IDataSource Contract:</strong></para>
@@ -25,8 +25,8 @@ namespace SlidingWindowCache.Public.Dto;
 /// <code>
 /// // Database with records ID 100-500
 /// // Request [50..150] → Return RangeChunk([100..150], 51 records)
-/// // Request [600..700] → Return RangeChunk(null, empty enumerable)
+/// // Request [600..700] → Return RangeChunk(null, empty list)
 /// </code>
 /// </remarks>
-public sealed record RangeChunk<TRange, TData>(Range<TRange>? Range, IEnumerable<TData> Data)
+public sealed record RangeChunk<TRange, TData>(Range<TRange>? Range, IReadOnlyList<TData> Data)
     where TRange : IComparable<TRange>;

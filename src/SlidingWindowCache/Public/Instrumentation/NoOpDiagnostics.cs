@@ -5,6 +5,11 @@
 /// </summary>
 public sealed class NoOpDiagnostics : ICacheDiagnostics
 {
+    /// <summary>
+    /// A shared singleton instance. Use this to avoid unnecessary allocations.
+    /// </summary>
+    public static readonly NoOpDiagnostics Instance = new();
+
     /// <inheritdoc/>
     public void CacheExpanded()
     {
@@ -73,6 +78,9 @@ public sealed class NoOpDiagnostics : ICacheDiagnostics
     /// <inheritdoc/>
     public void RebalanceExecutionFailed(Exception ex)
     {
+        // Intentional no-op: this implementation discards all diagnostics including failures.
+        // For production systems, use EventCounterCacheDiagnostics or a custom ICacheDiagnostics
+        // implementation that logs to your observability pipeline.
     }
 
     /// <inheritdoc/>

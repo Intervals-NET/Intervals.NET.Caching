@@ -102,7 +102,7 @@ IntentController OWNS the DecisionEngine instance.
 
 **Responsibility Type:** ensures correctness of rebalance necessity decisions through analytical validation, enabling smart eventual consistency
 
-**Note:** Not a top-level actor — internal tool of IntentManager/Executor pipeline, but THE authority for necessity determination and work avoidance.
+**Note:** Not a top-level actor — internal tool of IntentController/Executor pipeline, but THE authority for necessity determination and work avoidance.
 
 ---
 
@@ -134,7 +134,7 @@ Pure functions, lightweight structs (value types), CPU-only, side-effect free
 - 30. Independent of current cache contents [ProportionalRangePlanner]
 - 31. Canonical target cache state [ProportionalRangePlanner]
 - 32. Sliding window geometry defined by configuration [Both components]
-- 33. NoRebalanceRange derived from current cache range + config [ThresholdRebalancePolicy]
+- 33. NoRebalanceRange derived from current cache range + config [NoRebalanceSatisfactionPolicy + NoRebalanceRangePlanner]
 - 35. Threshold sum constraint (leftThreshold + rightThreshold ≤ 1.0) [WindowCacheOptions validation]
 
 **Responsibility Type:** sets rules and constraints
@@ -234,24 +234,24 @@ Executor is **mechanically simple** with no analytical logic:
 - Performs only: fetch missing data, merge with delivered data, trim to desired range, write atomically
 
 **Responsible for invariants:**
-- 4. Rebalance is asynchronous relative to User Path
-- 34. MUST support cancellation at all stages
-- 34a. MUST yield to User Path requests immediately upon cancellation
-- 34b. Partially executed or cancelled execution MUST NOT leave cache inconsistent
-- 35. Only path responsible for cache normalization
-- 35a. Mutates cache ONLY for normalization, using delivered data from intent:
+- A.4. Rebalance is asynchronous relative to User Path
+- F.35. MUST support cancellation at all stages
+- F.35a. MUST yield to User Path requests immediately upon cancellation
+- F.35b. Partially executed or cancelled execution MUST NOT leave cache inconsistent
+- F.36. Only path responsible for cache normalization (single-writer architecture)
+- F.36a. Mutates cache ONLY for normalization, using delivered data from intent:
   - Uses delivered data from intent as authoritative base (not current cache)
   - Expanding to DesiredCacheRange by fetching only truly missing ranges
   - Trimming excess data outside DesiredCacheRange
   - Writing to Cache.Rematerialize()
   - Writing to IsInitialized (= true)
   - Recomputing NoRebalanceRange
-- 36. May replace / expand / shrink cache to achieve normalization
-- 37. Requests data only for missing subranges (not covered by delivered data)
-- 38. Does not overwrite intersecting data
-- 39. Upon completion: CacheData corresponds to DesiredCacheRange
-- 40. Upon completion: CurrentCacheRange == DesiredCacheRange
-- 41. Upon completion: NoRebalanceRange recomputed
+- F.37. May replace / expand / shrink cache to achieve normalization
+- F.38. Requests data only for missing subranges (not covered by delivered data)
+- F.39. Does not overwrite intersecting data
+- F.40. Upon completion: CacheData corresponds to DesiredCacheRange
+- F.41. Upon completion: CurrentCacheRange == DesiredCacheRange
+- F.42. Upon completion: NoRebalanceRange recomputed
 
 **Responsibility Type:** executes rebalance and normalizes cache (cancellable, never concurrent with User Path, assumes validated necessity)
 

@@ -78,7 +78,7 @@ public interface IDataSource<TRange, TData> where TRange : IComparable<TRange>
     /// <item><description>Return RangeChunk with Range = null when no data is available for the requested range</description></item>
     /// <item><description>Return truncated range when partial data is available (intersection of requested and available)</description></item>
     /// <item><description>NEVER throw exceptions for out-of-bounds requests - use null Range instead</description></item>
-    /// <item><description>Ensure Data.Count() equals Range.Span when Range is non-null</description></item>
+    /// <item><description>Ensure Data.Count equals Range.Span when Range is non-null</description></item>
     /// </list>
     /// <para><strong>Boundary Handling Examples:</strong></para>
     /// <code>
@@ -152,7 +152,7 @@ public interface IDataSource<TRange, TData> where TRange : IComparable<TRange>
         CancellationToken cancellationToken
     )
     {
-        var tasks = ranges.Select(async range => await FetchAsync(range, cancellationToken));
+        var tasks = ranges.Select(range => FetchAsync(range, cancellationToken));
         return await Task.WhenAll(tasks);
     }
 }

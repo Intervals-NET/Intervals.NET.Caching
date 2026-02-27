@@ -256,7 +256,7 @@ public sealed class DataSourceRangePropagationTests : IAsyncDisposable
         // Left expansion: 11 * 1 = 11, so [89, 100)
         _dataSource.AssertRangeRequested(Intervals.NET.Factories.Range.ClosedOpen(89, 100));
 
-        // Right expansion: 11 * 2.0 = 22, so (110, 121]
+        // Right expansion: 11 * 1.0 = 11, so (110, 121]
         _dataSource.AssertRangeRequested(Intervals.NET.Factories.Range.OpenClosed<int>(110, 121));
     }
 

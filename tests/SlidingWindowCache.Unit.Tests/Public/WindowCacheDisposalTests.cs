@@ -1,8 +1,7 @@
-using Intervals.NET;
 using Intervals.NET.Domain.Default.Numeric;
 using SlidingWindowCache.Public;
 using SlidingWindowCache.Public.Configuration;
-using SlidingWindowCache.Public.Dto;
+using SlidingWindowCache.Tests.Infrastructure.DataSources;
 
 namespace SlidingWindowCache.Unit.Tests.Public;
 
@@ -14,66 +13,9 @@ public class WindowCacheDisposalTests
 {
     #region Test Infrastructure
 
-    /// <summary>
-    /// Simple test data source that returns sequential integers for any requested range.
-    /// Properly respects range inclusivity (IsStartInclusive/IsEndInclusive).
-    /// </summary>
-    private sealed class TestDataSource : IDataSource<int, int>
-    {
-        public async Task<RangeChunk<int, int>> FetchAsync(
-            Range<int> requestedRange,
-            CancellationToken cancellationToken)
-        {
-            // Simulate async I/O
-            await Task.Delay(1, cancellationToken);
-
-            return new RangeChunk<int, int>(requestedRange, GenerateDataForRange(requestedRange));
-        }
-
-        /// <summary>
-        /// Generates data respecting range boundary inclusivity.
-        /// Uses pattern matching to handle all 4 combinations of inclusive/exclusive boundaries.
-        /// </summary>
-        private static List<int> GenerateDataForRange(Range<int> range)
-        {
-            var data = new List<int>();
-            var start = (int)range.Start;
-            var end = (int)range.End;
-
-            switch (range)
-            {
-                case { IsStartInclusive: true, IsEndInclusive: true }:
-                    // [start, end]
-                    for (var i = start; i <= end; i++)
-                        data.Add(i);
-                    break;
-
-                case { IsStartInclusive: true, IsEndInclusive: false }:
-                    // [start, end)
-                    for (var i = start; i < end; i++)
-                        data.Add(i);
-                    break;
-
-                case { IsStartInclusive: false, IsEndInclusive: true }:
-                    // (start, end]
-                    for (var i = start + 1; i <= end; i++)
-                        data.Add(i);
-                    break;
-
-                default:
-                    // (start, end)
-                    for (var i = start + 1; i < end; i++)
-                        data.Add(i);
-                    break;
-            }
-
-            return data;
-        }
-    }
-
     private static WindowCache<int, int, IntegerFixedStepDomain> CreateCache()
     {
-        var dataSource = new TestDataSource();
+        var dataSource = new SimpleTestDataSource<int>(i => i, simulateAsyncDelay: true);
         var domain = new IntegerFixedStepDomain();
         var options = new WindowCacheOptions(
             leftCacheSize: 1.0,
