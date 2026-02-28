@@ -236,10 +236,10 @@ Only `UserRequestHandler` has access to `IntentController.PublishIntent`. Its sc
 ### Atomic Cache Updates
 **Invariants**: B.12, B.13
 
-Storage strategies build new state before atomic swap. `Volatile.Write` atomically publishes new cache state reference. `Rematerialize` succeeds completely or not at all.
+Storage strategies build new state before atomic swap. `Volatile.Write` atomically publishes new cache state reference (Snapshot). `CopyOnReadStorage` uses a lock-protected buffer swap instead. `Rematerialize` succeeds completely or not at all.
 
 - `src/SlidingWindowCache/Infrastructure/Storage/SnapshotReadStorage.cs` — `Array.Copy` + `Volatile.Write`
-- `src/SlidingWindowCache/Infrastructure/Storage/CopyOnReadStorage.cs` — list replacement + `Volatile.Write`
+- `src/SlidingWindowCache/Infrastructure/Storage/CopyOnReadStorage.cs` — lock-protected dual-buffer swap (`_lock`)
 - `src/SlidingWindowCache/Core/State/CacheState.cs` — `Rematerialize` ensures atomicity
 
 ### Consistency Under Cancellation
