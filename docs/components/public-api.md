@@ -66,9 +66,9 @@ Configuration parameters:
 - Batch fetch (optional): default implementation uses parallel single-range fetches
 - Cancellation is cooperative; implementations must respect `CancellationToken`
 
-**Used by**: `CacheDataExtensionService` (background execution path only — never called on the user thread).
+**Used by**: `CacheDataExtensionService` (background path) and `UserRequestHandler` (user path for cold starts and full cache misses).
 
-**Invariant**: G.45 (I/O isolation — IDataSource is never called from the user path).
+**Invariant**: G.45 (IDataSource is thread-safe and may be called from both background and user paths).
 
 ## DTOs
 
