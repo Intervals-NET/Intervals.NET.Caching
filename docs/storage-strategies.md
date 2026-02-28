@@ -1,7 +1,7 @@
 ﻿# Sliding Window Cache - Storage Strategies Guide
 
 > **📖 For component implementation details, see:**
-> - [Component Map - Storage Section](component-map.md#2-storage-layer) - SnapshotReadStorage and CopyOnReadStorage architecture
+> - `docs/components/infrastructure.md` - Storage components in context
 
 ## Overview
 

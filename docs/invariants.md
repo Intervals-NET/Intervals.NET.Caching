@@ -157,7 +157,7 @@ without polling or timing dependencies.
 
 **Rationale:** Eliminates write-write races and simplifies reasoning about cache consistency through architectural constraints.
 
-**Implementation:** See [component-map.md - Single-Writer Architecture](component-map.md#single-writer-architecture) for enforcement mechanism details.
+**Implementation:** See `docs/components/overview.md` and `docs/architecture.md` for enforcement mechanism details.
 
 **A.0** 🔵 **[Architectural]** The User Path **always has higher priority** than Rebalance Execution.
 
@@ -168,7 +168,7 @@ without polling or timing dependencies.
 
 **Rationale:** Ensures responsive user experience by preventing background optimization from interfering with user-facing operations.
 
-**Implementation:** See [component-map.md - Priority and Cancellation](component-map.md#priority-and-cancellation) for enforcement mechanism details.
+**Implementation:** See `docs/architecture.md` and `docs/components/execution.md` for enforcement mechanism details.
 
 **A.0a** 🟢 **[Behavioral — Test: `Invariant_A_0a_UserRequestCancelsRebalance`]** A User Request **MAY cancel** an ongoing or pending Rebalance Execution **ONLY when a new rebalance is validated as necessary** by the multi-stage decision pipeline.
 
@@ -181,7 +181,7 @@ without polling or timing dependencies.
 
 **Rationale:** Prevents thrashing while allowing necessary cache adjustments when user access pattern changes significantly.
 
-**Implementation:** See [component-map.md - Intent Management and Cancellation](component-map.md#intent-management-and-cancellation) for enforcement mechanism details.
+**Implementation:** See `docs/components/execution.md` for enforcement mechanism details.
 
 ### A.2 User-Facing Guarantees
 
@@ -206,7 +206,7 @@ without polling or timing dependencies.
 
 **Rationale:** Centralizes intent origination to single actor, simplifying reasoning about when and why rebalances occur.
 
-**Implementation:** See [component-map.md - UserRequestHandler Responsibilities](component-map.md#userrequesthandler-responsibilities) for enforcement mechanism details.
+**Implementation:** See `docs/components/user-path.md` for enforcement mechanism details.
 
 **A.4** 🔵 **[Architectural]** Rebalance execution is **always performed asynchronously** relative to the User Path.
 
@@ -217,7 +217,7 @@ without polling or timing dependencies.
 
 **Rationale:** Prevents user requests from blocking on background optimization work, ensuring responsive user experience.
 
-**Implementation:** See [component-map.md - Async Execution Model](component-map.md#async-execution-model) for enforcement mechanism details.
+**Implementation:** See `docs/architecture.md` and `docs/components/execution.md` for enforcement mechanism details.
 
 **A.5** 🔵 **[Architectural]** The User Path performs **only the work necessary to return data to the user**.
 
@@ -228,7 +228,7 @@ without polling or timing dependencies.
 
 **Rationale:** Minimizes user-facing latency by deferring non-essential work to background threads.
 
-**Implementation:** See [component-map.md - UserRequestHandler Responsibilities](component-map.md#userrequesthandler-responsibilities) for enforcement mechanism details.
+**Implementation:** See `docs/components/user-path.md` for enforcement mechanism details.
 
 **A.6** 🟡 **[Conceptual]** The User Path may synchronously request data from `IDataSource` in the user execution context if needed to serve `RequestedRange`.
 - *Design decision*: Prioritizes user-facing latency over background work
@@ -265,7 +265,7 @@ without polling or timing dependencies.
 
 **Rationale:** Enforces single-writer architecture, eliminating write-write races and simplifying concurrency reasoning.
 
-**Implementation:** See [component-map.md - Single-Writer Architecture](component-map.md#single-writer-architecture) for enforcement mechanism details.
+**Implementation:** See `docs/architecture.md` and `docs/components/overview.md` for enforcement mechanism details.
 
 **A.8** 🔵 **[Architectural — Tests: `Invariant_A3_8_ColdStart`, `_CacheExpansion`, `_FullCacheReplacement`]** The User Path **MUST NOT mutate cache under any circumstance**.
 
@@ -277,7 +277,7 @@ without polling or timing dependencies.
 
 **Rationale:** Enforces single-writer architecture at the strictest level, preventing any mutation-related bugs in User Path.
 
-**Implementation:** See [component-map.md - Single-Writer Enforcement](component-map.md#single-writer-architecture) for enforcement mechanism details.
+**Implementation:** See `docs/architecture.md` and `docs/components/overview.md` for enforcement mechanism details.
 
 **A.9** 🔵 **[Architectural]** Cache mutations are performed **exclusively by Rebalance Execution** (single-writer architecture).
 
@@ -288,7 +288,7 @@ without polling or timing dependencies.
 
 **Rationale:** Single-writer architecture eliminates write-write races and simplifies concurrency model.
 
-**Implementation:** See [component-map.md - Single-Writer Architecture](component-map.md#single-writer-architecture) for enforcement mechanism details.
+**Implementation:** See `docs/architecture.md` and `docs/components/overview.md` for enforcement mechanism details.
 
 **A.9a** 🟢 **[Behavioral — Test: `Invariant_A3_9a_CacheContiguityMaintained`]** **Cache Contiguity Rule:** `CacheData` **MUST always remain contiguous** — gapped or partially materialized cache states are invalid.
 - *Observable via*: All requests return valid contiguous data
@@ -311,7 +311,7 @@ without polling or timing dependencies.
 
 **Rationale:** Prevents readers from observing inconsistent cache state during updates.
 
-**Implementation:** See [component-map.md - Atomic Cache Updates](component-map.md#atomic-cache-updates) for enforcement mechanism details.
+**Implementation:** See `docs/invariants.md` (atomicity invariants) and source XML docs; architecture context in `docs/architecture.md`.
 
 **B.13** 🔵 **[Architectural]** The system **never enters a permanently inconsistent state** with respect to `CacheData ↔ CurrentCacheRange`.
 
@@ -322,7 +322,7 @@ without polling or timing dependencies.
 
 **Rationale:** Ensures cache remains usable even when rebalance operations are cancelled mid-flight.
 
-**Implementation:** See [component-map.md - Consistency Under Cancellation](component-map.md#consistency-under-cancellation) for enforcement mechanism details.
+**Implementation:** See `docs/architecture.md` and execution invariants in `docs/invariants.md`.
 
 **B.14** 🟡 **[Conceptual]** Temporary geometric or coverage inefficiencies in the cache are acceptable **if they can be resolved by rebalance execution**.
 - *Design decision*: User Path prioritizes speed over optimal cache shape
@@ -341,7 +341,7 @@ without polling or timing dependencies.
 
 **Rationale:** Prevents cache from being updated with results that no longer match current user access pattern.
 
-**Implementation:** See [component-map.md - Obsolete Result Prevention](component-map.md#obsolete-result-prevention) for enforcement mechanism details.
+**Implementation:** See `docs/components/intent-management.md` and intent invariants in `docs/invariants.md`.
 
 ---
 
@@ -356,7 +356,7 @@ without polling or timing dependencies.
 
 **Rationale:** Prevents queue buildup and ensures system always works toward most recent user access pattern.
 
-**Implementation:** See [component-map.md - Intent Singularity](component-map.md#intent-singularity) for enforcement mechanism details.
+**Implementation:** See `docs/components/intent-management.md`.
 
 **C.18** 🟡 **[Conceptual]** Previously created intents may become **logically superseded** when a new intent is published, but rebalance execution relevance is determined by the **multi-stage rebalance validation logic**.
 - *Design intent*: Obsolescence ≠ cancellation; obsolescence ≠ guaranteed execution prevention
@@ -371,7 +371,7 @@ without polling or timing dependencies.
 
 **Rationale:** Enables User Path priority by allowing cancellation of obsolete background work.
 
-**Implementation:** See [component-map.md - Cancellation Protocol](component-map.md#cancellation-protocol) for enforcement mechanism details.
+**Implementation:** See `docs/architecture.md` and `docs/components/intent-management.md`.
 
 **C.20** 🔵 **[Architectural]** If a rebalance intent becomes obsolete before execution begins, the execution **must not start**.
 
@@ -382,7 +382,7 @@ without polling or timing dependencies.
 
 **Rationale:** Avoids wasting CPU and I/O resources on obsolete cache shapes that no longer match user needs.
 
-**Implementation:** See [component-map.md - Early Exit Validation](component-map.md#early-exit-validation) for enforcement mechanism details.
+**Implementation:** See `docs/components/decision.md` and decision invariants in `docs/invariants.md`.
 
 **C.21** 🔵 **[Architectural]** At any point in time, **at most one rebalance execution is active**.
 
@@ -393,7 +393,7 @@ without polling or timing dependencies.
 
 **Rationale:** Enforces single-writer architecture by ensuring only one component can mutate cache at any time.
 
-**Implementation:** See [component-map.md - Serial Execution Guarantee](component-map.md#serial-execution-guarantee) for enforcement mechanism details.
+**Implementation:** See `docs/architecture.md` (execution strategies) and `docs/components/execution.md`.
 
 **C.22** 🟡 **[Conceptual]** The results of rebalance execution **always reflect the latest user access pattern**.
 - *Design guarantee*: Obsolete results are discarded
@@ -421,7 +421,7 @@ without polling or timing dependencies.
 
 **Rationale:** Prevents duplicate data fetching and ensures cache converges to exact data user saw.
 
-**Implementation:** See [component-map.md - Intent Data Contract](component-map.md#intent-data-contract) for enforcement mechanism details.
+**Implementation:** See `docs/components/user-path.md` and intent invariants in `docs/invariants.md`.
 
 **C.24f** 🟡 **[Conceptual]** Delivered data in intent serves as the **authoritative source** for Rebalance Execution, avoiding duplicate fetches and ensuring consistency with user view.
 - *Design guarantee*: Rebalance Execution uses delivered data as base, not current cache
@@ -431,7 +431,7 @@ without polling or timing dependencies.
 
 ## D. Rebalance Decision Path Invariants
 
-> **📖 For detailed architectural explanation, see:** [Architecture Model - Decision-Driven Execution](architecture-model.md#rebalance-validation-vs-cancellation)
+> **📖 For architectural explanation, see:** `docs/architecture.md`
 
 ### D.0 Rebalance Decision Model Overview
 
@@ -509,7 +509,7 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 
 **Rationale:** Pure decision logic enables reasoning about correctness and prevents unintended side effects.
 
-**Implementation:** See [component-map.md - Pure Decision Logic](component-map.md#pure-decision-logic) for enforcement mechanism details.
+**Implementation:** See `docs/components/execution.md`.
 
 **D.26** 🔵 **[Architectural]** The Decision Path **never mutates cache state**.
 
@@ -520,7 +520,7 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 
 **Rationale:** Enforces clean separation between decision-making and state mutation, simplifying reasoning.
 
-**Implementation:** See [component-map.md - Decision-Execution Separation](component-map.md#decision-execution-separation) for enforcement mechanism details.
+**Implementation:** See `docs/architecture.md` and `docs/components/execution.md`.
 
 **D.27** 🟢 **[Behavioral — Test: `Invariant_D27_NoRebalanceIfRequestInNoRebalanceRange`]** If `RequestedRange` is fully contained within `NoRebalanceRange`, **rebalance execution is prohibited**.
 - *Observable via*: DEBUG counters showing execution skipped (policy-based, see C.24b)
@@ -548,7 +548,7 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 
 **Rationale:** Multi-stage validation prevents thrashing while ensuring cache converges to optimal state.
 
-**Implementation:** See [component-map.md - Multi-Stage Decision Pipeline](component-map.md#multi-stage-decision-pipeline) for enforcement mechanism details.
+**Implementation:** See decision engine source XML docs; conceptual model in `docs/architecture.md`.
 
 ---
 
@@ -567,7 +567,7 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 
 **Rationale:** Deterministic range computation ensures predictable cache behavior independent of history.
 
-**Implementation:** See [component-map.md - Desired Range Computation](component-map.md#desired-range-computation) for enforcement mechanism details.
+**Implementation:** See range planner source XML docs; architecture context in `docs/components/decision.md`.
 
 **E.32** 🟡 **[Conceptual]** `DesiredCacheRange` represents the **canonical target state** towards which the system converges.
 - *Design concept*: Single source of truth for "what cache should be"
@@ -586,7 +586,7 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 
 **Rationale:** Stability zone prevents thrashing when user makes small movements within already-cached area.
 
-**Implementation:** See [component-map.md - NoRebalanceRange Computation](component-map.md#norebalancerange-computation) for enforcement mechanism details.
+**Implementation:** See `docs/components/decision.md`.
 
 **E.35** 🟢 **[Behavioral]** When both `LeftThreshold` and `RightThreshold` are specified (non-null), their sum must not exceed 1.0.
 
@@ -632,7 +632,7 @@ leftThreshold.HasValue && rightThreshold.HasValue
 
 **Rationale:** Ensures background work never degrades responsiveness to user requests.
 
-**Implementation:** See [component-map.md - Cancellation Checkpoints](component-map.md#cancellation-checkpoints) for enforcement mechanism details.
+**Implementation:** See `docs/components/execution.md`.
 
 **F.35b** 🟢 **[Behavioral — Covered by `Invariant_B15`]** Partially executed or cancelled Rebalance Execution **MUST NOT leave cache in inconsistent state**.
 - *Observable via*: Cache continues serving valid data after cancellation
@@ -649,7 +649,7 @@ leftThreshold.HasValue && rightThreshold.HasValue
 
 **Rationale:** Single-writer architecture eliminates all write-write races and simplifies concurrency reasoning.
 
-**Implementation:** See [component-map.md - Single-Writer Architecture](component-map.md#single-writer-architecture) for enforcement mechanism details.
+**Implementation:** See `docs/architecture.md`.
 
 **F.36a** 🟢 **[Behavioral — Test: `Invariant_F36a_RebalanceNormalizesCache`]** Rebalance Execution mutates cache for normalization using **delivered data from intent as authoritative base**:
    - **Uses delivered data** from intent (not current cache) as starting point
@@ -671,7 +671,7 @@ leftThreshold.HasValue && rightThreshold.HasValue
 
 **Rationale:** Complete mutation authority enables efficient convergence to optimal cache shape in single operation.
 
-**Implementation:** See [component-map.md - Cache Normalization Operations](component-map.md#cache-normalization-operations) for enforcement mechanism details.
+**Implementation:** See `docs/components/execution.md`.
 
 **F.38** 🔵 **[Architectural]** Rebalance Execution requests data from `IDataSource` **only for missing subranges**.
 
@@ -682,7 +682,7 @@ leftThreshold.HasValue && rightThreshold.HasValue
 
 **Rationale:** Avoids wasting I/O bandwidth by re-fetching data already in cache.
 
-**Implementation:** See [component-map.md - Incremental Data Fetching](component-map.md#incremental-data-fetching) for enforcement mechanism details.
+**Implementation:** See `docs/components/user-path.md`.
 
 **F.39** 🔵 **[Architectural]** Rebalance Execution **does not overwrite existing data** that intersects with `DesiredCacheRange`.
 
@@ -693,7 +693,7 @@ leftThreshold.HasValue && rightThreshold.HasValue
 
 **Rationale:** Preserves valid cached data, avoiding redundant fetches and ensuring consistency.
 
-**Implementation:** See [component-map.md - Data Preservation During Expansion](component-map.md#data-preservation-during-expansion) for enforcement mechanism details.
+**Implementation:** See execution invariants in `docs/invariants.md`.
 
 ### F.3 Post-Execution Guarantees
 
@@ -729,7 +729,7 @@ The Rebalance Decision Path and Rebalance Execution Path MUST execute asynchrono
 
 **Rationale:** Ensures user requests remain responsive by offloading all optimization work to background threads.
 
-**Implementation:** See [component-map.md - Async Execution Model](component-map.md#async-execution-model) for enforcement mechanism details.
+**Implementation:** See `docs/architecture.md`.
 - 🔵 **[Architectural — Covered by same test as G.43]**
 
 ### G.45: I/O responsibilities are separated between User Path and Rebalance Execution Path
@@ -747,7 +747,7 @@ I/O operations (data fetching via IDataSource) are divided by responsibility:
 
 **Rationale:** Separates the latency-critical user-serving fetch (minimal, unavoidable) from the background optimization fetch (potentially large, deferrable). User Path I/O is bounded by the requested range; background I/O is bounded by cache geometry policy.
 
-**Implementation:** See [component-map.md - I/O Isolation](component-map.md#io-isolation) for enforcement mechanism details.
+**Implementation:** See `docs/architecture.md` and execution invariants.
 - 🔵 **[Architectural — Covered by same test as G.43]**
 
 **G.46** 🟢 **[Behavioral — Tests: `Invariant_G46_UserCancellationDuringFetch`, `Invariant_F35_G46_RebalanceCancellationBehavior`]** Cancellation **must be supported** for all scenarios:
@@ -793,7 +793,7 @@ When activity counter reaches zero (idle state), NO work exists in any of these 
 
 **Rationale:** Ensures idle detection accurately reflects all enqueued work, preventing premature idle signals.
 
-**Implementation:** See [component-map.md - Activity Counter Ordering](component-map.md#activity-counter-ordering) for enforcement mechanism details.
+**Implementation:** See `src/SlidingWindowCache/Infrastructure/Concurrency/AsyncActivityCounter.cs`.
 - 🔵 **[Architectural — Enforced by call site ordering]**
 
 ### H.48: Decrement-After-Completion Invariant
@@ -812,7 +812,7 @@ Activity counter accurately reflects active work count at all times:
 
 **Rationale:** Ensures `WaitForIdleAsync()` will eventually complete by preventing counter leaks on any execution path.
 
-**Implementation:** See [component-map.md - Activity Counter Cleanup](component-map.md#activity-counter-cleanup) for enforcement mechanism details.
+**Implementation:** See `src/SlidingWindowCache/Infrastructure/Concurrency/AsyncActivityCounter.cs`.
 - 🔵 **[Architectural — Enforced by finally blocks]**
 
 **H.49** 🟡 **[Conceptual — Eventual consistency design]** **"Was Idle" Semantics:**
@@ -940,7 +940,7 @@ For conceptual invariants, the design rationale is explained.
 
 ## Related Documentation
 
-- **[Component Map](component-map.md)** - Detailed component responsibilities and ownership
-- **[Architecture Model](architecture-model.md)** - Single-consumer model and coordination
-- **[Scenario Model](scenario-model.md)** - Temporal behavior scenarios
+- **[Components](components/overview.md)** - Component responsibilities and ownership
+- **[Architecture](architecture.md)** - Single-consumer model and coordination
+- **[Scenarios](scenarios.md)** - Temporal behavior scenarios
 - **[Storage Strategies](storage-strategies.md)** - Staging buffer pattern and memory behavior

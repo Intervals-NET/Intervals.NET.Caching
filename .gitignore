@@ -3,3 +3,11 @@ obj/
 /packages/
 riderModule.iml
 /_ReSharper.Caches/
+
+# IDE / user-specific
+.idea/
+.vs/
+*.DotSettings.user
+
+# Stray / OS artifacts
+nul

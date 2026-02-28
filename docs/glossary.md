@@ -1,166 +1,164 @@
 # Glossary
 
-This document provides canonical definitions for technical terms used throughout the SlidingWindowCache project. All documentation should reference these definitions to maintain consistency.
+Canonical definitions for SlidingWindowCache terms. This is a reference, not a tutorial.
 
----
+Recommended reading order:
 
-## Before You Read
+1. `README.md`
+2. `docs/architecture.md`
+3. `docs/invariants.md`
+4. `docs/components/overview.md`
 
-**This glossary is a reference, not a tutorial.** Definitions are intentionally concise and assume you've read foundational documentation.
+## Core Terms
 
-**Recommended Learning Path:**
+Cache
+- The in-memory representation of a contiguous `Range<TRange>` of data, stored using a chosen storage strategy.
+- Cache contiguity (no gaps) is a core invariant; see `docs/invariants.md`.
 
-1. **Start here** → [README.md](../README.md) - Overview, quick start, basic examples
-2. **Architecture fundamentals** → [Architecture Model](architecture-model.md) - Threading, single-writer, decision-driven execution
-3. **Dive deeper** → [Invariants](invariants.md) - System guarantees and constraints
-4. **Implementation details** → [Component Map](component-map.md) - Component catalog with source references
+Range
+- A value interval (e.g., `[100..200]`) represented by `Intervals.NET`.
 
-**Using this glossary:**
-- Terms link to detailed docs where applicable (click through for full context)
-- Grouped by category for faster lookup
-- Cross-referenced heavily - follow links for related concepts
+Domain
+- The mathematical rules for stepping/comparing `TRange` values (e.g., integer fixed-step, DateTime). In code this is the `TDomain` type.
 
----
+Window
+- The cached range maintained around the most recently accessed region, typically larger than the user’s requested range.
 
-## Core Concepts
+## Range Vocabulary
 
-### Cache
-In-memory storage of contiguous range data. No gaps allowed ([Invariants B](invariants.md#b-cache-state--consistency-invariants)).
+Requested Range
+- The `Range<TRange>` passed into `GetDataAsync`.
 
-### Range
-Interval with start/end boundaries. Uses `Intervals.NET` library.
+Delivered Range
+- The range the data source actually provided (may be smaller than requested for bounded sources). This is surfaced via `RangeResult.Range`.
+- See `docs/boundary-handling.md`.
 
-### Range Domain
-Mathematical domain for range operations. Must implement `IRangeDomain<TRange>`. Examples: `IntegerRangeDomain`, `DateTimeRangeDomain`.
+Current Cache Range
+- The range currently held in the cache state.
 
----
+Desired Cache Range
+- The target range the cache would like to converge to based on configuration and the latest intent.
 
-## Range Types
+Available Range
+- `Requested ∩ Current` (data that can be served immediately from the cache).
 
-**Requested Range**: User requests in `GetDataAsync()`.  
-**Current Cache Range**: Currently stored (`CacheState.Cache.Range`).  
-**Desired Cache Range**: Target computed by `ProportionalRangePlanner`. See [Component Map](component-map.md#desired-range-computation).  
-**Available Range**: Intersection of Requested ∩ Current (immediately returnable).  
-**Missing Range**: Requested \ Current (must fetch).  
-**NoRebalanceRange**: Stability zone. Requests within skip rebalancing. See [Architecture Model](architecture-model.md#smart-eventual-consistency-model).
+Missing Range
+- `Requested \ Current` (data that must be fetched from `IDataSource`).
 
----
+RangeChunk
+- A data source return value representing a contiguous chunk: a `Range<TRange>?` plus associated data. `Range == null` means “no data available”.
+- See `docs/boundary-handling.md`.
 
-## Architectural Patterns
+RangeResult
+- The public API return from `GetDataAsync`: the delivered `Range<TRange>?` and the materialized data.
+- See `docs/boundary-handling.md`.
 
-### Single-Writer Architecture
-Only ONE component (`RebalanceExecutor`) mutates shared state (Cache, IsInitialized, NoRebalanceRange). All others read-only. Eliminates write-write conflicts. See [Architecture Model](architecture-model.md#single-writer-architecture) | [Component Map - Implementation](component-map.md#single-writer-architecture).
+## Architectural Concepts
 
-### Decision-Driven Execution
-Multi-stage validation pipeline separating decisions from execution. `RebalanceDecisionEngine` is sole authority for rebalance necessity. Execution proceeds only if all stages pass. Prevents thrashing. See [Architecture Model](architecture-model.md#rebalance-validation-vs-cancellation) | [Invariants D.29](invariants.md#d-rebalance-decision-path-invariants).
+User Path
+- The user-facing call path (`GetDataAsync`) that serves data immediately and publishes an intent.
+- Read-only with respect to shared cache state; see `docs/architecture.md` and `docs/invariants.md`.
 
-### Smart Eventual Consistency
-Cache converges to optimal state without blocking user requests. May temporarily serve from non-optimal range, rebalancing in background. See [Architecture Model - Consistency](architecture-model.md#smart-eventual-consistency-model).
+Rebalance Path
+- Background processing that decides whether to rebalance and, if needed, executes the rebalance and mutates cache state.
 
-### Burst Resistance
-Handles rapid request sequences without thrashing. Achieved via "latest intent wins" and NoRebalanceRange stability zones. See [Architecture Model](architecture-model.md#smart-eventual-consistency-model).
+Single-Writer Architecture
+- Only rebalance execution mutates shared cache state (cache contents, initialization flags, NoRebalanceRange, etc.).
+- The User Path does not mutate that shared state.
+- Canonical description: `docs/architecture.md`; formal rules: `docs/invariants.md`.
 
----
+Single Logical Consumer Model
+- One cache instance is intended for one coherent access stream (e.g., one viewport/scroll position). Multiple threads may call the cache, as long as they represent the same logical consumer.
 
-## Components & Actors
+Intent
+- A signal published by the User Path after serving a request. It describes what was delivered and what was requested so the system can evaluate whether rebalance is worthwhile.
+- Intents are signals, not commands: the system may legitimately skip work.
 
-### WindowCache
-Public API facade. Exposes `GetDataAsync()`.
+Latest Intent Wins
+- The newest published intent supersedes older intents; intermediate intents may never be processed.
 
-### UserRequestHandler
-Handles user requests on user thread. Assembles data, publishes intents. Never mutates cache ([Invariants A.7-A.8](invariants.md#a-user-path--fast-user-access-invariants)).
+Decision-Driven Execution
+- Rebalance work is gated by a multi-stage validation pipeline. Decisions are fast (CPU-only) and may skip execution entirely.
+- Formal definition: `docs/invariants.md` (Decision Path invariants).
 
-### IntentController
-Manages rebalance intent lifecycle. Evaluates `RebalanceDecisionEngine`, coordinates execution. Single-threaded background loop. See [Component Map](component-map.md#5-rebalance-system---intent-management).
+Work Avoidance
+- The system prefers skipping rebalance when analysis shows it is unnecessary (e.g., request within NoRebalanceRange, pending work already covers it, desired range already satisfied).
 
-### RebalanceDecisionEngine
-Sole authority for rebalance necessity. 5-stage validation pipeline. Pure, deterministic, side-effect free. See [Invariants D.25-D.29](invariants.md#d-rebalance-decision-path-invariants).
+NoRebalanceRange
+- A stability zone around the current cache geometry. If the request is inside this zone, the decision engine skips scheduling a rebalance.
 
-### RebalanceExecutionController
-Serializes/debounces executions. Implementations: `TaskBasedRebalanceExecutionController` (default), `ChannelBasedRebalanceExecutionController`. See [Component Map](component-map.md#7-rebalance-system---execution).
+Debounce
+- A deliberate delay before executing rebalance so bursts can settle and only the last relevant rebalance runs.
 
-### RebalanceExecutor
-Performs cache mutations. Fetches, merges, trims, updates state. Only mutator ([Invariant F.36](invariants.md#f-rebalance-execution-invariants)).
+Normalization
+- The process of converging cached data and cached range to the desired state (fetch missing data, trim, merge, then publish new cache state atomically).
 
-### CacheDataExtensionService
-Extends cache by fetching missing ranges, merging. See [Component Map - Incremental Fetching](component-map.md#incremental-data-fetching).
+Rematerialization
+- Rebuilding the stored representation of cached data (e.g., allocating a new array in Snapshot mode) to apply a new cache range.
 
-### AsyncActivityCounter
-Lock-free activity counter. Awaitable idle state. Tracks operations, signals "was idle". See [Invariants H.47-H.48](invariants.md#h-activity-tracking--idle-detection-invariants).
+## Concurrency And Coordination
 
----
+Cancellation
+- A coordination mechanism to stop obsolete background work; it is not the “decision”. The decision engine remains the sole authority for whether rebalance is necessary.
 
-## Operations & Processes
+AsyncActivityCounter
+- Tracks ongoing internal operations and supports waiting for “idle” transitions.
 
-### Intent
-Signal containing requested range + delivered data. Published by `UserRequestHandler` for rebalance evaluation. Signals, not commands (may be skipped). "Latest wins" - newer replaces older atomically. See [Invariants C.17-C.24](invariants.md#c-rebalance-intent--temporal-invariants).
+WaitForIdleAsync (“Was Idle” Semantics)
+- Completes when the system was idle at some point, which is appropriate for tests and convergence checks.
+- It does not guarantee the system is still idle after the task completes.
 
-### Rebalance
-Background process adjusting cache to desired range. Phases: (1) Decision (5-stage), (2) Execution (fetch/merge/trim), (3) Mutation (atomic). See [Architecture Model](architecture-model.md#smart-eventual-consistency-model).
+## Storage And Materialization
 
-### User Path
-Handles user requests. Runs on user thread until intent published. Read-only. See [Invariants A.7-A.9](invariants.md#a-user-path--fast-user-access-invariants).
+UserCacheReadMode
+- Controls how data is stored and served (materialization strategy). See `docs/storage-strategies.md`.
 
-### Background Path
-Rebalance processing. Runs on background threads (IntentController, RebalanceExecutionController, RebalanceExecutor). See [Architecture Model](architecture-model.md#deterministic-background-job-synchronization).
+Snapshot Mode
+- Stores data in an immutable contiguous array and serves `ReadOnlyMemory<TData>` without per-read allocations.
 
-### Debouncing
-Delays execution (e.g., 100ms) to let bursts settle. Cancels previous if new scheduled during window. Prevents thrashing.
+CopyOnRead Mode
+- Stores data in a growable structure and copies on read (allocates per read) to reduce rebalance costs/LOH pressure in some scenarios.
 
----
+Staging Buffer
+- A temporary buffer used during rebalance to assemble a new contiguous representation before atomic publication.
+- See `docs/storage-strategies.md`.
 
-## Concurrency & State
+## Diagnostics
 
-**Activity**: Operation tracked by `AsyncActivityCounter`. System idle when count = 0.  
-**Idle State**: No intents/rebalances executing. **"Was Idle" NOT "Is Idle"** - `WaitForIdleAsync()` = was idle at some point. See [Invariants H.49](invariants.md#h-activity-tracking--idle-detection-invariants).  
-**Stabilization**: Reaching stable state (rebalances done, cache = desired, no pending intents). Not persistent.  
-**Cache State**: Mutable container (`Cache`, `IsInitialized`, `NoRebalanceRange`). Only mutated by `RebalanceExecutor`. See [Invariant F.36](invariants.md#f-rebalance-execution-invariants).  
-**Execution Request**: Rebalance request from `IntentController` → `RebalanceExecutionController`. Contains desired ranges, intent data, cancellation token.
+ICacheDiagnostics
+- Optional instrumentation surface for observing user requests, decisions, rebalance execution, and failures.
+- See `docs/diagnostics.md`.
 
----
-
-## Concurrency Primitives
-
-**Volatile Read/Write**: Memory barriers. `Write` = release fence, `Read` = acquire fence. Lock-free publishing.  
-**Interlocked Ops**: Atomic operations (`Increment`, `Decrement`, `Exchange`, `CompareExchange`).  
-**Acquire-Release**: Memory ordering. Writes before "release" visible after "acquire". See [Architecture Model](architecture-model.md#lock-free-implementation).
-
----
-
-## Testing & Diagnostics
-
-**WaitForIdleAsync**: Returns `Task` when "was idle at some point". For testing convergence. NOT guaranteed still idle. See [Invariants - Testing](invariants.md#testing-infrastructure-deterministic-synchronization).  
-**Cache Diagnostics**: Instrumentation interface (`ICacheDiagnostics`). Emits events for requests, decisions, completions, failures. See [Diagnostics](diagnostics.md).
-
----
-
-## Invariants
-
-**Architectural**: System truths that ALWAYS hold (Cache Contiguity, Single-Writer, User Path Priority). See [Invariants](invariants.md).  
-**Behavioral**: Expected behaviors, testable via public API. See [Invariants - Behavioral](invariants.md#understanding-this-document).  
-**Conceptual**: Design principles. See [Invariants - Conceptual](invariants.md#understanding-this-document).
-
----
-
-## Configuration
-
-**Window Size**: Total cache size (domain elements).  
-**Left/Right Split**: Proportional division vs request. Example: 30%/70%.  
-**Threshold %**: NoRebalanceRange zone shrinkage percentage. Must satisfy: `leftThreshold + rightThreshold ≤ 1.0` when both are specified. Example: 10% = skip rebalance if request within 10% of boundary. Sum constraint prevents overlapping shrinkage zones.  
-**Debounce Delay**: Execution delay (e.g., 100ms). Settles bursts.  
-**Storage Strategy**: **Snapshot** (immutable, WebAssembly-safe) or **CopyOnRead** (memory-efficient). See [Storage Strategies](storage-strategies.md).
-
----
+NoOpDiagnostics
+- The default diagnostics implementation that does nothing (intended to be effectively zero overhead).
 
 ## Common Misconceptions
 
-**Intent vs Command**: Intents are signals (evaluation may skip), not commands (guaranteed execution).  
-**Async Rebalancing**: `GetDataAsync` returns immediately, rebalancing happens in background.  
-**"Was Idle" Semantics**: `WaitForIdleAsync` guarantees system was idle at some point, not still idle after.  
-**NoRebalanceRange**: Stability zone around cache (may differ from actual cache range).
+**Intent vs Command**: Intents are signals — evaluation may skip execution entirely. They are not commands that guarantee rebalance will happen.
 
----
+**Async Rebalancing**: `GetDataAsync` returns immediately; the User Path completes at `PublishIntent()` return. Rebalancing happens in background loops after the user thread has already returned.
 
-## Related Documentation
+**"Was Idle" Semantics**: `WaitForIdleAsync` guarantees the system was idle at some point, not that it is still idle after the task completes. New activity may start immediately after completion. Re-check state if stronger guarantees are needed.
 
-[README](../README.md) | [Architecture Model](architecture-model.md) | [Invariants](invariants.md) | [Component Map](component-map.md) | [Actor Responsibilities](actors-and-responsibilities.md) | [Scenarios](scenario-model.md) | [State Machine](cache-state-machine.md) | [Storage Strategies](storage-strategies.md) | [Diagnostics](diagnostics.md)
+**NoRebalanceRange**: This is a stability zone derived from the current cache range using threshold percentages. It is NOT the same as the current cache range — it is a shrunk inner zone. If the requested range falls within this zone, rebalance is skipped even though the requested range may extend close to the cache boundary.
+
+## Concurrency Primitives
+
+**Volatile Read / Write**: Memory barriers. `Volatile.Write` = release fence (writes before it are visible before the write is observed). `Volatile.Read` = acquire fence (reads after it observe writes before the corresponding release). Used for lock-free publishing of shared state.
+
+**Interlocked Operations**: Atomic operations that complete without locks — `Increment`, `Decrement`, `Exchange`, `CompareExchange`. Used for activity counting, intent replacement, and disposal state transitions.
+
+**Acquire-Release Ordering**: Memory ordering model used throughout. Writes before a "release" fence are visible to any thread that subsequently observes an "acquire" fence on the same location. The `AsyncActivityCounter` and intent publication patterns rely on this for safe visibility across threads without locks.
+
+## See Also
+
+`README.md`
+`docs/architecture.md`
+`docs/components/overview.md`
+`docs/actors.md`
+`docs/scenarios.md`
+`docs/state-machine.md`
+`docs/invariants.md`
+`docs/boundary-handling.md`
+`docs/storage-strategies.md`
+`docs/diagnostics.md`

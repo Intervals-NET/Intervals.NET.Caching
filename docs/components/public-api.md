@@ -1,0 +1,115 @@
+# Components: Public API
+
+## Overview
+
+This page documents the public surface area of SlidingWindowCache: the cache facade, configuration, data source contract, diagnostics, and public DTOs.
+
+## Facade
+
+- `WindowCache<TRange, TData, TDomain>`: primary entry point and composition root.
+  - **File**: `src/SlidingWindowCache/Public/WindowCache.cs`
+  - Constructs and wires all internal components.
+  - Delegates user requests to `UserRequestHandler`.
+  - Exposes `WaitForIdleAsync()` for infrastructure/testing synchronization.
+- `IWindowCache<TRange, TData, TDomain>`: interface for the facade (for testing/mocking).
+
+## Configuration
+
+### WindowCacheOptions
+
+**File**: `src/SlidingWindowCache/Public/Configuration/WindowCacheOptions.cs`
+
+**Type**: `record` (immutable, value semantics)
+
+Configuration parameters:
+
+| Parameter                   | Description                                        |
+|-----------------------------|----------------------------------------------------|
+| `LeftCacheSize`             | Left window coefficient (≥ 0)                      |
+| `RightCacheSize`            | Right window coefficient (≥ 0)                     |
+| `LeftNoRebalanceThreshold`  | Left stability zone threshold (optional, ≥ 0)      |
+| `RightNoRebalanceThreshold` | Right stability zone threshold (optional, ≥ 0)     |
+| `RebalanceDebounceDelay`    | Delay before executing a validated rebalance       |
+| `UserCacheReadMode`         | Storage strategy (`Snapshot` or `CopyOnRead`)      |
+| `RebalanceQueueCapacity`    | Optional; selects channel-based execution when set |
+
+**Validation enforced at construction time:**
+- Cache sizes ≥ 0
+- Individual thresholds ≥ 0 (when specified)
+- `LeftNoRebalanceThreshold + RightNoRebalanceThreshold ≤ 1.0` (prevents overlapping shrinkage zones)
+- `RebalanceQueueCapacity > 0` (when specified)
+
+**Invariants**: E.34, E.35 (NoRebalanceRange computation and threshold sum constraint).
+
+### UserCacheReadMode
+
+**File**: `src/SlidingWindowCache/Public/Configuration/UserCacheReadMode.cs`
+
+**Type**: `enum`
+
+| Value        | Description                                                     | Trade-off                                 |
+|--------------|-----------------------------------------------------------------|-------------------------------------------|
+| `Snapshot`   | Array-based; zero-allocation reads, expensive rematerialization | Fast reads, LOH pressure for large caches |
+| `CopyOnRead` | List-based; cheap rematerialization, copy-per-read              | Fast rebalance, allocation on each read   |
+
+**See**: `docs/storage-strategies.md` for detailed comparison and usage scenarios.
+
+## Data Source
+
+### IDataSource\<TRange, TData\>
+
+**File**: `src/SlidingWindowCache/Public/IDataSource.cs`
+
+**Type**: Interface (user-implemented)
+
+- Single-range fetch (required): `FetchAsync(Range<TRange>, CancellationToken)`
+- Batch fetch (optional): default implementation uses parallel single-range fetches
+- Cancellation is cooperative; implementations must respect `CancellationToken`
+
+**Used by**: `CacheDataExtensionService` (background execution path only — never called on the user thread).
+
+**Invariant**: G.45 (I/O isolation — IDataSource is never called from the user path).
+
+## DTOs
+
+### RangeResult\<TRange, TData\>
+
+**File**: `src/SlidingWindowCache/Public/DTO/RangeResult.cs`
+
+Returned by `GetDataAsync`. `Range` may be null for physical boundary misses (when `IDataSource` returns null for the requested range).
+
+### RangeChunk\<TRange, TData\>
+
+**File**: `src/SlidingWindowCache/Public/DTO/RangeChunk.cs`
+
+Batch fetch result from `IDataSource`. Contains:
+- `Range<TRange> Range` — the range covered by this chunk
+- `IEnumerable<TData> Data` — the data for this range
+
+## Diagnostics
+
+### ICacheDiagnostics
+
+**File**: `src/SlidingWindowCache/Public/Instrumentation/ICacheDiagnostics.cs`
+
+Optional observability interface with 18 event recording methods covering:
+- User request outcomes (full hit, partial hit, full miss)
+- Data source access events
+- Rebalance intent lifecycle (published, cancelled)
+- Rebalance execution lifecycle (started, completed, cancelled)
+- Rebalance skip optimizations (NoRebalanceRange stage 1 & 2, same-range short-circuit)
+
+**Implementations**:
+- `EventCounterCacheDiagnostics` — thread-safe atomic counter implementation (use for testing and monitoring)
+- `NoOpDiagnostics` — zero-overhead default when no diagnostics provided (JIT eliminates all calls)
+
+**See**: `docs/diagnostics.md` for comprehensive usage documentation.
+
+> ⚠️ **Critical**: `RebalanceExecutionFailed` is the only event that signals a background exception. Always wire this in production code.
+
+## See Also
+
+- `docs/boundary-handling.md`
+- `docs/diagnostics.md`
+- `docs/invariants.md`
+- `docs/storage-strategies.md`

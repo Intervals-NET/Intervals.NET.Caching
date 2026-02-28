@@ -10,15 +10,14 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "SolutionItems", "SolutionIt
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs", "docs", "{B0276F89-7127-4A8C-AD8F-C198780A1E34}"
 	ProjectSection(SolutionItems) = preProject
-		docs\scenario-model.md = docs\scenario-model.md
+		docs\scenarios.md = docs\scenarios.md
 		docs\invariants.md = docs\invariants.md
-		docs\actors-and-responsibilities.md = docs\actors-and-responsibilities.md
-		docs\cache-state-machine.md = docs\cache-state-machine.md
-		docs\actors-to-components-mapping.md = docs\actors-to-components-mapping.md
-		docs\component-map.md = docs\component-map.md
+		docs\actors.md = docs\actors.md
+		docs\state-machine.md = docs\state-machine.md
+		docs\architecture.md = docs\architecture.md
+		docs\boundary-handling.md = docs\boundary-handling.md
 		docs\storage-strategies.md = docs\storage-strategies.md
 		docs\diagnostics.md = docs\diagnostics.md
-		docs\architecture-model.md = docs\architecture-model.md
 		docs\glossary.md = docs\glossary.md
 	EndProjectSection
 EndProject
@@ -42,6 +41,19 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "benchmarks", "benchmarks", "{EB0F4813-1FA9-4C40-A975-3B8C6BBFF8D5}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SlidingWindowCache.Benchmarks", "benchmarks\SlidingWindowCache.Benchmarks\SlidingWindowCache.Benchmarks.csproj", "{8E83B41E-08E9-4AF4-8272-1AB2D2DEDBAB}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "components", "components", "{CE3B07FD-0EC6-4C58-BA45-C23111D5A934}"
+	ProjectSection(SolutionItems) = preProject
+		docs\components\decision.md = docs\components\decision.md
+		docs\components\execution.md = docs\components\execution.md
+		docs\components\infrastructure.md = docs\components\infrastructure.md
+		docs\components\intent-management.md = docs\components\intent-management.md
+		docs\components\overview.md = docs\components\overview.md
+		docs\components\public-api.md = docs\components\public-api.md
+		docs\components\rebalance-path.md = docs\components\rebalance-path.md
+		docs\components\state-and-storage.md = docs\components\state-and-storage.md
+		docs\components\user-path.md = docs\components\user-path.md
+	EndProjectSection
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -88,5 +100,6 @@ Global
 		{C1D2E3F4-A5B6-4C7D-8E9F-0A1B2C3D4E5F} = {8C504091-1383-4EEB-879E-7A3769C3DF13}
 		{9C6688E8-071B-48F5-9B84-4779B58822CC} = {EB667A96-0E73-48B6-ACC8-C99369A59D0D}
 		{8E83B41E-08E9-4AF4-8272-1AB2D2DEDBAB} = {EB0F4813-1FA9-4C40-A975-3B8C6BBFF8D5}
+		{CE3B07FD-0EC6-4C58-BA45-C23111D5A934} = {B0276F89-7127-4A8C-AD8F-C198780A1E34}
 	EndGlobalSection
 EndGlobal

@@ -323,12 +323,10 @@ See `docs/storage-strategies.md` for detailed documentation.
 - `CacheExpanded` and `CacheReplaced` counters are deprecated (User Path no longer mutates)
 
 ## Related Documentation
-- `docs/invariants.md` - Complete invariant documentation (updated for single-writer architecture)
-- `docs/cache-state-machine.md` - State transitions (updated to show only Rebalance Execution mutates)
-- `docs/actors-and-responsibilities.md` - Component responsibilities (updated for read-only User Path)
-- `docs/concurrency-model.md` - Single-writer architecture and eventual consistency model
-- `MIGRATION_SUMMARY.md` - Implementation details of single-writer migration
-- `DOCUMENTATION_UPDATES.md` - Documentation changes made for new architecture
+- `docs/invariants.md` - Complete invariant documentation
+- `docs/state-machine.md` - State transitions and mutation authority
+- `docs/actors.md` - Actor responsibilities and component mapping
+- `docs/architecture.md` - Concurrency model and single-writer rule
 
 ## Test Infrastructure
 

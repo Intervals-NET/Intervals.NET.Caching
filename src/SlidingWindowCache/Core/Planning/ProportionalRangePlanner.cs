@@ -1,4 +1,4 @@
-﻿using Intervals.NET;
+using Intervals.NET;
 using Intervals.NET.Domain.Abstractions;
 using SlidingWindowCache.Core.Rebalance.Decision;
 using SlidingWindowCache.Core.Rebalance.Intent;
@@ -45,7 +45,7 @@ namespace SlidingWindowCache.Core.Planning;
 ///   <item><description>D.25, D.26: Analytical/pure (CPU-only), never mutates cache state</description></item>
 /// </list>
 /// <para><strong>Related:</strong> <see cref="NoRebalanceSatisfactionPolicy{TRange}"/> (threshold calculation, <b>when</b> to rebalance logic)</para>
-/// <para>See: <see href="../docs/component-map.md#proportionalrangeplanner" /> for architectural overview.</para>
+/// <para>See: <see href="../docs/components/decision.md" /> for architectural overview.</para>
 /// </remarks>
 /// <typeparam name="TRange">Type representing the boundaries of a window/range; must be comparable (see <see cref="IComparable{TRange}"/>) so intervals can be ordered and spanned.</typeparam>
 /// <typeparam name="TDomain">Provides domain-specific logic to compute spans, boundaries, and interval arithmetic for <c>TRange</c>.</typeparam>
@@ -97,7 +97,7 @@ internal readonly struct ProportionalRangePlanner<TRange, TDomain>
     /// </para>
     /// <para>See also:
     ///   <see cref="NoRebalanceSatisfactionPolicy{TRange}"/>
-    ///   <see href="../docs/component-map.md#proportionalrangeplanner" />
+    ///   <see href="../docs/components/decision.md" />
     /// </para>
     /// </remarks>
     public Range<TRange> Plan(Range<TRange> requested)
