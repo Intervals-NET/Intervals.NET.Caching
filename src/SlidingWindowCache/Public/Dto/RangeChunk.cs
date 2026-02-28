@@ -14,7 +14,7 @@ namespace SlidingWindowCache.Public.Dto;
 /// </param>
 /// <param name="Data">
 /// The data elements for the range.
-/// Empty list when Range is null.
+/// Empty sequence when Range is null.
 /// </param>
 /// <remarks>
 /// <para><strong>IDataSource Contract:</strong></para>
@@ -28,5 +28,5 @@ namespace SlidingWindowCache.Public.Dto;
 /// // Request [600..700] → Return RangeChunk(null, empty list)
 /// </code>
 /// </remarks>
-public sealed record RangeChunk<TRange, TData>(Range<TRange>? Range, IReadOnlyList<TData> Data)
+public sealed record RangeChunk<TRange, TData>(Range<TRange>? Range, IEnumerable<TData> Data)
     where TRange : IComparable<TRange>;

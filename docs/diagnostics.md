@@ -56,10 +56,10 @@ public interface ICacheDiagnostics
     // Data Source Access Events
     void DataSourceFetchSingleRange();
     void DataSourceFetchMissingSegments();
+    void DataSegmentUnavailable();
     
     // Rebalance Intent Lifecycle Events
     void RebalanceIntentPublished();
-    void RebalanceIntentCancelled();
     
     // Rebalance Execution Lifecycle Events
     void RebalanceExecutionStarted();

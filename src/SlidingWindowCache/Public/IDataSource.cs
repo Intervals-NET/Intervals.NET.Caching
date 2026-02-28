@@ -74,12 +74,12 @@ public interface IDataSource<TRange, TData> where TRange : IComparable<TRange>
     /// For data sources with physical boundaries (e.g., databases with min/max IDs, 
     /// time-series with temporal limits, paginated APIs with maximum pages), implementations MUST:
     /// </para>
-    /// <list type="bullet">
-    /// <item><description>Return RangeChunk with Range = null when no data is available for the requested range</description></item>
-    /// <item><description>Return truncated range when partial data is available (intersection of requested and available)</description></item>
-    /// <item><description>NEVER throw exceptions for out-of-bounds requests - use null Range instead</description></item>
-    /// <item><description>Ensure Data.Count equals Range.Span when Range is non-null</description></item>
-    /// </list>
+     /// <list type="bullet">
+     /// <item><description>Return RangeChunk with Range = null when no data is available for the requested range</description></item>
+     /// <item><description>Return truncated range when partial data is available (intersection of requested and available)</description></item>
+     /// <item><description>NEVER throw exceptions for out-of-bounds requests - use null Range instead</description></item>
+     /// <item><description>Ensure Data contains exactly Range.Span elements when Range is non-null</description></item>
+     /// </list>
     /// <para><strong>Boundary Handling Examples:</strong></para>
     /// <code>
     /// // Database with records ID 100-500
