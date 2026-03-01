@@ -115,6 +115,9 @@ public sealed class LayeredWindowCacheBuilder<TRange, TData, TDomain>
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="dataSource"/> is null.
     /// </exception>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="domain"/> is null.
+    /// </exception>
     public static LayeredWindowCacheBuilder<TRange, TData, TDomain> Create(
         IDataSource<TRange, TData> dataSource,
         TDomain domain)
@@ -122,6 +125,11 @@ public sealed class LayeredWindowCacheBuilder<TRange, TData, TDomain>
         if (dataSource == null)
         {
             throw new ArgumentNullException(nameof(dataSource));
+        }
+
+        if (domain is null)
+        {
+            throw new ArgumentNullException(nameof(domain));
         }
 
         return new LayeredWindowCacheBuilder<TRange, TData, TDomain>(dataSource, domain);

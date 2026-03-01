@@ -229,14 +229,24 @@ If you need lower-level control, you can compose layers manually using `WindowCa
 
 ```csharp
 var backgroundCache = new WindowCache<int, byte[], IntegerFixedStepDomain>(
-    slowDataSource, domain, backgroundOptions);
+    slowDataSource, domain,
+    new WindowCacheOptions(
+        leftCacheSize: 10.0,
+        rightCacheSize: 10.0,
+        readMode: UserCacheReadMode.CopyOnRead,
+        leftThreshold: 0.3,
+        rightThreshold: 0.3));
 
 // Wrap background cache as IDataSource for user cache
 IDataSource<int, byte[]> cachedDataSource =
     new WindowCacheDataSourceAdapter<int, byte[], IntegerFixedStepDomain>(backgroundCache);
 
 var userCache = new WindowCache<int, byte[], IntegerFixedStepDomain>(
-    cachedDataSource, domain, userOptions);
+    cachedDataSource, domain,
+    new WindowCacheOptions(
+        leftCacheSize: 0.5,
+        rightCacheSize: 0.5,
+        readMode: UserCacheReadMode.Snapshot));
 ```
 
 ---

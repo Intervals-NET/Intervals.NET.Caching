@@ -1,5 +1,6 @@
 using Intervals.NET.Domain.Default.Numeric;
 using Moq;
+using SlidingWindowCache.Infrastructure.Collections;
 using SlidingWindowCache.Public;
 using SlidingWindowCache.Public.Dto;
 
@@ -111,9 +112,9 @@ public sealed class WindowCacheDataSourceAdapterTests
     }
 
     [Fact]
-    public async Task FetchAsync_DataIsAnArray_NotSameReferenceAsInnerMemory()
+    public async Task FetchAsync_DataIsLazyEnumerable_NotEagerCopy()
     {
-        // ARRANGE — ensure the adapter creates a copy, not a reference to inner cache internals
+        // ARRANGE — adapter wraps ReadOnlyMemory lazily; no intermediate array is allocated
         var mock = CreateCacheMock();
         var range = MakeRange(1, 5);
         var innerArray = new[] { 1, 2, 3, 4, 5 };
@@ -125,13 +126,38 @@ public sealed class WindowCacheDataSourceAdapterTests
 
         // ACT
         var chunk = await adapter.FetchAsync(range, CancellationToken.None);
-        var returnedArray = chunk.Data.ToArray();
 
-        // Mutate inner array after fetch
+        // ASSERT — Data is a lazy ReadOnlyMemoryEnumerable, not a materialized copy
+        Assert.IsType<ReadOnlyMemoryEnumerable<int>>(chunk.Data);
+        Assert.Equal(innerArray, chunk.Data.ToArray());
+    }
+
+    [Fact]
+    public async Task FetchAsync_DataEnumeratesFromMemory_ReflectsContentAtEnumerationTime()
+    {
+        // ARRANGE — lazy enumeration reads from the captured ReadOnlyMemory backing array;
+        // mutations to the source array before enumeration are visible (lazy semantics)
+        var mock = CreateCacheMock();
+        var range = MakeRange(1, 5);
+        var innerArray = new[] { 1, 2, 3, 4, 5 };
+        var result = new RangeResult<int, int>(range, new ReadOnlyMemory<int>(innerArray));
+        var adapter = CreateAdapter(mock.Object);
+
+        mock.Setup(c => c.GetDataAsync(range, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(result);
+
+        // ACT — fetch the chunk but do NOT enumerate yet
+        var chunk = await adapter.FetchAsync(range, CancellationToken.None);
+
+        // Mutate the source array before enumeration
         innerArray[0] = 999;
 
-        // ASSERT — chunk data was already copied; mutation of source has no effect
-        Assert.Equal(1, returnedArray[0]);
+        // Enumerate now — lazy read picks up the mutation (expected: 999, not 1)
+        var enumeratedData = chunk.Data.ToArray();
+
+        // ASSERT
+        Assert.Equal(999, enumeratedData[0]);
+        Assert.Equal(2, enumeratedData[1]);
     }
 
     [Fact]

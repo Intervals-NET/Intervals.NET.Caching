@@ -1,5 +1,6 @@
 using Intervals.NET;
 using Intervals.NET.Domain.Abstractions;
+using SlidingWindowCache.Infrastructure.Collections;
 using SlidingWindowCache.Public.Dto;
 
 namespace SlidingWindowCache.Public;
@@ -33,7 +34,8 @@ namespace SlidingWindowCache.Public;
 /// delegates to the inner (deeper) cache's <see cref="IWindowCache{TRange,TData,TDomain}.GetDataAsync"/>,
 /// which returns data from the inner cache's window (possibly triggering a background rebalance
 /// in the inner cache). The <see cref="ReadOnlyMemory{T}"/> from <see cref="RangeResult{TRange,TData}"/>
-/// is converted to an array for the <see cref="RangeChunk{TRange,TData}"/> contract.
+/// is wrapped in a <see cref="ReadOnlyMemoryEnumerable{T}"/> and passed directly as
+/// <see cref="RangeChunk{TRange,TData}.Data"/>, avoiding an intermediate array allocation.
 /// </para>
 /// <para><strong>Consistency Model:</strong></para>
 /// <para>
@@ -122,11 +124,12 @@ public sealed class WindowCacheDataSourceAdapter<TRange, TData, TDomain>
     /// also trigger a background rebalance in the inner cache (eventual consistency).
     /// </para>
     /// <para>
-    /// The <see cref="ReadOnlyMemory{T}"/> returned by the inner cache is converted to an array
-    /// to satisfy the <see cref="RangeChunk{TRange,TData}.Data"/> contract. This allocation is
-    /// intentional: for <c>Snapshot</c> inner caches, a copy is required to avoid capturing
-    /// a reference into the inner cache's internal array (which may be replaced by a rebalance);
-    /// for <c>CopyOnRead</c> inner caches, the allocation is already made by the read itself.
+    /// The <see cref="ReadOnlyMemory{T}"/> returned by the inner cache is wrapped in a
+    /// <see cref="ReadOnlyMemoryEnumerable{T}"/> without copying the underlying data.
+    /// The <see cref="ReadOnlyMemory{T}"/> captures a reference to the backing array,
+    /// keeping it reachable for the lifetime of the enumerable. Enumeration is deferred:
+    /// the data is read lazily when the outer cache's rebalance path materializes the
+    /// <see cref="RangeChunk{TRange,TData}.Data"/> sequence (a single pass).
     /// </para>
     /// </remarks>
     public async Task<RangeChunk<TRange, TData>> FetchAsync(
@@ -134,6 +137,6 @@ public sealed class WindowCacheDataSourceAdapter<TRange, TData, TDomain>
         CancellationToken cancellationToken)
     {
         var result = await _innerCache.GetDataAsync(range, cancellationToken).ConfigureAwait(false);
-        return new RangeChunk<TRange, TData>(result.Range, result.Data.ToArray());
+        return new RangeChunk<TRange, TData>(result.Range, new ReadOnlyMemoryEnumerable<TData>(result.Data));
     }
 }

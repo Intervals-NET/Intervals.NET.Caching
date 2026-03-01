@@ -1,3 +1,4 @@
+using Intervals.NET.Domain.Abstractions;
 using Intervals.NET.Domain.Default.Numeric;
 using SlidingWindowCache.Public;
 using SlidingWindowCache.Public.Configuration;
@@ -43,6 +44,24 @@ public sealed class LayeredWindowCacheBuilderTests
         Assert.NotNull(exception);
         Assert.IsType<ArgumentNullException>(exception);
         Assert.Contains("dataSource", ((ArgumentNullException)exception).ParamName);
+    }
+
+    [Fact]
+    public void Create_WithNullDomain_ThrowsArgumentNullException()
+    {
+        // ARRANGE — TDomain must be a reference type to accept null;
+        // use IRangeDomain<int> as the type parameter (interface = reference type)
+        var dataSource = CreateDataSource();
+
+        // ACT
+        var exception = Record.Exception(() =>
+            LayeredWindowCacheBuilder<int, int, IRangeDomain<int>>
+                .Create(dataSource, null!));
+
+        // ASSERT
+        Assert.NotNull(exception);
+        Assert.IsType<ArgumentNullException>(exception);
+        Assert.Contains("domain", ((ArgumentNullException)exception).ParamName);
     }
 
     [Fact]
