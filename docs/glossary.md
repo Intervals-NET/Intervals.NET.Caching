@@ -108,6 +108,13 @@ WaitForIdleAsync (“Was Idle” Semantics)
 - Completes when the system was idle at some point, which is appropriate for tests and convergence checks.
 - It does not guarantee the system is still idle after the task completes.
 
+Strong Consistency Mode
+- An opt-in mode provided by the `GetDataAndWaitForIdleAsync` extension method on `IWindowCache`.
+- Composes `GetDataAsync` (returns data immediately) with `WaitForIdleAsync` (waits for convergence), returning the same `RangeResult` as `GetDataAsync` but only after the cache has reached an idle state.
+- Useful for cold start synchronization, integration testing, and any scenario requiring a guarantee that the cache window has converged before proceeding.
+- Not recommended for hot paths: adds latency equal to the rebalance execution time (debounce delay + I/O).
+- See `README.md` and `docs/components/public-api.md`.
+
 ## Storage And Materialization
 
 UserCacheReadMode

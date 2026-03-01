@@ -197,6 +197,8 @@ Idle detection requires state-based semantics: when the system becomes idle, ALL
 
 **"Was idle" semantics — not "is idle":** `WaitForIdleAsync` completes when the system was idle at some point. It does not guarantee the system is still idle after completion. This is correct for eventual consistency models. Callers requiring stronger guarantees must re-check state after await.
 
+**Opt-in strong consistency mode:** For scenarios that require the cache to be fully converged before proceeding, the `GetDataAndWaitForIdleAsync` extension method on `IWindowCache` composes `GetDataAsync` and `WaitForIdleAsync` into a single call. This provides a convenient strong consistency mode on top of the default eventual consistency model, at the cost of waiting for rebalance to complete. See `README.md` and `docs/components/public-api.md` for usage details.
+
 ---
 
 ## Single Cache Instance = Single Consumer

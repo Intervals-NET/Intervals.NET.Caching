@@ -109,6 +109,42 @@ Optional observability interface with 18 event recording methods covering:
 
 > ⚠️ **Critical**: `RebalanceExecutionFailed` is the only event that signals a background exception. Always wire this in production code.
 
+## Extensions
+
+### WindowCacheExtensions
+
+**File**: `src/SlidingWindowCache/Public/WindowCacheExtensions.cs`
+
+**Type**: `static class` (extension methods on `IWindowCache<TRange, TData, TDomain>`)
+
+Provides opt-in strong consistency mode on top of the default eventual consistency model.
+
+#### GetDataAndWaitForIdleAsync
+
+```csharp
+ValueTask<RangeResult<TRange, TData>> GetDataAndWaitForIdleAsync<TRange, TData, TDomain>(
+    this IWindowCache<TRange, TData, TDomain> cache,
+    Range<TRange> requestedRange,
+    CancellationToken cancellationToken = default)
+```
+
+Composes `GetDataAsync` + `WaitForIdleAsync` into a single call. Returns the same `RangeResult<TRange, TData>` as `GetDataAsync`, but does not complete until the cache has reached an idle state (no pending intent, no executing rebalance).
+
+**When to use:**
+- Asserting or inspecting cache geometry after a request (e.g., verifying a rebalance occurred)
+- Cold start synchronization before subsequent operations
+- Integration tests that require deterministic cache state before making assertions
+
+**When NOT to use:**
+- Hot paths — the idle wait adds latency equal to the full rebalance cycle (debounce delay + data fetch + cache update)
+- Rapid sequential requests — eliminates debounce and work-avoidance benefits
+
+**Idle semantics**: Inherits "was idle at some point" semantics from `WaitForIdleAsync` (Invariant H.49). Sufficient for all strong consistency use cases.
+
+**Exception propagation**: If `GetDataAsync` throws, `WaitForIdleAsync` is never called. If `WaitForIdleAsync` throws, the `GetDataAsync` result is discarded.
+
+**See**: `README.md` (Strong Consistency Mode section) and `docs/architecture.md` for broader context.
+
 ## See Also
 
 - `docs/boundary-handling.md`

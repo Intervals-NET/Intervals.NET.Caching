@@ -255,18 +255,6 @@ public static class TestHelpers
     }
 
     /// <summary>
-    /// Executes a request and waits for rebalance to complete before returning.
-    /// </summary>
-    public static async Task<ReadOnlyMemory<int>> ExecuteRequestAndWaitForRebalance(
-        WindowCache<int, int, IntegerFixedStepDomain> cache,
-        Range<int> range)
-    {
-        var result = await cache.GetDataAsync(range, CancellationToken.None);
-        await cache.WaitForIdleAsync();
-        return result.Data;
-    }
-
-    /// <summary>
     /// Asserts that user received correct data matching the requested range.
     /// </summary>
     public static void AssertUserDataCorrect(ReadOnlyMemory<int> data, Range<int> range)
