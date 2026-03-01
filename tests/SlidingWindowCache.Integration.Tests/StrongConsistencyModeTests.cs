@@ -383,7 +383,7 @@ public sealed class StrongConsistencyModeTests : IAsyncDisposable
         // ASSERT — cancellation of the operation should surface as OperationCanceledException,
         // regardless of whether it is observed during GetDataAsync or WaitForIdleAsync.
         Assert.NotNull(exception);
-        Assert.IsType<OperationCanceledException>(exception);
+        Assert.IsAssignableFrom<OperationCanceledException>(exception);
     }
 
     #endregion
