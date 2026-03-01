@@ -1,38 +1,11 @@
-﻿using Intervals.NET;
-using Intervals.NET.Data;
-using Intervals.NET.Domain.Abstractions;
+﻿using Intervals.NET.Domain.Abstractions;
 using SlidingWindowCache.Core.Rebalance.Decision;
 using SlidingWindowCache.Core.Rebalance.Execution;
 using SlidingWindowCache.Core.State;
 using SlidingWindowCache.Infrastructure.Concurrency;
-using SlidingWindowCache.Infrastructure.Instrumentation;
+using SlidingWindowCache.Public.Instrumentation;
 
 namespace SlidingWindowCache.Core.Rebalance.Intent;
-
-/// <summary>
-/// Represents the intent to rebalance the cache based on a requested range and the currently available range data.
-/// </summary>
-/// <param name="RequestedRange">
-/// The range requested by the user that triggered the rebalance evaluation. This is the range for which the user is seeking data.
-/// </param>
-/// <param name="AvailableRangeData">
-/// The current range of data available in the cache along with its associated data and domain information. This represents the state of the cache before any rebalance execution.
-/// </param>
-/// <typeparam name="TRange">
-/// The type representing the range boundaries. Must implement <see cref="IComparable{T}"/> to allow for range comparisons and calculations.
-/// </typeparam>
-/// <typeparam name="TData">
-/// The type of data being cached. This is the type of the elements stored within the ranges in the cache.
-/// </typeparam>
-/// <typeparam name="TDomain">
-/// The type representing the domain of the ranges. Must implement <see cref="IRangeDomain{TRange}"/> to provide necessary domain-specific operations for range calculations and validations.
-/// </typeparam>
-public record Intent<TRange, TData, TDomain>(
-    Range<TRange> RequestedRange,
-    RangeData<TRange, TData, TDomain> AvailableRangeData
-)
-    where TRange : IComparable<TRange>
-    where TDomain : IRangeDomain<TRange>;
 
 /// <summary>
 /// Manages the lifecycle of rebalance intents using a single-threaded loop with burst resistance.
@@ -238,17 +211,26 @@ internal sealed class IntentController<TRange, TData, TDomain>
                     // All decision evaluation (DecisionEngine, Planners, Policy) happens HERE in background
                     // Evaluate DecisionEngine INSIDE loop (avoids race conditions)
                     var lastExecutionRequest = _executionController.LastExecutionRequest;
+                    // _state.Storage.Range and _state.NoRebalanceRange are read without explicit
+                    // synchronization. This is intentional: the decision engine operates on an
+                    // eventually-consistent snapshot of cache state. A slightly stale range or
+                    // NoRebalanceRange value may cause one extra or skipped rebalance, but the
+                    // system self-corrects on the next intent. The single-writer architecture
+                    // guarantees no torn writes; CopyOnReadStorage protects the Range value via its
+                    // internal lock only for reads inside Read()/ToRangeData(); bare Range reads
+                    // here accept the same eventual-consistency contract.
                     var decision = _decisionEngine.Evaluate(
                         requestedRange: intent.RequestedRange,
-                        currentCacheState: _state,
-                        lastExecutionRequest: lastExecutionRequest
+                        currentNoRebalanceRange: _state.NoRebalanceRange,
+                        currentCacheRange: _state.Storage.Range,
+                        pendingNoRebalanceRange: lastExecutionRequest?.DesiredNoRebalanceRange
                     );
 
                     // Record decision reason for observability
-                    RecordReason(decision.Reason);
+                    RecordDecisionOutcome(decision.Reason);
 
                     // If decision says skip, continue (decrement happens in finally)
-                    if (!decision.ShouldSchedule)
+                    if (!decision.IsExecutionRequired)
                     {
                         continue;
                     }
@@ -295,7 +277,7 @@ internal sealed class IntentController<TRange, TData, TDomain>
     /// Records the skip reason for diagnostic and observability purposes.
     /// Maps decision reasons to diagnostic events.
     /// </summary>
-    private void RecordReason(RebalanceReason reason)
+    private void RecordDecisionOutcome(RebalanceReason reason)
     {
         switch (reason)
         {
@@ -341,7 +323,7 @@ internal sealed class IntentController<TRange, TData, TDomain>
     /// but do not prevent subsequent cleanup steps.
     /// </para>
     /// </remarks>
-    internal async ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         // Idempotent check using lock-free Interlocked.CompareExchange
         if (Interlocked.CompareExchange(ref _disposeState, 1, 0) != 0)

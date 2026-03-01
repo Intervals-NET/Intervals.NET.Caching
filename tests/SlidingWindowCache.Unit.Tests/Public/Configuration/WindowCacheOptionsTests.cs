@@ -591,6 +591,30 @@ public class WindowCacheOptionsTests
     }
 
     [Fact]
+    public void RecordEquality_WithDifferentRebalanceQueueCapacity_AreNotEqual()
+    {
+        // ARRANGE
+        var options1 = new WindowCacheOptions(
+            leftCacheSize: 1.0,
+            rightCacheSize: 1.0,
+            readMode: UserCacheReadMode.Snapshot,
+            rebalanceQueueCapacity: null
+        );
+
+        var options2 = new WindowCacheOptions(
+            leftCacheSize: 1.0,
+            rightCacheSize: 1.0,
+            readMode: UserCacheReadMode.Snapshot,
+            rebalanceQueueCapacity: 5
+        );
+
+        // ACT & ASSERT
+        Assert.NotEqual(options1, options2);
+        Assert.False(options1 == options2);
+        Assert.True(options1 != options2);
+    }
+
+    [Fact]
     public void RecordEquality_WithDifferentDebounceDelay_AreNotEqual()
     {
         // ARRANGE
@@ -734,6 +758,42 @@ public class WindowCacheOptionsTests
         Assert.Equal(0.0001, options.RightCacheSize);
         Assert.Equal(0.0001, options.LeftThreshold);
         Assert.Equal(0.0001, options.RightThreshold);
+    }
+
+    [Fact]
+    public void Constructor_WithLeftThresholdAboveOne_ThrowsArgumentOutOfRangeException()
+    {
+        // ARRANGE, ACT & ASSERT
+        var exception = Record.Exception(() => new WindowCacheOptions(
+            leftCacheSize: 1.0,
+            rightCacheSize: 1.0,
+            readMode: UserCacheReadMode.Snapshot,
+            leftThreshold: 1.01,
+            rightThreshold: null
+        ));
+
+        Assert.NotNull(exception);
+        Assert.IsType<ArgumentOutOfRangeException>(exception);
+        var argException = (ArgumentOutOfRangeException)exception;
+        Assert.Equal("leftThreshold", argException.ParamName);
+    }
+
+    [Fact]
+    public void Constructor_WithRightThresholdAboveOne_ThrowsArgumentOutOfRangeException()
+    {
+        // ARRANGE, ACT & ASSERT
+        var exception = Record.Exception(() => new WindowCacheOptions(
+            leftCacheSize: 1.0,
+            rightCacheSize: 1.0,
+            readMode: UserCacheReadMode.Snapshot,
+            leftThreshold: null,
+            rightThreshold: 1.01
+        ));
+
+        Assert.NotNull(exception);
+        Assert.IsType<ArgumentOutOfRangeException>(exception);
+        var argException = (ArgumentOutOfRangeException)exception;
+        Assert.Equal("rightThreshold", argException.ParamName);
     }
 
     #endregion
@@ -895,4 +955,3 @@ public class WindowCacheOptionsTests
 
     #endregion
 }
-

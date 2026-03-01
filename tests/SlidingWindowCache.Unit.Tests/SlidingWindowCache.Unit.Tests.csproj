@@ -26,6 +26,7 @@
 
     <ItemGroup>
       <ProjectReference Include="..\..\src\SlidingWindowCache\SlidingWindowCache.csproj" />
+      <ProjectReference Include="..\SlidingWindowCache.Tests.Infrastructure\SlidingWindowCache.Tests.Infrastructure.csproj" />
     </ItemGroup>
 
 </Project>

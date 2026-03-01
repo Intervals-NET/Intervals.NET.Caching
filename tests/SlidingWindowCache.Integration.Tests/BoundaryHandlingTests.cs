@@ -1,8 +1,8 @@
 using Intervals.NET.Domain.Default.Numeric;
-using SlidingWindowCache.Integration.Tests.TestInfrastructure;
-using SlidingWindowCache.Infrastructure.Instrumentation;
+using SlidingWindowCache.Tests.Infrastructure.DataSources;
 using SlidingWindowCache.Public;
 using SlidingWindowCache.Public.Configuration;
+using SlidingWindowCache.Public.Instrumentation;
 
 namespace SlidingWindowCache.Integration.Tests;
 
@@ -320,6 +320,25 @@ public sealed class BoundaryHandlingTests : IAsyncDisposable
 
         Assert.NotNull(rightResult.Range);
         Assert.Equal(rightExpanded, rightResult.Range);
+    }
+
+    [Fact]
+    public async Task RebalancePath_CompleteDataMiss_IncrementsDataSegmentUnavailable()
+    {
+        // ARRANGE - Configure cache to expand far beyond physical bounds
+        var cache = CreateCacheWithLeftExpansion();
+        _cacheDiagnostics.Reset();
+
+        // Request at exact lower boundary to create an out-of-bounds missing segment
+        var initialRequest = Intervals.NET.Factories.Range.Closed<int>(1000, 1010);
+
+        // ACT
+        await cache.GetDataAsync(initialRequest, CancellationToken.None);
+        await cache.WaitForIdleAsync();
+
+        // ASSERT - At least one segment should be reported as unavailable
+        Assert.True(_cacheDiagnostics.DataSegmentUnavailable >= 1,
+            "Expected DataSegmentUnavailable to be recorded when rebalance requests out-of-bounds data.");
     }
 
     #endregion

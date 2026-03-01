@@ -1,10 +1,15 @@
-﻿namespace SlidingWindowCache.Infrastructure.Instrumentation;
+﻿namespace SlidingWindowCache.Public.Instrumentation;
 
 /// <summary>
 /// No-op implementation of ICacheDiagnostics for production use where performance is critical and diagnostics are not needed.
 /// </summary>
-public class NoOpDiagnostics : ICacheDiagnostics
+public sealed class NoOpDiagnostics : ICacheDiagnostics
 {
+    /// <summary>
+    /// A shared singleton instance. Use this to avoid unnecessary allocations.
+    /// </summary>
+    public static readonly NoOpDiagnostics Instance = new();
+
     /// <inheritdoc/>
     public void CacheExpanded()
     {
@@ -46,11 +51,6 @@ public class NoOpDiagnostics : ICacheDiagnostics
     }
 
     /// <inheritdoc/>
-    public void RebalanceIntentCancelled()
-    {
-    }
-
-    /// <inheritdoc/>
     public void RebalanceIntentPublished()
     {
     }
@@ -78,6 +78,9 @@ public class NoOpDiagnostics : ICacheDiagnostics
     /// <inheritdoc/>
     public void RebalanceExecutionFailed(Exception ex)
     {
+        // Intentional no-op: this implementation discards all diagnostics including failures.
+        // For production systems, use EventCounterCacheDiagnostics or a custom ICacheDiagnostics
+        // implementation that logs to your observability pipeline.
     }
 
     /// <inheritdoc/>

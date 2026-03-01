@@ -56,10 +56,10 @@ public interface ICacheDiagnostics
     // Data Source Access Events
     void DataSourceFetchSingleRange();
     void DataSourceFetchMissingSegments();
+    void DataSegmentUnavailable();
     
     // Rebalance Intent Lifecycle Events
     void RebalanceIntentPublished();
-    void RebalanceIntentCancelled();
     
     // Rebalance Execution Lifecycle Events
     void RebalanceExecutionStarted();
@@ -765,6 +765,6 @@ public class PrometheusMetricsDiagnostics : ICacheDiagnostics
 ## See Also
 
 - **[Invariants](invariants.md)** - System invariants tracked by diagnostics
-- **[Scenario Model](scenario-model.md)** - User/Decision/Rebalance scenarios referenced in event descriptions
+- **[Scenarios](scenarios.md)** - User/Decision/Rebalance scenarios referenced in event descriptions
 - **[Invariant Test Suite](../tests/SlidingWindowCache.Invariants.Tests/README.md)** - Examples of diagnostic usage in tests
-- **[Component Map](component-map.md)** - Component locations where events are recorded
+- **[Components](components/overview.md)** - Component locations where events are recorded

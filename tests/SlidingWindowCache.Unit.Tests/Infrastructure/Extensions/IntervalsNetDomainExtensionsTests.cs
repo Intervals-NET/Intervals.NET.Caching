@@ -281,7 +281,7 @@ public class IntervalsNetDomainExtensionsTests
         // The range should be smaller
         Assert.True(shrunk.Start.Value >= 10);
         Assert.True(shrunk.End.Value <= 30);
-        Assert.True(shrunk.Start.Value > 10 || shrunk.End.Value < 30); // At least one side changed
+        Assert.True(shrunk.Start.Value > 10 && shrunk.End.Value < 30); // Both sides must have changed
     }
 
     [Fact]
@@ -341,7 +341,7 @@ public class IntervalsNetDomainExtensionsTests
         // ARRANGE
         var steps = new[] { 1, 2, 5, 10, 15, 20, 25, 30, 40, 50, 100, 200 };
         var domain = new IntegerVariableStepDomain(steps);
-        var range = Intervals.NET.Factories.Range.Closed<int>(10, 30); // Span = 4 steps (10, 15, 20, 25, 30)
+        var range = Intervals.NET.Factories.Range.Closed<int>(10, 30); // Span = 5 steps (10, 15, 20, 25, 30)
 
         // ACT - Expand by 50% on each side (2 steps on each side)
         var expanded = range.ExpandByRatio(domain, leftRatio: 0.5, rightRatio: 0.5);

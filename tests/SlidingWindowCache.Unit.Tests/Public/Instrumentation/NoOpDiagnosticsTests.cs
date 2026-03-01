@@ -1,6 +1,6 @@
-using SlidingWindowCache.Infrastructure.Instrumentation;
+using SlidingWindowCache.Public.Instrumentation;
 
-namespace SlidingWindowCache.Unit.Tests.Infrastructure.Instrumentation;
+namespace SlidingWindowCache.Unit.Tests.Public.Instrumentation;
 
 /// <summary>
 /// Unit tests for NoOpDiagnostics to ensure it never throws exceptions.
@@ -25,7 +25,6 @@ public class NoOpDiagnosticsTests
             diagnostics.RebalanceExecutionCancelled();
             diagnostics.RebalanceExecutionCompleted();
             diagnostics.RebalanceExecutionStarted();
-            diagnostics.RebalanceIntentCancelled();
             diagnostics.RebalanceIntentPublished();
             diagnostics.RebalanceSkippedCurrentNoRebalanceRange();
             diagnostics.RebalanceSkippedPendingNoRebalanceRange();

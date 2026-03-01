@@ -132,7 +132,7 @@ using Intervals.NET;
 using Intervals.NET.Domain.Abstractions;
 using SlidingWindowCache.Core.Planning;
 using SlidingWindowCache.Core.State;
-using SlidingWindowCache.Infrastructure.Instrumentation;
+using SlidingWindowCache.Public.Instrumentation;
 ```
 
 ### XML Documentation
@@ -207,7 +207,7 @@ catch (Exception ex)
 ### Concurrency Patterns
 
 **Single-Writer Architecture (CRITICAL):**
-- User Path: READ-ONLY (never mutates Cache, LastRequested, or NoRebalanceRange)
+- User Path: READ-ONLY (never mutates Cache, IsInitialized, or NoRebalanceRange)
 - Rebalance Execution: SINGLE WRITER (sole authority for cache mutations)
 - Serialization: Channel-based with single reader/single writer (intent processing loop)
 
@@ -305,29 +305,32 @@ refactor: AsyncActivityCounter lock has been removed and replaced with lock-free
 - Documentation may be outdated; long-term goal is synchronization with code
 
 ### Documentation Update Map
-| File | Update When | Focus |
-|------|-------------|-------|
-| `README.md` | Public API changes, new features | User-facing examples, configuration |
-| `docs/invariants.md` | Architectural invariants changed | System constraints, concurrency rules |
-| `docs/architecture-model.md` | Concurrency mechanisms changed | Thread safety, synchronization primitives |
-| `docs/component-map.md` | New components, major refactoring | Component catalog, dependencies |
-| `docs/actors-and-responsibilities.md` | Component responsibilities changed | Actor roles, explicit responsibilities |
-| `docs/cache-state-machine.md` | State transitions changed | State machine specification |
-| `docs/storage-strategies.md` | Storage implementation changed | Strategy comparison, performance |
-| `docs/scenario-model.md` | Temporal behavior changed | Scenario walkthroughs, sequences |
-| `docs/diagnostics.md` | New diagnostics events | Instrumentation guide |
-| `benchmarks/*/README.md` | Benchmark changes | Performance methodology, results |
-| `tests/*/README.md` | Test architecture changes | Test suite documentation |
-| XML comments (in code) | All code changes | Component purpose, invariant references |
+
+| File                          | Update When                        | Focus                                   |
+|-------------------------------|------------------------------------|-----------------------------------------|
+| `README.md`                   | Public API changes, new features   | User-facing examples, configuration     |
+| `docs/invariants.md`          | Architectural invariants changed   | System constraints, concurrency rules   |
+| `docs/architecture.md`        | Concurrency mechanisms changed     | Thread safety, coordination model       |
+| `docs/components/overview.md` | New components, major refactoring  | Component catalog, dependencies         |
+| `docs/actors.md`              | Component responsibilities changed | Actor roles, explicit responsibilities  |
+| `docs/state-machine.md`       | State transitions changed          | State machine specification             |
+| `docs/storage-strategies.md`  | Storage implementation changed     | Strategy comparison, performance        |
+| `docs/scenarios.md`           | Temporal behavior changed          | Scenario walkthroughs, sequences        |
+| `docs/diagnostics.md`         | New diagnostics events             | Instrumentation guide                   |
+| `docs/glossary.md`            | Terms or semantics change          | Canonical terminology                   |
+| `benchmarks/*/README.md`      | Benchmark changes                  | Performance methodology, results        |
+| `tests/*/README.md`           | Test architecture changes          | Test suite documentation                |
+| XML comments (in code)        | All code changes                   | Component purpose, invariant references |
 
 ## Architecture References
 
 **Before making changes, consult these critical documents:**
-- `docs/invariants.md` - System invariants (33KB) - READ THIS FIRST
-- `docs/architecture-model.md` - Architecture and concurrency model
-- `docs/actors-and-responsibilities.md` - Component responsibilities
-- `docs/component-map.md` - Detailed component catalog (86KB)
-- `README.md` - User guide and examples (32KB)
+- `docs/invariants.md` - System invariants - READ THIS FIRST
+- `docs/architecture.md` - Architecture and concurrency model
+- `docs/actors.md` - Actor responsibilities and boundaries
+- `docs/components/overview.md` - Component catalog (split by subsystem)
+- `docs/glossary.md` - Canonical terminology
+- `README.md` - User guide and examples
 
 **Key Invariants to NEVER violate:**
 1. Cache Contiguity: No gaps allowed in cached ranges
@@ -342,6 +345,7 @@ refactor: AsyncActivityCounter lock has been removed and replaced with lock-free
 - `src/SlidingWindowCache/Public/WindowCache.cs` - Main cache facade
 - `src/SlidingWindowCache/Public/IDataSource.cs` - Data source contract
 - `src/SlidingWindowCache/Public/Configuration/` - Configuration classes
+- `src/SlidingWindowCache/Public/Instrumentation/` - Diagnostics
 
 **Core Logic:**
 - `src/SlidingWindowCache/Core/UserPath/` - User request handling (read-only)
@@ -351,7 +355,6 @@ refactor: AsyncActivityCounter lock has been removed and replaced with lock-free
 
 **Infrastructure:**
 - `src/SlidingWindowCache/Infrastructure/Storage/` - Storage strategies
-- `src/SlidingWindowCache/Infrastructure/Instrumentation/` - Diagnostics
 - `src/SlidingWindowCache/Infrastructure/Concurrency/` - Async coordination
 
 ## CI/CD

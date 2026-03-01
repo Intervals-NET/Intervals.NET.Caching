@@ -412,8 +412,8 @@ dotnet test --filter "FullyQualifiedName~RangeResult_WithFullData_ReturnsRangeAn
 ---
 
 **For More Information:**
-- [Architecture Model](architecture-model.md) - System design and concurrency model
+- [Architecture](architecture.md) - System design and concurrency model
 - [Invariants](invariants.md) - System constraints and guarantees
 - [README.md](../README.md) - Usage examples and getting started
-- [Component Map](component-map.md) - Detailed component catalog
+- [Components](components/overview.md) - Internal component overview
 

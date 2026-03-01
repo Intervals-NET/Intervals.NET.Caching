@@ -1,8 +1,8 @@
 using Intervals.NET.Domain.Default.Numeric;
-using SlidingWindowCache.Integration.Tests.TestInfrastructure;
-using SlidingWindowCache.Infrastructure.Instrumentation;
+using SlidingWindowCache.Tests.Infrastructure.DataSources;
 using SlidingWindowCache.Public;
 using SlidingWindowCache.Public.Configuration;
+using SlidingWindowCache.Public.Instrumentation;
 
 namespace SlidingWindowCache.Integration.Tests;
 
@@ -10,7 +10,13 @@ namespace SlidingWindowCache.Integration.Tests;
 /// Tests that validate the EXACT ranges propagated to IDataSource in different cache scenarios.
 /// These tests provide precise behavioral contracts ("alibi") proving the cache requests
 /// correct ranges from the data source in every state transition.
-/// 
+///
+/// <para><strong>Note:</strong> These are intentional white-box tests. They verify internal
+/// range propagation details (e.g. exact segment boundaries sent to IDataSource) to guard
+/// against regressions in the User Path and Rebalance Execution logic. This level of
+/// specificity is deliberate — it documents and locks in the precise data-fetch contracts
+/// that the rest of the architecture depends on.</para>
+///
 /// Scenarios covered:
 /// - User Path: Cache miss (cold start)
 /// - User Path: Cache hit (full cache coverage)
@@ -250,7 +256,7 @@ public sealed class DataSourceRangePropagationTests : IAsyncDisposable
         // Left expansion: 11 * 1 = 11, so [89, 100)
         _dataSource.AssertRangeRequested(Intervals.NET.Factories.Range.ClosedOpen(89, 100));
 
-        // Right expansion: 11 * 2.0 = 22, so (110, 121]
+        // Right expansion: 11 * 1.0 = 11, so (110, 121]
         _dataSource.AssertRangeRequested(Intervals.NET.Factories.Range.OpenClosed<int>(110, 121));
     }
 

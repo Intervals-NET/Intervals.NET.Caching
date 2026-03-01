@@ -3,7 +3,6 @@ using Intervals.NET.Data;
 using Intervals.NET.Data.Extensions;
 using Intervals.NET.Domain.Abstractions;
 using SlidingWindowCache.Infrastructure.Extensions;
-using SlidingWindowCache.Public.Configuration;
 
 namespace SlidingWindowCache.Infrastructure.Storage;
 
@@ -24,7 +23,10 @@ internal sealed class SnapshotReadStorage<TRange, TData, TDomain> : ICacheStorag
     where TDomain : IRangeDomain<TRange>
 {
     private readonly TDomain _domain;
-    private TData[] _storage = [];
+    // volatile: Rematerialize() (rebalance thread) and Read() (user thread) access this field
+    // concurrently without a lock. volatile provides the acquire/release fence needed to ensure
+    // the user thread always observes the latest array reference published by the rebalance thread.
+    private volatile TData[] _storage = [];
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SnapshotReadStorage{TRange,TData,TDomain}"/> class.
@@ -38,9 +40,6 @@ internal sealed class SnapshotReadStorage<TRange, TData, TDomain> : ICacheStorag
     }
 
     /// <inheritdoc />
-    public UserCacheReadMode Mode => UserCacheReadMode.Snapshot;
-
-    /// <inheritdoc />
     public Range<TRange> Range { get; private set; }
 
     /// <inheritdoc />
@@ -48,6 +47,15 @@ internal sealed class SnapshotReadStorage<TRange, TData, TDomain> : ICacheStorag
     {
         // Always allocate a new array, even if the size is unchanged
         // This is the trade-off of the Snapshot mode
+        //
+        // Write ordering is intentional and critical for thread safety:
+        //   1. Range is written first (plain store, no fence)
+        //   2. _storage is written second as a volatile store (release fence)
+        //
+        // The volatile store on _storage acts as a release fence for ALL preceding stores,
+        // including Range. The user thread's volatile read of _storage (in Read()) acts as
+        // an acquire fence, guaranteeing it observes the Range value written before the
+        // volatile store. This is correct and safe under .NET's memory model.
         Range = rangeData.Range;
         _storage = rangeData.Data.ToArray();
     }

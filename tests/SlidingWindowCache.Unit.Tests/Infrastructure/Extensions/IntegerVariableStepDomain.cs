@@ -6,7 +6,7 @@ namespace SlidingWindowCache.Unit.Tests.Infrastructure.Extensions;
 /// Test implementation of IVariableStepDomain for integer values with custom step sizes.
 /// Used for testing domain-agnostic extension methods with variable-step domains.
 /// </summary>
-internal class IntegerVariableStepDomain : IVariableStepDomain<int>
+public class IntegerVariableStepDomain : IVariableStepDomain<int>
 {
     private readonly int[] _steps;
 

@@ -1,17 +1,16 @@
 ﻿using System.Diagnostics;
 
-namespace SlidingWindowCache.Infrastructure.Instrumentation;
+namespace SlidingWindowCache.Public.Instrumentation;
 
 /// <summary>
 /// Default implementation of <see cref="ICacheDiagnostics"/> that uses thread-safe counters to track cache events and metrics.
 /// </summary>
-public class EventCounterCacheDiagnostics : ICacheDiagnostics
+public sealed class EventCounterCacheDiagnostics : ICacheDiagnostics
 {
     private int _userRequestServed;
     private int _cacheExpanded;
     private int _cacheReplaced;
     private int _rebalanceIntentPublished;
-    private int _rebalanceIntentCancelled;
     private int _rebalanceExecutionStarted;
     private int _rebalanceExecutionCompleted;
     private int _rebalanceExecutionCancelled;
@@ -27,25 +26,24 @@ public class EventCounterCacheDiagnostics : ICacheDiagnostics
     private int _dataSegmentUnavailable;
     private int _rebalanceExecutionFailed;
 
-    public int UserRequestServed => _userRequestServed;
-    public int CacheExpanded => _cacheExpanded;
-    public int CacheReplaced => _cacheReplaced;
-    public int UserRequestFullCacheHit => _userRequestFullCacheHit;
-    public int UserRequestPartialCacheHit => _userRequestPartialCacheHit;
-    public int UserRequestFullCacheMiss => _userRequestFullCacheMiss;
-    public int DataSourceFetchSingleRange => _dataSourceFetchSingleRange;
-    public int DataSourceFetchMissingSegments => _dataSourceFetchMissingSegments;
-    public int DataSegmentUnavailable => _dataSegmentUnavailable;
-    public int RebalanceIntentPublished => _rebalanceIntentPublished;
-    public int RebalanceIntentCancelled => _rebalanceIntentCancelled;
-    public int RebalanceExecutionStarted => _rebalanceExecutionStarted;
-    public int RebalanceExecutionCompleted => _rebalanceExecutionCompleted;
-    public int RebalanceExecutionCancelled => _rebalanceExecutionCancelled;
-    public int RebalanceSkippedCurrentNoRebalanceRange => _rebalanceSkippedCurrentNoRebalanceRange;
-    public int RebalanceSkippedPendingNoRebalanceRange => _rebalanceSkippedPendingNoRebalanceRange;
-    public int RebalanceSkippedSameRange => _rebalanceSkippedSameRange;
-    public int RebalanceScheduled => _rebalanceScheduled;
-    public int RebalanceExecutionFailed => _rebalanceExecutionFailed;
+    public int UserRequestServed => Volatile.Read(ref _userRequestServed);
+    public int CacheExpanded => Volatile.Read(ref _cacheExpanded);
+    public int CacheReplaced => Volatile.Read(ref _cacheReplaced);
+    public int UserRequestFullCacheHit => Volatile.Read(ref _userRequestFullCacheHit);
+    public int UserRequestPartialCacheHit => Volatile.Read(ref _userRequestPartialCacheHit);
+    public int UserRequestFullCacheMiss => Volatile.Read(ref _userRequestFullCacheMiss);
+    public int DataSourceFetchSingleRange => Volatile.Read(ref _dataSourceFetchSingleRange);
+    public int DataSourceFetchMissingSegments => Volatile.Read(ref _dataSourceFetchMissingSegments);
+    public int DataSegmentUnavailable => Volatile.Read(ref _dataSegmentUnavailable);
+    public int RebalanceIntentPublished => Volatile.Read(ref _rebalanceIntentPublished);
+    public int RebalanceExecutionStarted => Volatile.Read(ref _rebalanceExecutionStarted);
+    public int RebalanceExecutionCompleted => Volatile.Read(ref _rebalanceExecutionCompleted);
+    public int RebalanceExecutionCancelled => Volatile.Read(ref _rebalanceExecutionCancelled);
+    public int RebalanceSkippedCurrentNoRebalanceRange => Volatile.Read(ref _rebalanceSkippedCurrentNoRebalanceRange);
+    public int RebalanceSkippedPendingNoRebalanceRange => Volatile.Read(ref _rebalanceSkippedPendingNoRebalanceRange);
+    public int RebalanceSkippedSameRange => Volatile.Read(ref _rebalanceSkippedSameRange);
+    public int RebalanceScheduled => Volatile.Read(ref _rebalanceScheduled);
+    public int RebalanceExecutionFailed => Volatile.Read(ref _rebalanceExecutionFailed);
 
     /// <inheritdoc/>
     void ICacheDiagnostics.CacheExpanded() => Interlocked.Increment(ref _cacheExpanded);
@@ -72,9 +70,6 @@ public class EventCounterCacheDiagnostics : ICacheDiagnostics
 
     /// <inheritdoc/>
     void ICacheDiagnostics.RebalanceExecutionStarted() => Interlocked.Increment(ref _rebalanceExecutionStarted);
-
-    /// <inheritdoc/>
-    void ICacheDiagnostics.RebalanceIntentCancelled() => Interlocked.Increment(ref _rebalanceIntentCancelled);
 
     /// <inheritdoc/>
     void ICacheDiagnostics.RebalanceIntentPublished() => Interlocked.Increment(ref _rebalanceIntentPublished);
@@ -124,26 +119,33 @@ public class EventCounterCacheDiagnostics : ICacheDiagnostics
     /// <summary>
     /// Resets all counters to zero. Use this before each test to ensure clean state.
     /// </summary>
+    /// <remarks>
+    /// <para><strong>Warning — not atomic:</strong> This method resets each counter individually using
+    /// <see cref="Volatile.Write"/>. In a concurrent environment, another thread may increment a counter
+    /// between two consecutive resets, leaving the object in a partially-reset state. Only call this
+    /// method when you can guarantee that no other thread is mutating the counters (e.g., after
+    /// <c>WaitForIdleAsync</c> in tests).
+    /// </para>
+    /// </remarks>
     public void Reset()
     {
-        _userRequestServed = 0;
-        _cacheExpanded = 0;
-        _cacheReplaced = 0;
-        _rebalanceIntentPublished = 0;
-        _rebalanceIntentCancelled = 0;
-        _rebalanceExecutionStarted = 0;
-        _rebalanceExecutionCompleted = 0;
-        _rebalanceExecutionCancelled = 0;
-        _rebalanceSkippedCurrentNoRebalanceRange = 0;
-        _rebalanceSkippedPendingNoRebalanceRange = 0;
-        _rebalanceSkippedSameRange = 0;
-        _rebalanceScheduled = 0;
-        _userRequestFullCacheHit = 0;
-        _userRequestPartialCacheHit = 0;
-        _userRequestFullCacheMiss = 0;
-        _dataSourceFetchSingleRange = 0;
-        _dataSourceFetchMissingSegments = 0;
-        _dataSegmentUnavailable = 0;
-        _rebalanceExecutionFailed = 0;
+        Volatile.Write(ref _userRequestServed, 0);
+        Volatile.Write(ref _cacheExpanded, 0);
+        Volatile.Write(ref _cacheReplaced, 0);
+        Volatile.Write(ref _rebalanceIntentPublished, 0);
+        Volatile.Write(ref _rebalanceExecutionStarted, 0);
+        Volatile.Write(ref _rebalanceExecutionCompleted, 0);
+        Volatile.Write(ref _rebalanceExecutionCancelled, 0);
+        Volatile.Write(ref _rebalanceSkippedCurrentNoRebalanceRange, 0);
+        Volatile.Write(ref _rebalanceSkippedPendingNoRebalanceRange, 0);
+        Volatile.Write(ref _rebalanceSkippedSameRange, 0);
+        Volatile.Write(ref _rebalanceScheduled, 0);
+        Volatile.Write(ref _userRequestFullCacheHit, 0);
+        Volatile.Write(ref _userRequestPartialCacheHit, 0);
+        Volatile.Write(ref _userRequestFullCacheMiss, 0);
+        Volatile.Write(ref _dataSourceFetchSingleRange, 0);
+        Volatile.Write(ref _dataSourceFetchMissingSegments, 0);
+        Volatile.Write(ref _dataSegmentUnavailable, 0);
+        Volatile.Write(ref _rebalanceExecutionFailed, 0);
     }
 }

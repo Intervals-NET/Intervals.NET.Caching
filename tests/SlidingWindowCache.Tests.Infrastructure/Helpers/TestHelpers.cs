@@ -2,12 +2,13 @@ using Intervals.NET;
 using Intervals.NET.Domain.Default.Numeric;
 using Intervals.NET.Domain.Extensions.Fixed;
 using Moq;
-using SlidingWindowCache.Infrastructure.Instrumentation;
 using SlidingWindowCache.Public;
 using SlidingWindowCache.Public.Configuration;
 using SlidingWindowCache.Public.Dto;
+using SlidingWindowCache.Public.Instrumentation;
+using SlidingWindowCache.Tests.Infrastructure.DataSources;
 
-namespace SlidingWindowCache.Invariants.Tests.TestInfrastructure;
+namespace SlidingWindowCache.Tests.Infrastructure.Helpers;
 
 /// <summary>
 /// Helper methods for creating test components.
@@ -65,8 +66,8 @@ public static class TestHelpers
     {
         // Mimic ProportionalRangePlanner.Plan() logic
         var size = requestedRange.Span(domain);
-        var left = (long)(size.Value * options.LeftCacheSize);
-        var right = (long)(size.Value * options.RightCacheSize);
+        var left = (long)Math.Round(size.Value * options.LeftCacheSize);
+        var right = (long)Math.Round(size.Value * options.RightCacheSize);
 
         return requestedRange.Expand(domain, left, right);
     }
@@ -150,46 +151,7 @@ public static class TestHelpers
                     await Task.Delay(fetchDelay.Value, ct);
                 }
 
-                // Use Intervals.NET domain to properly calculate range span
-                var span = range.Span(domain);
-                var data = new List<int>((int)span);
-
-                // Generate data respecting range inclusivity
-                var start = (int)range.Start;
-                var end = (int)range.End;
-
-                switch (range)
-                {
-                    case { IsStartInclusive: true, IsEndInclusive: true }:
-                        for (var i = start; i <= end; i++)
-                        {
-                            data.Add(i);
-                        }
-
-                        break;
-                    case { IsStartInclusive: true, IsEndInclusive: false }:
-                        for (var i = start; i < end; i++)
-                        {
-                            data.Add(i);
-                        }
-
-                        break;
-                    case { IsStartInclusive: false, IsEndInclusive: true }:
-                        for (var i = start + 1; i <= end; i++)
-                        {
-                            data.Add(i);
-                        }
-
-                        break;
-                    default:
-                        for (var i = start + 1; i < end; i++)
-                        {
-                            data.Add(i);
-                        }
-
-                        break;
-                }
-
+                var data = DataGenerationHelpers.GenerateDataForRange(range);
                 return new RangeChunk<int, int>(range, data);
             });
 
@@ -234,39 +196,7 @@ public static class TestHelpers
                     await Task.Delay(fetchDelay.Value, ct);
                 }
 
-                var span = range.Span(domain);
-                var data = new List<int>((int)span);
-                var start = (int)range.Start;
-                var end = (int)range.End;
-
-                switch (range)
-                {
-                    case { IsStartInclusive: true, IsEndInclusive: true }:
-                        for (var i = start; i <= end; i++)
-                        {
-                            data.Add(i);
-                        }
-                        break;
-                    case { IsStartInclusive: true, IsEndInclusive: false }:
-                        for (var i = start; i < end; i++)
-                        {
-                            data.Add(i);
-                        }
-                        break;
-                    case { IsStartInclusive: false, IsEndInclusive: true }:
-                        for (var i = start + 1; i <= end; i++)
-                        {
-                            data.Add(i);
-                        }
-                        break;
-                    default:
-                        for (var i = start + 1; i < end; i++)
-                        {
-                            data.Add(i);
-                        }
-                        break;
-                }
-
+                var data = DataGenerationHelpers.GenerateDataForRange(range);
                 return new RangeChunk<int, int>(range, data);
             });
 
@@ -296,6 +226,17 @@ public static class TestHelpers
         WindowCacheOptions options,
         EventCounterCacheDiagnostics cacheDiagnostics) =>
         new(mockDataSource.Object, domain, options, cacheDiagnostics);
+
+    /// <summary>
+    /// Creates a WindowCache instance backed by a <see cref="SpyDataSource"/>.
+    /// Used by integration tests that need a concrete (non-mock) data source with fetch recording.
+    /// </summary>
+    public static WindowCache<int, int, IntegerFixedStepDomain> CreateCache(
+        SpyDataSource dataSource,
+        IntegerFixedStepDomain domain,
+        WindowCacheOptions options,
+        EventCounterCacheDiagnostics cacheDiagnostics) =>
+        new(dataSource, domain, options, cacheDiagnostics);
 
     /// <summary>
     /// Creates a WindowCache with default options and returns both cache and mock data source.
@@ -341,7 +282,7 @@ public static class TestHelpers
     /// during range analysis (when determining what data needs to be fetched). They track planning, not actual
     /// cache mutations. This assertion verifies that User Path didn't call ExtendCacheAsync, which would
     /// increment these counters. Actual cache mutations (via Rematerialize) only occur in Rebalance Execution.
-    /// 
+    ///
     /// In test scenarios, prior rebalance operations typically expand the cache enough that subsequent
     /// User Path requests are full hits, avoiding calls to ExtendCacheAsync entirely.
     /// </remarks>
@@ -368,7 +309,7 @@ public static class TestHelpers
     }
 
     /// <summary>
-    /// Asserts that rebalance was cancelled (at either intent or execution stage).
+    /// Asserts that rebalance execution was cancelled.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -378,38 +319,20 @@ public static class TestHelpers
     /// tracked in the lifecycle.
     /// </para>
     /// <para>
-    /// Due to timing, cancellation can occur at two distinct lifecycle points:
-    /// </para>
-    /// <list type="number">
-    /// <item>
-    /// <description><strong>Intent-level cancellation</strong>: When a new request arrives while the previous
-    /// rebalance is still in debounce delay (before execution starts). This increments
-    /// <see cref="EventCounterCacheDiagnostics.RebalanceIntentCancelled"/>.</description>
-    /// </item>
-    /// <item>
-    /// <description><strong>Execution-level cancellation</strong>: When a new request arrives after the debounce
-    /// delay completed and execution has started. This increments
-    /// <see cref="EventCounterCacheDiagnostics.RebalanceExecutionCancelled"/>.</description>
-    /// </item>
-    /// </list>
-    /// <para>
-    /// This method checks the <strong>total</strong> cancellations across both stages, making assertions
-    /// stable regardless of timing variations. Most tests care that cancellation occurred, not the
-    /// specific lifecycle stage where it happened.
+    /// Cancellation occurs when a new request arrives after the debounce delay completed and execution
+    /// has started. This increments <see cref="EventCounterCacheDiagnostics.RebalanceExecutionCancelled"/>.
     /// </para>
     /// </remarks>
     /// <param name="cacheDiagnostics">
-    /// The diagnostics instance to check for cancellation counts. The method will sum both intent and execution cancellations to determine if the expected number of cancellations occurred.
+    /// The diagnostics instance to check for cancellation counts.
     /// </param>
-    /// <param name="minExpected">Minimum number of total cancellations expected (default: 1).</param>
+    /// <param name="minExpected">Minimum number of execution cancellations expected (default: 1).</param>
     public static void AssertRebalancePathCancelled(EventCounterCacheDiagnostics cacheDiagnostics, int minExpected = 1)
     {
-        var totalCancelled = cacheDiagnostics.RebalanceIntentCancelled +
-                             cacheDiagnostics.RebalanceExecutionCancelled;
+        var totalCancelled = cacheDiagnostics.RebalanceExecutionCancelled;
         Assert.True(totalCancelled >= minExpected,
-            $"At least {minExpected} cancellation(s) expected (intent or execution), but actual count was {totalCancelled} " +
-            $"(IntentCancelled: {cacheDiagnostics.RebalanceIntentCancelled}, " +
-            $"ExecutionCancelled: {cacheDiagnostics.RebalanceExecutionCancelled})");
+            $"At least {minExpected} cancellation(s) expected, but actual count was {totalCancelled} " +
+            $"(ExecutionCancelled: {cacheDiagnostics.RebalanceExecutionCancelled})");
     }
 
     /// <summary>
@@ -420,7 +343,8 @@ public static class TestHelpers
         var started = cacheDiagnostics.RebalanceExecutionStarted;
         var completed = cacheDiagnostics.RebalanceExecutionCompleted;
         var executionsCancelled = cacheDiagnostics.RebalanceExecutionCancelled;
-        Assert.Equal(started, completed + executionsCancelled);
+        var failed = cacheDiagnostics.RebalanceExecutionFailed;
+        Assert.Equal(started, completed + executionsCancelled + failed);
     }
 
     /// <summary>
@@ -545,11 +469,11 @@ public static class TestHelpers
     /// <remarks>
     /// Decision Pipeline Stages:
     /// - Stage 1: Current NoRebalanceRange check → SkippedCurrentNoRebalanceRange
-    /// - Stage 2: Pending NoRebalanceRange check → SkippedPendingNoRebalanceRange  
+    /// - Stage 2: Pending NoRebalanceRange check → SkippedPendingNoRebalanceRange
     /// - Stage 3: DesiredCacheRange == CurrentCacheRange → SkippedSameRange
     /// - All stages pass → RebalanceScheduled
     /// - Intent superseded before decision → IntentCancelled
-    /// 
+    ///
     /// Execution Lifecycle:
     /// - Scheduled → ExecutionStarted (unless cancelled between scheduling and execution)
     /// - Started → (Completed | ExecutionCancelled | ExecutionFailed)
@@ -561,14 +485,13 @@ public static class TestHelpers
         var skippedStage1 = cacheDiagnostics.RebalanceSkippedCurrentNoRebalanceRange;
         var skippedStage2 = cacheDiagnostics.RebalanceSkippedPendingNoRebalanceRange;
         var skippedStage3 = cacheDiagnostics.RebalanceSkippedSameRange;
-        var intentCancelled = cacheDiagnostics.RebalanceIntentCancelled;
 
         // Decision phase: All intents must be accounted for
-        var totalDecisionOutcomes = scheduled + skippedStage1 + skippedStage2 + skippedStage3 + intentCancelled;
+        var totalDecisionOutcomes = scheduled + skippedStage1 + skippedStage2 + skippedStage3;
         Assert.True(totalDecisionOutcomes <= intentPublished,
             $"Decision outcomes ({totalDecisionOutcomes}) cannot exceed intents published ({intentPublished}). " +
             $"Breakdown: Scheduled={scheduled}, SkippedStage1={skippedStage1}, SkippedStage2={skippedStage2}, " +
-            $"SkippedStage3={skippedStage3}, IntentCancelled={intentCancelled}");
+            $"SkippedStage3={skippedStage3}");
 
         // Execution phase: Verify lifecycle integrity
         AssertRebalanceLifecycleIntegrity(cacheDiagnostics);

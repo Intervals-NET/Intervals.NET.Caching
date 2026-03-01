@@ -1,7 +1,7 @@
 ﻿# Sliding Window Cache - Storage Strategies Guide
 
 > **📖 For component implementation details, see:**
-> - [Component Map - Storage Section](component-map.md#3-storage-implementations) - SnapshotReadStorage and CopyOnReadStorage architecture
+> - `docs/components/infrastructure.md` - Storage components in context
 
 ## Overview
 
@@ -16,15 +16,15 @@ This guide explains when to use each strategy and their trade-offs.
 
 ## Storage Strategy Comparison
 
-| Aspect                 | Snapshot Storage                  | CopyOnRead Storage                |
-|------------------------|-----------------------------------|-----------------------------------|
-| **Read Cost**          | O(1) - zero allocation            | O(n) - allocates and copies       |
-| **Rematerialize Cost** | O(n) - always allocates new array | O(1)* - reuses capacity           |
-| **Memory Pattern**     | Single array, replaced atomically | Dual buffers, swapped atomically  |
-| **Buffer Growth**      | Always allocates exact size       | Grows but never shrinks           |
-| **LOH Risk**           | High for >85KB arrays             | Lower (List growth strategy)      |
-| **Best For**           | Read-heavy workloads              | Rematerialization-heavy workloads |
-| **Typical Use Case**   | User-facing cache layer           | Background cache layer            |
+| Aspect                 | Snapshot Storage                  | CopyOnRead Storage                      |
+|------------------------|-----------------------------------|-----------------------------------------|
+| **Read Cost**          | O(1) - zero allocation            | O(n) - allocates and copies             |
+| **Rematerialize Cost** | O(n) - always allocates new array | O(1)* - reuses capacity                 |
+| **Memory Pattern**     | Single array, replaced atomically | Dual buffers, swap synchronized by lock |
+| **Buffer Growth**      | Always allocates exact size       | Grows but never shrinks                 |
+| **LOH Risk**           | High for >85KB arrays             | Lower (List growth strategy)            |
+| **Best For**           | Read-heavy workloads              | Rematerialization-heavy workloads       |
+| **Typical Use Case**   | User-facing cache layer           | Background cache layer                  |
 
 *Amortized O(1) when capacity is sufficient
 
@@ -148,32 +148,42 @@ storage during enumeration corrupts the data.
 **Rematerialize:**
 
 ```csharp
-_stagingBuffer.Clear();                    // Preserves capacity
-_stagingBuffer.AddRange(rangeData.Data);   // Single-pass enumeration
-(_activeStorage, _stagingBuffer) = (_stagingBuffer, _activeStorage);  // Atomic swap
-Range = rangeData.Range;
+// Enumerate outside the lock (may be a LINQ chain over _activeStorage)
+_stagingBuffer.Clear();
+_stagingBuffer.AddRange(rangeData.Data);
+
+lock (_lock)
+{
+    (_activeStorage, _stagingBuffer) = (_stagingBuffer, _activeStorage);  // Swap under lock
+    Range = rangeData.Range;
+}
 ```
 
 **Read:**
 
 ```csharp
-if (!Range.Contains(range))
-    throw new ArgumentOutOfRangeException(nameof(range), ...);
+lock (_lock)
+{
+    if (!Range.Contains(range))
+        throw new ArgumentOutOfRangeException(nameof(range), ...);
 
-var result = new TData[length];  // Allocates
-for (var i = 0; i < length; i++)
-    result[i] = _activeStorage[(int)startOffset + i];
-return new ReadOnlyMemory<TData>(result);
+    var result = new TData[length];  // Allocates
+    for (var i = 0; i < length; i++)
+        result[i] = _activeStorage[(int)startOffset + i];
+    return new ReadOnlyMemory<TData>(result);
+}
 ```
 
 ### Characteristics
 
 - ✅ **Cheap rematerialization**: Reuses capacity, no allocation if size ≤ capacity
 - ✅ **No LOH pressure**: List growth strategy avoids large single allocations
-- ✅ **Correct enumeration**: Staging buffer prevents corruption
+- ✅ **Correct enumeration**: Staging buffer prevents corruption during LINQ-derived expansion
 - ✅ **Amortized performance**: Cost decreases over time as capacity stabilizes
-- ❌ **Expensive reads**: Each read allocates and copies
+- ✅ **Safe concurrent access**: `Read()`, `Rematerialize()`, and `ToRangeData()` share a lock; mid-swap observation is impossible
+- ❌ **Expensive reads**: Each read acquires a lock, allocates, and copies
 - ❌ **Higher memory**: Two buffers instead of one
+- ⚠️ **Lock contention**: Reader briefly blocks if rematerialization is in progress (bounded to a single `Rematerialize()` call duration)
 
 ### Memory Behavior
 
@@ -275,14 +285,13 @@ This composition leverages the strengths of both strategies:
 
 ### CopyOnRead Storage
 
-| Operation            | Time | Allocation    |
-|----------------------|------|---------------|
-| Read                 | O(n) | n × sizeof(T) |
-| Rematerialize (cold) | O(n) | n × sizeof(T) |
-| Rematerialize (warm) | O(n) | 0 bytes**     |
-| ToRangeData          | O(1) | 0 bytes*      |
+| Operation            | Time | Allocation    | Notes                                  |
+|----------------------|------|---------------|----------------------------------------|
+| Read                 | O(n) | n × sizeof(T) | Lock acquired + copy                   |
+| Rematerialize (cold) | O(n) | n × sizeof(T) | Enumerate outside lock                 |
+| Rematerialize (warm) | O(n) | 0 bytes**     | Enumerate outside lock                 |
+| ToRangeData          | O(n) | n × sizeof(T) | Lock acquired + array snapshot copy    |
 
-*Returns lazy enumerable  
 **When capacity is sufficient
 
 ### Measured Benchmark Results
@@ -324,24 +333,34 @@ Consider cache expansion during user request:
 
 ```csharp
 // Current cache: [100, 110]
-var currentData = cache.ToRangeData();  // Lazy IEnumerable over _activeStorage
+var currentData = cache.ToRangeData();
+// CopyOnReadStorage: acquires _lock, copies _activeStorage to a new array, returns immutable snapshot.
+// The returned RangeData.Data is decoupled from the live buffers — no lazy reference.
 
 // User requests: [105, 115]
 var extendedData = await ExtendCacheAsync(currentData, [105, 115]);
-// extendedData.Data = Concat(currentData.Data, newlyFetched)
-// This is a LINQ chain still tied to _activeStorage!
+// extendedData.Data = Union(currentData.Data, newlyFetched)
+// Safe to enumerate later: currentData.Data is an array, not a live List reference.
 
 cache.Rematerialize(extendedData);
-// OLD (BROKEN): _storage.Clear() → corrupts LINQ chain mid-enumeration
-// NEW (CORRECT): _stagingBuffer.Clear() → _activeStorage remains immutable
+// _stagingBuffer.Clear() is safe: extendedData.Data chains from the immutable snapshot array,
+// not from _activeStorage directly.
 ```
+
+> **Why the snapshot copy matters:** Without `.ToArray()`, `ToRangeData()` would return a lazy
+> `IEnumerable` over the live `_activeStorage` list. That reference is published as an `Intent`
+> and consumed asynchronously on the rebalance thread. A second `Rematerialize()` call would swap
+> the list to `_stagingBuffer` and clear it before the Intent is consumed — silently emptying the
+> enumerable mid-enumeration (or causing `InvalidOperationException`). The snapshot copy eliminates
+> this race entirely.
 
 ### Buffer Swap Invariants
 
-1. **Active storage is immutable during reads**: Never mutated until swap
-2. **Staging buffer is write-only during rematerialization**: Cleared, filled, swapped
-3. **Swap is atomic**: Single tuple assignment
+1. **Active storage is immutable during reads**: Never mutated until swap; lock prevents concurrent observation mid-swap
+2. **Staging buffer is write-only during rematerialization**: Cleared and filled outside the lock, then swapped under lock
+3. **Swap is lock-protected**: `Read()`, `ToRangeData()`, and `Rematerialize()` share `_lock`; all callers always observe a consistent `(_activeStorage, Range)` pair
 4. **Buffers never shrink**: Capacity grows monotonically, amortizing allocation cost
+5. **`ToRangeData()` snapshots are immutable**: `ToRangeData()` copies `_activeStorage` to a new array under the lock, ensuring the returned `RangeData` is decoupled from buffer reuse — a subsequent `Rematerialize()` cannot corrupt or empty data still referenced by an outstanding enumerable
 
 ### Memory Growth Example
 
@@ -384,9 +403,18 @@ The staging buffer pattern directly supports key system invariants:
 
 ### Invariant B.11-12 - Atomic Consistency
 
-- Tuple swap `(_activeStorage, _stagingBuffer) = (_stagingBuffer, _activeStorage)` is atomic
-- Range update happens after swap, completing atomic change
-- No intermediate inconsistent states
+- Swap and Range update both happen inside `lock (_lock)`, so `Read()` always observes a consistent `(_activeStorage, Range)` pair
+- No intermediate inconsistent state is observable
+
+### Invariant A.2 - User Path Never Waits for Rebalance (Conditional Compliance)
+
+- `CopyOnReadStorage` is **conditionally compliant**: `Read()` and `ToRangeData()` acquire `_lock`,
+  which is also held by `Rematerialize()` for the duration of the buffer swap and Range update (a fast,
+  bounded operation).
+- Contention is limited to the swap itself — not the full rebalance cycle (fetch + decision + execution).
+  The enumeration into the staging buffer happens **before** the lock is acquired, so the lock hold time
+  is just the cost of two field writes and a property assignment.
+- `SnapshotReadStorage` remains fully lock-free if strict A.2 compliance is required.
 
 ### Invariant B.15 - Cancellation Safety
 
@@ -442,10 +470,14 @@ public async Task CopyOnReadMode_CorrectDuringExpansion()
 
 ## Summary
 
-- **Snapshot**: Fast reads, expensive rematerialization, best for read-heavy workloads
-- **CopyOnRead with Staging Buffer**: Fast rematerialization, expensive reads, best for rematerialization-heavy
-  workloads
+- **Snapshot**: Fast reads (zero-allocation), expensive rematerialization, best for read-heavy workloads
+- **CopyOnRead with Staging Buffer**: Fast rematerialization, all reads copy under lock (`Read()` and
+  `ToRangeData()`), best for rematerialization-heavy workloads
 - **Composition**: Combine both strategies in multi-level caches for optimal performance
-- **Staging Buffer**: Critical correctness pattern preventing enumeration corruption
+- **Staging Buffer**: Critical correctness pattern preventing enumeration corruption during cache expansion
+- **`ToRangeData()` safety**: `CopyOnReadStorage.ToRangeData()` copies `_activeStorage` to an immutable
+  array snapshot under the lock. This is required because `ToRangeData()` is called from the user thread
+  concurrently with `Rematerialize()`, and a lazy reference to the live buffer could be corrupted by a
+  subsequent buffer swap and clear.
 
 Choose based on your access pattern. When in doubt, start with Snapshot and profile.

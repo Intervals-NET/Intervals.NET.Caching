@@ -1,8 +1,7 @@
-using Intervals.NET;
 using Intervals.NET.Domain.Default.Numeric;
 using SlidingWindowCache.Public;
 using SlidingWindowCache.Public.Configuration;
-using SlidingWindowCache.Public.Dto;
+using SlidingWindowCache.Tests.Infrastructure.DataSources;
 
 namespace SlidingWindowCache.Unit.Tests.Public;
 
@@ -14,66 +13,9 @@ public class WindowCacheDisposalTests
 {
     #region Test Infrastructure
 
-    /// <summary>
-    /// Simple test data source that returns sequential integers for any requested range.
-    /// Properly respects range inclusivity (IsStartInclusive/IsEndInclusive).
-    /// </summary>
-    private sealed class TestDataSource : IDataSource<int, int>
-    {
-        public async Task<RangeChunk<int, int>> FetchAsync(
-            Range<int> requestedRange,
-            CancellationToken cancellationToken)
-        {
-            // Simulate async I/O
-            await Task.Delay(1, cancellationToken);
-
-            return new RangeChunk<int, int>(requestedRange, GenerateDataForRange(requestedRange));
-        }
-
-        /// <summary>
-        /// Generates data respecting range boundary inclusivity.
-        /// Uses pattern matching to handle all 4 combinations of inclusive/exclusive boundaries.
-        /// </summary>
-        private static List<int> GenerateDataForRange(Range<int> range)
-        {
-            var data = new List<int>();
-            var start = (int)range.Start;
-            var end = (int)range.End;
-
-            switch (range)
-            {
-                case { IsStartInclusive: true, IsEndInclusive: true }:
-                    // [start, end]
-                    for (var i = start; i <= end; i++)
-                        data.Add(i);
-                    break;
-
-                case { IsStartInclusive: true, IsEndInclusive: false }:
-                    // [start, end)
-                    for (var i = start; i < end; i++)
-                        data.Add(i);
-                    break;
-
-                case { IsStartInclusive: false, IsEndInclusive: true }:
-                    // (start, end]
-                    for (var i = start + 1; i <= end; i++)
-                        data.Add(i);
-                    break;
-
-                default:
-                    // (start, end)
-                    for (var i = start + 1; i < end; i++)
-                        data.Add(i);
-                    break;
-            }
-
-            return data;
-        }
-    }
-
     private static WindowCache<int, int, IntegerFixedStepDomain> CreateCache()
     {
-        var dataSource = new TestDataSource();
+        var dataSource = new SimpleTestDataSource<int>(i => i, simulateAsyncDelay: true);
         var domain = new IntegerFixedStepDomain();
         var options = new WindowCacheOptions(
             leftCacheSize: 1.0,
@@ -204,6 +146,29 @@ public class WindowCacheDisposalTests
         }
 
         // ASSERT - All disposal attempts complete without exception
+        Assert.All(exceptions, ex => Assert.Null(ex));
+    }
+
+    [Fact]
+    public async Task DisposeAsync_ConcurrentLoserThread_WaitsForWinnerCompletion()
+    {
+        // ARRANGE
+        var cache = CreateCache();
+        var range = Intervals.NET.Factories.Range.Closed<int>(0, 10);
+
+        // Trigger background work so disposal takes some time
+        _ = await cache.GetDataAsync(range, CancellationToken.None);
+
+        // ACT - Start two concurrent disposals
+        var firstDispose = cache.DisposeAsync().AsTask();
+        var secondDispose = cache.DisposeAsync().AsTask();
+
+        var exceptions = await Task.WhenAll(
+            Record.ExceptionAsync(async () => await firstDispose),
+            Record.ExceptionAsync(async () => await secondDispose)
+        );
+
+        // ASSERT - Both dispose calls complete without exception
         Assert.All(exceptions, ex => Assert.Null(ex));
     }
 

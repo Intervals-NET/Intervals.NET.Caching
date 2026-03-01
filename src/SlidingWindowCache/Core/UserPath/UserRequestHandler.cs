@@ -1,4 +1,4 @@
-using Intervals.NET;
+﻿using Intervals.NET;
 using Intervals.NET.Data;
 using Intervals.NET.Data.Extensions;
 using Intervals.NET.Domain.Abstractions;
@@ -6,9 +6,9 @@ using Intervals.NET.Extensions;
 using SlidingWindowCache.Core.Rebalance.Execution;
 using SlidingWindowCache.Core.Rebalance.Intent;
 using SlidingWindowCache.Core.State;
-using SlidingWindowCache.Infrastructure.Instrumentation;
 using SlidingWindowCache.Public;
 using SlidingWindowCache.Public.Dto;
+using SlidingWindowCache.Public.Instrumentation;
 
 namespace SlidingWindowCache.Core.UserPath;
 
@@ -94,10 +94,10 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     /// <remarks>
     /// <para>This method implements the User Path logic (READ-ONLY with respect to cache state):</para>
     /// <list type="number">
-    /// <item><description>Check if requested range is fully or partially covered by cache</description></item>
+    /// <item><description>Determine which of the four scenarios applies (cold start, full hit, partial hit, full miss)</description></item>
     /// <item><description>Fetch missing data from IDataSource as needed</description></item>
     /// <item><description>Compute actual available range (intersection of requested and available)</description></item>
-    /// <item><description>Materialize assembled data to array</description></item>
+    /// <item><description>Materialise assembled data into a <see cref="ReadOnlyMemory{T}"/> buffer</description></item>
     /// <item><description>Publish rebalance intent with delivered data (fire-and-forget)</description></item>
     /// <item><description>Return RangeResult immediately</description></item>
     /// </list>
@@ -109,7 +109,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     /// <item><description>✅ May READ from cache</description></item>
     /// <item><description>✅ May READ from IDataSource</description></item>
     /// <item><description>❌ NEVER writes to Cache (no Rematerialize calls)</description></item>
-    /// <item><description>❌ NEVER writes to LastRequested</description></item>
+    /// <item><description>❌ NEVER writes to IsInitialized</description></item>
     /// <item><description>❌ NEVER writes to NoRebalanceRange</description></item>
     /// </list>
     /// </para>
@@ -132,159 +132,83 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
                 "Cannot handle request on a disposed handler.");
         }
 
-        // Check if cache is cold (never used) - use ToRangeData to detect empty cache
-        var cacheStorage = _state.Cache;
-        var isColdStart = !_state.LastRequested.HasValue;
+        var cacheStorage = _state.Storage;
+        // Bare Range reads without lock/volatile fence are intentional.
+        // CacheState follows an eventual-consistency model on the user path: IsInitialized,
+        // Storage.Range, and the storage contents are all written by the single rebalance writer.
+        // A slightly stale Range observation here at most causes the user path to take a
+        // suboptimal branch (e.g., treating a full hit as a partial hit), but the intent
+        // published at the end of this method will drive the system back to the correct state.
+        var fullyInCache = _state.IsInitialized && cacheStorage.Range.Contains(requestedRange);
+        var hasOverlap = _state.IsInitialized && !fullyInCache && cacheStorage.Range.Overlaps(requestedRange);
 
-        RangeData<TRange, TData, TDomain>? assembledData = null;
-        var exceptionOccurred = false;
+        RangeData<TRange, TData, TDomain>? assembledData;
+        Range<TRange>? actualRange;
+        ReadOnlyMemory<TData> resultData;
 
-        try
+        if (!fullyInCache && !hasOverlap)
         {
-            Range<TRange>? actualRange;
-            ReadOnlyMemory<TData> resultData;
+            // Scenario 1 (Cold Start) & Scenario 4 (Full Cache Miss / Non-intersecting Jump):
+            // Cache is uninitialised or RequestedRange does not overlap CurrentCacheRange.
+            // Fetch ONLY the requested range from IDataSource.
+            (assembledData, actualRange, resultData) =
+                await FetchSingleRangeAsync(requestedRange, cancellationToken).ConfigureAwait(false);
+            _cacheDiagnostics.UserRequestFullCacheMiss();
+        }
+        else if (fullyInCache)
+        {
+            // Scenario 2: Full Cache Hit
+            // All requested data is available in cache - read directly (no IDataSource call).
+            assembledData = cacheStorage.ToRangeData();
+            actualRange = requestedRange; // Fully in cache, so actual == requested
+            resultData = cacheStorage.Read(requestedRange);
+            _cacheDiagnostics.UserRequestFullCacheHit();
+        }
+        else
+        {
+            // Scenario 3: Partial Cache Hit
+            // RequestedRange intersects CurrentCacheRange - read from cache and fetch missing parts.
+            // NOTE: storage.Read cannot be used here because we need a contiguous range that may
+            // require concatenating multiple segments (cached + fetched).
+            assembledData = await _cacheExtensionService.ExtendCacheAsync(
+                cacheStorage.ToRangeData(),
+                requestedRange,
+                cancellationToken
+            ).ConfigureAwait(false);
 
-            if (isColdStart)
+            _cacheDiagnostics.UserRequestPartialCacheHit();
+
+            // Compute actual available range (intersection of requested and assembled).
+            // assembledData.Range may not fully cover requestedRange if DataSource returned
+            // truncated/null chunks (e.g., bounded source where some segments are unavailable).
+            actualRange = assembledData.Range.Intersect(requestedRange);
+
+            if (actualRange.HasValue)
             {
-                // Scenario 1: Cold Start
-                // Cache has never been populated - fetch data ONLY for requested range
-                _cacheDiagnostics.DataSourceFetchSingleRange();
-                var fetchedChunk = await _dataSource.FetchAsync(requestedRange, cancellationToken);
-
-                // Handle boundary: chunk.Range may be null or truncated
-                if (fetchedChunk.Range.HasValue)
-                {
-                    assembledData = fetchedChunk.Data.ToRangeData(fetchedChunk.Range.Value, _state.Domain);
-                    actualRange = fetchedChunk.Range.Value;
-                    resultData = new ReadOnlyMemory<TData>(assembledData.Data.ToArray());
-                }
-                else
-                {
-                    // No data available for requested range
-                    assembledData = null;
-                    actualRange = null;
-                    resultData = ReadOnlyMemory<TData>.Empty;
-                }
-
-                _cacheDiagnostics.UserRequestFullCacheMiss();
+                // Slice to the actual available range (may be smaller than requestedRange).
+                resultData = MaterialiseData(assembledData[actualRange.Value]);
             }
             else
             {
-                var fullyInCache = cacheStorage.Range.Contains(requestedRange);
-
-                if (fullyInCache)
-                {
-                    // Scenario 2: Full Cache Hit
-                    // All requested data is available in cache - read from cache (no IDataSource call)
-                    assembledData = cacheStorage.ToRangeData();
-
-                    _cacheDiagnostics.UserRequestFullCacheHit();
-
-                    actualRange = requestedRange; // Fully in cache, so actual = requested
-
-                    // Return a requested range data using the cache storage's Read method, which may return a view or a copy depending on the strategy
-                    resultData = cacheStorage.Read(requestedRange);
-                }
-                else
-                {
-                    var hasOverlap = cacheStorage.Range.Overlaps(requestedRange);
-
-                    if (hasOverlap)
-                    {
-                        // Scenario 3: Partial Cache Hit
-                        // RequestedRange intersects CurrentCacheRange - read from cache and fetch missing parts
-                        // ExtendCacheAsync will compute missing ranges and fetch only those parts
-                        // NOTE: The usage of storage.Read doesn't make sense here because we need to assemble a contiguous range that may require concatenating multiple segments (cached + fetched)
-                        assembledData = await _cacheExtensionService.ExtendCacheAsync(
-                            cacheStorage.ToRangeData(),
-                            requestedRange,
-                            cancellationToken
-                        );
-
-                        _cacheDiagnostics.UserRequestPartialCacheHit();
-
-                        // Compute actual available range (intersection of requested and assembled)
-                        // assembledData.Range may not fully cover requestedRange if DataSource returned truncated/null chunks
-                        // (e.g., bounded source where some segments are unavailable)
-                        actualRange = assembledData.Range.Intersect(requestedRange);
-
-                        // Slice to the actual available range (may be smaller than requestedRange)
-                        if (actualRange.HasValue)
-                        {
-                            var slicedData = assembledData[actualRange.Value];
-                            resultData = new ReadOnlyMemory<TData>(slicedData.Data.ToArray());
-                        }
-                        else
-                        {
-                            // No actual intersection after extension (defensive fallback)
-                            assembledData = null;
-                            resultData = ReadOnlyMemory<TData>.Empty;
-                        }
-                    }
-                    else
-                    {
-                        // Scenario 4: Full Cache Miss (Non-intersecting Jump)
-                        // RequestedRange does NOT intersect CurrentCacheRange
-                        // Fetch ONLY the requested range from IDataSource
-                        // NOTE: The logic is similar to cold start
-                        _cacheDiagnostics.DataSourceFetchSingleRange();
-                        var fetchedChunk = await _dataSource.FetchAsync(requestedRange, cancellationToken)
-                            .ConfigureAwait(false);
-
-                        // Handle boundary: chunk.Range may be null or truncated
-                        if (fetchedChunk.Range.HasValue)
-                        {
-                            assembledData = fetchedChunk.Data.ToRangeData(fetchedChunk.Range.Value, _state.Domain);
-                            actualRange = fetchedChunk.Range.Value;
-                            resultData = new ReadOnlyMemory<TData>(assembledData.Data.ToArray());
-                        }
-                        else
-                        {
-                            // No data available for requested range
-                            assembledData = null;
-                            actualRange = null;
-                            resultData = ReadOnlyMemory<TData>.Empty;
-                        }
-
-                        _cacheDiagnostics.UserRequestFullCacheMiss();
-                    }
-                }
-            }
-
-            // Return RangeResult with actual available range and data
-            return new RangeResult<TRange, TData>(actualRange, resultData);
-        }
-        catch
-        {
-            // In case of any exception during request handling, we want to ensure that we do not publish an intent with potentially inconsistent data. The exception will propagate to the caller, but we set a flag to prevent intent publication in the finally block.
-            exceptionOccurred = true;
-            throw;
-        }
-        finally
-        {
-            var shouldPublishIntent = assembledData is not null;
-
-            if (!exceptionOccurred)
-            {
-                // Publish intent only when there was a physical data hit (assembledData is not null).
-                // Full vacuum (out-of-physical-bounds) requests produce no intent — there is no
-                // meaningful cache shift to signal to the rebalance pipeline.
-                // If an exception occurred, we skip both intent and served-counter to avoid recording
-                // incomplete or inconsistent state.
-                if (shouldPublishIntent)
-                {
-                    var intent = new Intent<TRange, TData, TDomain>(requestedRange, assembledData!);
-
-                    // Publish rebalance intent with assembled data range (fire-and-forget)
-                    // Rebalance Execution will use this as the authoritative source
-                    _intentController.PublishIntent(intent);
-                }
-
-                // UserRequestServed fires for ALL non-exception completions, including boundary misses
-                // where assembledData == null (full vacuum / out-of-physical-bounds).
-                _cacheDiagnostics.UserRequestServed();
+                // No actual intersection after extension (defensive fallback).
+                assembledData = null;
+                resultData = ReadOnlyMemory<TData>.Empty;
             }
         }
+
+        // Publish intent only when there was a physical data hit (assembledData is not null).
+        // Full vacuum (out-of-physical-bounds) requests produce no intent — there is no
+        // meaningful cache shift to signal to the rebalance pipeline (see Invariant C.24e).
+        if (assembledData is not null)
+        {
+            _intentController.PublishIntent(new Intent<TRange, TData, TDomain>(requestedRange, assembledData));
+        }
+
+        // UserRequestServed fires for ALL successful completions, including boundary misses
+        // where assembledData == null (full vacuum / out-of-physical-bounds).
+        _cacheDiagnostics.UserRequestServed();
+
+        return new RangeResult<TRange, TData>(actualRange, resultData);
     }
 
     /// <summary>
@@ -315,4 +239,48 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
         // Dispose intent controller (cascades to execution controller)
         await _intentController.DisposeAsync().ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Fetches data for a single range directly from the data source, without involving the cache.
+    /// Used by Scenario 1 (cold start) and Scenario 4 (full cache miss / non-intersecting jump).
+    /// </summary>
+    /// <param name="requestedRange">The range to fetch.</param>
+    /// <param name="cancellationToken">A cancellation token to cancel the operation.</param>
+    /// <returns>
+    /// A named tuple of (AssembledData, ActualRange, ResultData). <c>AssembledData</c> is null and
+    /// <c>ActualRange</c> is null when the data source reports no data is available for the range
+    /// (physical boundary miss).
+    /// </returns>
+    /// <remarks>
+    /// <para><strong>Execution Context:</strong> User Thread (called from <see cref="HandleRequestAsync"/>)</para>
+    /// <para>
+    /// This helper centralises the fetch-and-materialise pattern shared by the cold-start and
+    /// full-miss scenarios. It emits the <c>DataSourceFetchSingleRange</c> diagnostic event and
+    /// handles the null-Range contract of <see cref="IDataSource{TRange,TData}"/>.
+    /// </para>
+    /// </remarks>
+    private async ValueTask<(RangeData<TRange, TData, TDomain>? AssembledData, Range<TRange>? ActualRange, ReadOnlyMemory<TData> ResultData)>
+        FetchSingleRangeAsync(Range<TRange> requestedRange, CancellationToken cancellationToken)
+    {
+        _cacheDiagnostics.DataSourceFetchSingleRange();
+        var fetchedChunk = await _dataSource.FetchAsync(requestedRange, cancellationToken)
+            .ConfigureAwait(false);
+
+        // Handle boundary: chunk.Range may be null when the requested range lies entirely
+        // outside the physical bounds of the data source.
+        if (!fetchedChunk.Range.HasValue)
+        {
+            return (AssembledData: null, ActualRange: null, ResultData: ReadOnlyMemory<TData>.Empty);
+        }
+
+        var assembledData = fetchedChunk.Data.ToRangeData(fetchedChunk.Range.Value, _state.Domain);
+        return (AssembledData: assembledData, ActualRange: fetchedChunk.Range.Value, ResultData: MaterialiseData(assembledData));
+    }
+
+    /// <summary>
+    /// Materialises the data of a <see cref="RangeData{TRange,TData,TDomain}"/> into a
+    /// <see cref="ReadOnlyMemory{T}"/> buffer.
+    /// </summary>
+    private static ReadOnlyMemory<TData> MaterialiseData(RangeData<TRange, TData, TDomain> data)
+        => new(data.Data.ToArray());
 }

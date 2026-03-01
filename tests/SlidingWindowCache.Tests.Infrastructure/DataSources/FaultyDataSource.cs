@@ -2,30 +2,30 @@ using Intervals.NET;
 using SlidingWindowCache.Public;
 using SlidingWindowCache.Public.Dto;
 
-namespace SlidingWindowCache.Integration.Tests.TestInfrastructure;
+namespace SlidingWindowCache.Tests.Infrastructure.DataSources;
 
 /// <summary>
 /// A configurable IDataSource that delegates fetch calls through a user-supplied callback,
-/// allowing individual tests to inject faults (throw), boundary misses (return null Range),
-/// or normal data on a per-call basis.
+/// allowing individual tests to inject faults (exceptions) or control returned data on a per-call basis.
+/// Intended for exception-handling tests only. For boundary/null-Range scenarios use BoundedDataSource.
 /// </summary>
 /// <typeparam name="TRange">The range boundary type.</typeparam>
 /// <typeparam name="TData">The data type.</typeparam>
 public sealed class FaultyDataSource<TRange, TData> : IDataSource<TRange, TData>
     where TRange : IComparable<TRange>
 {
-    private readonly Func<Range<TRange>, IEnumerable<TData>> _fetchSingleRange;
+    private readonly Func<Range<TRange>, IReadOnlyList<TData>> _fetchSingleRange;
 
     /// <summary>
     /// Initializes a new instance.
     /// </summary>
     /// <param name="fetchSingleRange">
     /// Callback invoked for every single-range fetch. May throw to simulate failures,
-    /// or return any <see cref="IEnumerable{T}"/> to control the returned data.
+    /// or return any <see cref="IReadOnlyList{T}"/> to control the returned data.
     /// The <see cref="RangeChunk{TRange,TData}.Range"/> in the result is always set to
-    /// the requested range; return an empty enumerable when the range is out of bounds.
+    /// the requested range — this class does not support returning a null Range.
     /// </param>
-    public FaultyDataSource(Func<Range<TRange>, IEnumerable<TData>> fetchSingleRange)
+    public FaultyDataSource(Func<Range<TRange>, IReadOnlyList<TData>> fetchSingleRange)
     {
         _fetchSingleRange = fetchSingleRange;
     }
@@ -56,7 +56,7 @@ public sealed class FaultyDataSource<TRange, TData> : IDataSource<TRange, TData>
     /// Generates sequential string items ("Item-N") for a closed integer range.
     /// Convenience helper for tests using <c>IDataSource&lt;int, string&gt;</c>.
     /// </summary>
-    public static IEnumerable<string> GenerateStringData(Range<int> range)
+    public static IReadOnlyList<string> GenerateStringData(Range<int> range)
     {
         var data = new List<string>();
         for (var i = range.Start.Value; i <= range.End.Value; i++)

@@ -37,7 +37,7 @@ public sealed class SlowDataSource : IDataSource<int, int>
         await Task.Delay(_latency, cancellationToken).ConfigureAwait(false);
 
         // Generate data after delay completes
-        return new RangeChunk<int, int>(range, GenerateDataForRange(range));
+        return new RangeChunk<int, int>(range, GenerateDataForRange(range).ToList());
     }
 
     /// <summary>
@@ -57,7 +57,7 @@ public sealed class SlowDataSource : IDataSource<int, int>
 
             chunks.Add(new RangeChunk<int, int>(
                 range,
-                GenerateDataForRange(range)
+                GenerateDataForRange(range).ToList()
             ));
         }
 

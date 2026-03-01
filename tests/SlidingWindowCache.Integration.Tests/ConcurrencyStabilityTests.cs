@@ -1,9 +1,9 @@
 using Intervals.NET;
 using Intervals.NET.Domain.Default.Numeric;
-using SlidingWindowCache.Integration.Tests.TestInfrastructure;
-using SlidingWindowCache.Infrastructure.Instrumentation;
+using SlidingWindowCache.Tests.Infrastructure.DataSources;
 using SlidingWindowCache.Public;
 using SlidingWindowCache.Public.Configuration;
+using SlidingWindowCache.Public.Instrumentation;
 
 namespace SlidingWindowCache.Integration.Tests;
 
@@ -356,9 +356,6 @@ public sealed class ConcurrencyStabilityTests : IAsyncDisposable
 
             Assert.Equal(21, result.Data.Length);
         }
-
-        // ASSERT - Completed without deadlock
-        Assert.True(true);
     }
 
     #endregion

@@ -36,10 +36,15 @@ internal static class IntervalsNetDomainExtensions
     /// <exception cref="NotSupportedException">
     /// Thrown when the domain does not implement either IFixedStepDomain or IVariableStepDomain.
     /// </exception>
-    public static RangeValue<long> Span<TRange, TDomain>(this Range<TRange> range, TDomain domain)
+    internal static RangeValue<long> Span<TRange, TDomain>(this Range<TRange> range, TDomain domain)
         where TRange : IComparable<TRange>
         where TDomain : IRangeDomain<TRange> => domain switch
         {
+            // FQN required: Intervals.NET exposes Span/Expand in separate Fixed and Variable namespaces
+            // (Intervals.NET.Domain.Extensions.Fixed and ...Variable). Both namespaces define a
+            // RangeDomainExtensions class with the same method names, so a using directive would cause
+            // an ambiguity error. Full qualification unambiguously selects the correct overload at
+            // compile time without polluting the file's namespace imports.
             IFixedStepDomain<TRange> fixedDomain => Intervals.NET.Domain.Extensions.Fixed.RangeDomainExtensions.Span(range, fixedDomain),
             IVariableStepDomain<TRange> variableDomain => Intervals.NET.Domain.Extensions.Variable.RangeDomainExtensions.Span(range, variableDomain),
             _ => throw new NotSupportedException(
@@ -64,7 +69,7 @@ internal static class IntervalsNetDomainExtensions
     /// <exception cref="NotSupportedException">
     /// Thrown when the domain does not implement either IFixedStepDomain or IVariableStepDomain.
     /// </exception>
-    public static Range<TRange> Expand<TRange, TDomain>(
+    internal static Range<TRange> Expand<TRange, TDomain>(
         this Range<TRange> range,
         TDomain domain,
         long left,
@@ -98,7 +103,7 @@ internal static class IntervalsNetDomainExtensions
     /// <exception cref="NotSupportedException">
     /// Thrown when the domain does not implement either IFixedStepDomain or IVariableStepDomain.
     /// </exception>
-    public static Range<TRange> ExpandByRatio<TRange, TDomain>(
+    internal static Range<TRange> ExpandByRatio<TRange, TDomain>(
         this Range<TRange> range,
         TDomain domain,
         double leftRatio,
