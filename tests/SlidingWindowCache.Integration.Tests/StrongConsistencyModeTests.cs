@@ -90,14 +90,16 @@ public sealed class StrongConsistencyModeTests : IAsyncDisposable
         get
         {
             foreach (var storage in StorageStrategyTestData)
-            foreach (var execution in ExecutionStrategyTestData)
             {
-                yield return
-                [
-                    $"{execution[0]}_{storage[0]}",
-                    storage[1],
-                    execution[1]
-                ];
+                foreach (var execution in ExecutionStrategyTestData)
+                {
+                    yield return
+                    [
+                        $"{execution[0]}_{storage[0]}",
+                        storage[1],
+                        execution[1]
+                    ];
+                }
             }
         }
     }

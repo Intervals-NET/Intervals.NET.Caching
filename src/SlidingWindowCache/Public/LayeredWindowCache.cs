@@ -38,19 +38,19 @@ namespace SlidingWindowCache.Public;
 /// The outermost layer is disposed first to stop new user requests from reaching inner layers.
 /// Each layer's background loops are stopped gracefully before the next layer is disposed.
 /// </para>
-    /// <para><strong>WaitForIdleAsync Semantics:</strong></para>
-    /// <para>
-    /// <see cref="WaitForIdleAsync"/> awaits all layers sequentially, from outermost to innermost.
-    /// This guarantees that the entire cache stack has converged: the outermost layer finishes its
-    /// rebalance first (which drives fetch requests into inner layers), then each inner layer is
-    /// awaited in turn until the deepest layer is idle.
-    /// </para>
-    /// <para>
-    /// This full-stack idle guarantee is required for correct behavior of the
-    /// <c>GetDataAndWaitForIdleAsync</c> strong consistency extension method when used with a
-    /// <see cref="LayeredWindowCache{TRange,TData,TDomain}"/>: a caller waiting for strong
-    /// consistency needs all layers to have converged, not just the outermost one.
-    /// </para>
+/// <para><strong>WaitForIdleAsync Semantics:</strong></para>
+/// <para>
+/// <see cref="WaitForIdleAsync"/> awaits all layers sequentially, from outermost to innermost.
+/// This guarantees that the entire cache stack has converged: the outermost layer finishes its
+/// rebalance first (which drives fetch requests into inner layers), then each inner layer is
+/// awaited in turn until the deepest layer is idle.
+/// </para>
+/// <para>
+/// This full-stack idle guarantee is required for correct behavior of the
+/// <c>GetDataAndWaitForIdleAsync</c> strong consistency extension method when used with a
+/// <see cref="LayeredWindowCache{TRange,TData,TDomain}"/>: a caller waiting for strong
+/// consistency needs all layers to have converged, not just the outermost one.
+/// </para>
 /// </remarks>
 public sealed class LayeredWindowCache<TRange, TData, TDomain>
     : IWindowCache<TRange, TData, TDomain>
