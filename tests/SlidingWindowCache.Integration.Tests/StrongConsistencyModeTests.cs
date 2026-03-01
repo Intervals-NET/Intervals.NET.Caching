@@ -380,11 +380,10 @@ public sealed class StrongConsistencyModeTests : IAsyncDisposable
 
         var exception = await Record.ExceptionAsync(async () => await operationTask);
 
-        // ASSERT — either cancelled during GetDataAsync or WaitForIdleAsync
+        // ASSERT — cancellation of the operation should surface as OperationCanceledException,
+        // regardless of whether it is observed during GetDataAsync or WaitForIdleAsync.
         Assert.NotNull(exception);
-        Assert.True(
-            exception is OperationCanceledException or ObjectDisposedException,
-            $"Expected OperationCanceledException or ObjectDisposedException, got {exception.GetType().Name}");
+        Assert.IsType<OperationCanceledException>(exception);
     }
 
     #endregion
