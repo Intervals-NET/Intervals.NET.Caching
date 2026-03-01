@@ -140,7 +140,7 @@ public sealed class StrongConsistencyModeTests : IAsyncDisposable
     {
         _ = storageName;
 
-        // ARRANGE — two separate caches with identical configuration
+        // ARRANGE — single cache: compare plain GetDataAsync vs GetDataAndWaitForIdleAsync
         var cacheA = CreateCache(readMode: readMode);
         var range = TestHelpers.CreateRange(100, 110);
 
