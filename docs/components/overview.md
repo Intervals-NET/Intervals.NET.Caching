@@ -17,6 +17,7 @@ The system is easier to reason about when components are grouped by:
 ### Top-Level Component Roles
 
 - Public facade: `WindowCache<TRange, TData, TDomain>`
+- Public extensions: `WindowCacheExtensions` — opt-in strong consistency mode (`GetDataAndWaitForIdleAsync`)
 - User Path: assembles requested data and publishes intent
 - Intent loop: observes latest intent and runs analytical validation
 - Execution: performs debounced, cancellable rebalance work and mutates cache state
@@ -30,7 +31,6 @@ The system is easier to reason about when components are grouped by:
 - `docs/components/execution.md`
 - `docs/components/state-and-storage.md`
 - `docs/components/infrastructure.md`
-
 ### Ownership (Conceptual)
 
 `WindowCache` is the composition root. Internals are constructed once and live for the cache lifetime. Disposal cascades through owned components.

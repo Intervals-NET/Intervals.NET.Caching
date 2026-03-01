@@ -320,6 +320,33 @@ Canonical guide: `docs/diagnostics.md`.
 6. `docs/state-machine.md` — formal state transitions and mutation ownership
 7. `docs/actors.md` — actor responsibilities and execution contexts
 
+## Strong Consistency Mode
+
+By default, `GetDataAsync` is **eventually consistent**: data is returned immediately while the cache window converges asynchronously in the background. For scenarios where you need the cache to be fully converged before proceeding, use the `GetDataAndWaitForIdleAsync` extension method:
+
+```csharp
+using SlidingWindowCache.Public;
+
+// Returns only after cache has converged to its desired window geometry
+var result = await cache.GetDataAndWaitForIdleAsync(
+    Range.Closed(100, 200),
+    cancellationToken);
+
+// Cache geometry is now stable — safe to inspect, assert, or rely on
+if (result.Range.HasValue)
+    ProcessData(result.Data);
+```
+
+This is a thin composition of `GetDataAsync` followed by `WaitForIdleAsync`. The returned `RangeResult` is identical to what `GetDataAsync` would return.
+
+**When to use:**
+- Cold start synchronization: waiting for the initial cache window to be built before proceeding
+- Integration testing: asserting on cache geometry after a request
+- Any scenario where you want to know the cache has finished rebalancing before moving on
+
+**When NOT to use:**
+- Hot paths or rapid sequential requests — each call waits for full rebalance, which includes the debounce delay plus data fetching. For normal usage, the default eventual consistency model is faster.
+
 ### Deterministic Testing
 
 `WaitForIdleAsync()` provides race-free synchronization with background operations for tests. Uses "was idle at some point" semantics — does not guarantee still idle after completion. See `docs/invariants.md` (Activity tracking invariants).
