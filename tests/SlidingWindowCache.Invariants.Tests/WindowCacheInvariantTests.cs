@@ -328,7 +328,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         // ACT: Execute prior request if needed to establish cache state
         if (hasPriorRequest)
         {
-            await TestHelpers.ExecuteRequestAndWaitForRebalance(cache, TestHelpers.CreateRange(priorStart, priorEnd));
+            await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(priorStart, priorEnd));
             _cacheDiagnostics.Reset(); // Track only the test request
         }
 
@@ -660,7 +660,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         var (cache, _) = TrackCache(TestHelpers.CreateCacheWithDefaults(_domain, _cacheDiagnostics, options));
 
         // ACT: First request establishes cache
-        await TestHelpers.ExecuteRequestAndWaitForRebalance(cache, TestHelpers.CreateRange(100, 110));
+        await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(100, 110));
         _cacheDiagnostics.Reset();
 
         // Second request within NoRebalanceRange - intent published but execution may be skipped
@@ -726,7 +726,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         var (cache, _) = TrackCache(TestHelpers.CreateCacheWithDefaults(_domain, _cacheDiagnostics, options));
 
         // ACT: First request establishes cache and NoRebalanceRange
-        await TestHelpers.ExecuteRequestAndWaitForRebalance(cache, TestHelpers.CreateRange(100, 110));
+        await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(100, 110));
         _cacheDiagnostics.Reset();
 
         // Second request within NoRebalanceRange
@@ -757,7 +757,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         var (cache, _) = TrackCache(TestHelpers.CreateCacheWithDefaults(_domain, _cacheDiagnostics, options));
 
         // ACT: Establish cache with range [100, 120] (size 21)
-        await TestHelpers.ExecuteRequestAndWaitForRebalance(cache, TestHelpers.CreateRange(100, 120));
+        await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(100, 120));
         _cacheDiagnostics.Reset();
 
         // NoRebalanceRange should be approximately [106, 114] (shrunk by 30% on each side)
@@ -804,7 +804,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         // but outside the current NoRebalanceRange, to trigger a Stage 2 skip.
         var nextRequestRange = TestHelpers.CreateRange(320, 420); // Span 101
         // ACT: Establish initial cache
-        await TestHelpers.ExecuteRequestAndWaitForRebalance(cache, initialRange);
+        await cache.GetDataAndWaitForIdleAsync(initialRange);
         _cacheDiagnostics.Reset();
 
         // Request 1: Trigger rebalance outside NoRebalanceRange - will be pending due to debounce
@@ -847,7 +847,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
 
         // ACT: Establish cache with specific range [100, 110]
         var initialRange = TestHelpers.CreateRange(100, 110);
-        await TestHelpers.ExecuteRequestAndWaitForRebalance(cache, initialRange);
+        await cache.GetDataAndWaitForIdleAsync(initialRange);
 
         _cacheDiagnostics.Reset();
 
@@ -888,7 +888,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
 
         // ACT: Request a range [100, 110] (Size: 11)
         var requestRange = TestHelpers.CreateRange(100, 110);
-        await TestHelpers.ExecuteRequestAndWaitForRebalance(cache, requestRange);
+        await cache.GetDataAndWaitForIdleAsync(requestRange);
 
         // Calculate expected desired range using the helper that mimics ProportionalRangePlanner
         var expectedDesiredRange = TestHelpers.CalculateExpectedDesiredRange(requestRange, options, _domain);
@@ -934,7 +934,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         var (cache2, _) = TestHelpers.CreateCacheWithDefaults(_domain, diagnostics2, options);
 
         // ACT: Cache1 - Establish cache at [100, 110], then request [200, 210]
-        await TestHelpers.ExecuteRequestAndWaitForRebalance(cache1, TestHelpers.CreateRange(100, 110));
+        await cache1.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(100, 110));
         var result1 = await cache1.GetDataAsync(TestHelpers.CreateRange(200, 210), CancellationToken.None);
         await cache1.WaitForIdleAsync();
 
@@ -1111,7 +1111,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         var (cache, _) = TrackCache(TestHelpers.CreateCacheWithDefaults(_domain, _cacheDiagnostics, options));
 
         // ACT: Make request and wait for rebalance
-        await TestHelpers.ExecuteRequestAndWaitForRebalance(cache, TestHelpers.CreateRange(100, 110));
+        await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(100, 110));
 
         // ASSERT: Rebalance executed successfully
         TestHelpers.AssertRebalanceCompleted(_cacheDiagnostics);
@@ -1146,7 +1146,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         var (cache, _) = TrackCache(TestHelpers.CreateCacheWithDefaults(_domain, _cacheDiagnostics, options));
 
         // ACT: Request and wait for rebalance to complete
-        await TestHelpers.ExecuteRequestAndWaitForRebalance(cache, TestHelpers.CreateRange(100, 110));
+        await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(100, 110));
 
         // ASSERT: At least one rebalance must complete for the post-execution guarantees to be meaningful
         Assert.True(_cacheDiagnostics.RebalanceExecutionCompleted > 0,
@@ -1178,7 +1178,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         _currentCache = cache;
 
         // ACT: First request - cold start, full range fetch expected
-        await TestHelpers.ExecuteRequestAndWaitForRebalance(cache, TestHelpers.CreateRange(100, 110));
+        await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(100, 110));
 
         // Verify initial fetch occurred
         Assert.True(fetchedRanges.Count >= 1, "Initial fetch should occur for cold start");
@@ -1189,7 +1189,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
 
         // Second request - overlapping range that extends right
         // Should only fetch missing right segment, not refetch [100, 110]
-        await TestHelpers.ExecuteRequestAndWaitForRebalance(cache, TestHelpers.CreateRange(105, 120));
+        await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(105, 120));
 
         // ASSERT: Only missing segments should be fetched (incremental optimization)
         // The system should NOT refetch the entire [105, 120] range or full desired range
@@ -1242,7 +1242,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         _currentCache = cache;
 
         // ACT: Establish cache with [100, 110]
-        await TestHelpers.ExecuteRequestAndWaitForRebalance(cache, TestHelpers.CreateRange(100, 110));
+        await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(100, 110));
 
         // Record what was initially fetched (includes expansion)
         var initialFetchedRanges = new List<Intervals.NET.Range<int>>(fetchedRanges);
@@ -1253,7 +1253,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
 
         // Request a range that requires cache expansion to the left: [90, 105]
         // This should fetch only NEW data ([90, 99] or surrounding), NOT refetch [100, 110]
-        await TestHelpers.ExecuteRequestAndWaitForRebalance(cache, TestHelpers.CreateRange(90, 105));
+        await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(90, 105));
 
         // ASSERT: Existing data should NOT be refetched
         // Any new fetches should only be for missing left segments
