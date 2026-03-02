@@ -192,6 +192,30 @@ ICacheDiagnostics
 NoOpDiagnostics
 - The default diagnostics implementation that does nothing (intended to be effectively zero overhead).
 
+UpdateRuntimeOptions
+- A method on `IWindowCache` (and its implementations) that updates cache sizing, threshold, and debounce options on a live cache instance without reconstruction.
+- Takes an `Action<RuntimeOptionsUpdateBuilder>` callback; only fields set via builder calls are changed (all others remain at current values).
+- Updates use **next-cycle semantics**: changed values take effect on the next rebalance decision/execution cycle.
+- Throws `ObjectDisposedException` if called after disposal.
+- Throws `ArgumentOutOfRangeException` / `ArgumentException` if the resulting options would be invalid; invalid updates leave the current options unchanged.
+- `ReadMode` and `RebalanceQueueCapacity` are creation-time only and cannot be changed at runtime.
+
+RuntimeOptionsUpdateBuilder
+- Public fluent builder passed to the `UpdateRuntimeOptions` callback.
+- Exposes `WithLeftCacheSize`, `WithRightCacheSize`, `WithLeftThreshold`, `ClearLeftThreshold`, `WithRightThreshold`, `ClearRightThreshold`, and `WithDebounceDelay`.
+- `ClearLeftThreshold` / `ClearRightThreshold` explicitly set the threshold to `null`, distinguishing "don't change" from "set to null".
+- Constructed internally; constructor is `internal`.
+
+RuntimeCacheOptions
+- Internal immutable snapshot of the runtime-updatable subset of cache configuration: `LeftCacheSize`, `RightCacheSize`, `LeftThreshold`, `RightThreshold`, `DebounceDelay`.
+- Created from `WindowCacheOptions` at construction time and republished on each `UpdateRuntimeOptions` call.
+- All validation rules match `WindowCacheOptions` (negative sizes rejected, threshold sum ≤ 1.0 when both specified).
+
+RuntimeCacheOptionsHolder
+- Internal volatile wrapper that holds the current `RuntimeCacheOptions` snapshot.
+- Readers (planners, execution controllers) call `holder.Current` at invocation time — always see the latest published snapshot.
+- `Update(RuntimeCacheOptions)` publishes atomically via `Volatile.Write`.
+
 ## Common Misconceptions
 
 **Intent vs Command**: Intents are signals — evaluation may skip execution entirely. They are not commands that guarantee rebalance will happen.

@@ -1,5 +1,6 @@
 using Intervals.NET;
 using Intervals.NET.Domain.Abstractions;
+using SlidingWindowCache.Public.Configuration;
 using SlidingWindowCache.Public.Dto;
 
 namespace SlidingWindowCache.Public;
@@ -124,6 +125,15 @@ public sealed class LayeredWindowCache<TRange, TData, TDomain>
             await _layers[i].WaitForIdleAsync(cancellationToken).ConfigureAwait(false);
         }
     }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// TODO this is not logical - I have to provide an ability to change option of any layer
+    /// Delegates to the outermost (user-facing) layer only. To update inner layers, access them
+    /// via the builder or hold references to them directly.
+    /// </remarks>
+    public void UpdateRuntimeOptions(Action<RuntimeOptionsUpdateBuilder> configure)
+        => _userFacingLayer.UpdateRuntimeOptions(configure);
 
     /// <summary>
     /// Disposes all layers from outermost to innermost, releasing all background resources.

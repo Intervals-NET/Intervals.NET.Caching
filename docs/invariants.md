@@ -930,14 +930,45 @@ Complete trace demonstrating both invariants in current architecture:
 
 ---
 
+## I. Runtime Options Update Invariants
+
+**I.50** 🟢 **[Behavioral — Tests: `RuntimeOptionsUpdateTests`]** `UpdateRuntimeOptions` **validates the merged options** before publishing. Invalid updates (negative sizes, threshold sum > 1.0, out-of-range threshold) throw and leave the current options unchanged.
+- *Observable via*: Exception type and cache still accepts subsequent valid updates
+- *Test verifies*: `ArgumentOutOfRangeException` / `ArgumentException` thrown; cache not partially updated
+
+**I.51** 🔵 **[Architectural]** `UpdateRuntimeOptions` uses **next-cycle semantics**: the new options snapshot takes effect on the next rebalance decision/execution cycle. Ongoing cycles use the snapshot already read at cycle start.
+
+**Formal Specification:**
+- `RuntimeCacheOptionsHolder.Update` performs a `Volatile.Write` (release fence)
+- Planners and execution controllers snapshot `holder.Current` once at the start of their operation
+- No running cycle is interrupted or modified mid-flight by an options update
+
+**Rationale:** Prevents mid-cycle inconsistencies (e.g., a planner using new `LeftCacheSize` with old `RightCacheSize`). Cycles are short; the next cycle reflects the update.
+
+**Implementation:** `RuntimeCacheOptionsHolder.Update` in `src/SlidingWindowCache/Core/State/RuntimeCacheOptionsHolder.cs`.
+
+**I.52** 🔵 **[Architectural]** `UpdateRuntimeOptions` on a disposed cache **always throws `ObjectDisposedException`**.
+
+**Formal Specification:**
+- Disposal state checked via `Volatile.Read` before any options update work
+- Consistent with all other post-disposal operation guards in the public API
+
+**Implementation:** Disposal guard in `WindowCache.UpdateRuntimeOptions`.
+
+**I.53** 🟡 **[Conceptual]** **`ReadMode` and `RebalanceQueueCapacity` are creation-time only** — they determine the storage strategy and execution controller strategy, which are wired at construction and cannot be replaced at runtime without reconstruction.
+- *Design decision*: These choices affect fundamental system structure (object graph), not just configuration parameters
+- *Rationale*: Storage strategies and execution controllers have different object identities and lifecycles; hot-swapping them would require disposal and re-creation of component graphs
+
+---
+
 ## Summary Statistics
 
-### Total Invariants: 50
+### Total Invariants: 54
 
 #### By Category:
-- 🟢 **Behavioral** (test-covered): 19 invariants
-- 🔵 **Architectural** (structure-enforced): 23 invariants  
-- 🟡 **Conceptual** (design-level): 8 invariants
+- 🟢 **Behavioral** (test-covered): 20 invariants
+- 🔵 **Architectural** (structure-enforced): 25 invariants  
+- 🟡 **Conceptual** (design-level): 9 invariants
 
 #### Test Coverage Analysis:
 - **29 automated tests** in `WindowCacheInvariantTests`
@@ -945,7 +976,7 @@ Complete trace demonstrating both invariants in current architecture:
 - **23 architectural invariants** enforced by code structure (not tested)
 - **8 conceptual invariants** documented as design guidance (not tested)
 
-**This is by design.** The gap between 49 invariants and 29 tests is intentional:
+**This is by design.** The gap between 53 invariants and 29 tests is intentional:
 - Architecture enforces structural constraints automatically
 - Conceptual invariants guide development, not runtime behavior
 - Tests focus on externally observable behavior

@@ -476,10 +476,10 @@ public class WindowCacheOptionsTests
 
     #endregion
 
-    #region Record Equality Tests
+    #region Value Equality Tests
 
     [Fact]
-    public void RecordEquality_WithSameValues_AreEqual()
+    public void Equality_WithSameValues_AreEqual()
     {
         // ARRANGE
         var options1 = new WindowCacheOptions(
@@ -507,7 +507,37 @@ public class WindowCacheOptionsTests
     }
 
     [Fact]
-    public void RecordEquality_WithDifferentLeftCacheSize_AreNotEqual()
+    public void Equality_SameInstance_IsEqual()
+    {
+        // ARRANGE
+        var options = new WindowCacheOptions(
+            leftCacheSize: 1.0,
+            rightCacheSize: 1.0,
+            readMode: UserCacheReadMode.Snapshot
+        );
+
+        // ACT & ASSERT
+        Assert.Equal(options, options);
+    }
+
+    [Fact]
+    public void Equality_WithNull_IsNotEqual()
+    {
+        // ARRANGE
+        var options = new WindowCacheOptions(
+            leftCacheSize: 1.0,
+            rightCacheSize: 1.0,
+            readMode: UserCacheReadMode.Snapshot
+        );
+
+        // ACT & ASSERT
+        Assert.False(options.Equals(null));
+        Assert.False(options == null);
+        Assert.True(options != null);
+    }
+
+    [Fact]
+    public void Equality_WithDifferentLeftCacheSize_AreNotEqual()
     {
         // ARRANGE
         var options1 = new WindowCacheOptions(
@@ -529,7 +559,7 @@ public class WindowCacheOptionsTests
     }
 
     [Fact]
-    public void RecordEquality_WithDifferentRightCacheSize_AreNotEqual()
+    public void Equality_WithDifferentRightCacheSize_AreNotEqual()
     {
         // ARRANGE
         var options1 = new WindowCacheOptions(
@@ -549,7 +579,7 @@ public class WindowCacheOptionsTests
     }
 
     [Fact]
-    public void RecordEquality_WithDifferentReadMode_AreNotEqual()
+    public void Equality_WithDifferentReadMode_AreNotEqual()
     {
         // ARRANGE
         var options1 = new WindowCacheOptions(
@@ -569,7 +599,7 @@ public class WindowCacheOptionsTests
     }
 
     [Fact]
-    public void RecordEquality_WithDifferentThresholds_AreNotEqual()
+    public void Equality_WithDifferentThresholds_AreNotEqual()
     {
         // ARRANGE
         var options1 = new WindowCacheOptions(
@@ -591,7 +621,7 @@ public class WindowCacheOptionsTests
     }
 
     [Fact]
-    public void RecordEquality_WithDifferentRebalanceQueueCapacity_AreNotEqual()
+    public void Equality_WithDifferentRebalanceQueueCapacity_AreNotEqual()
     {
         // ARRANGE
         var options1 = new WindowCacheOptions(
@@ -615,7 +645,7 @@ public class WindowCacheOptionsTests
     }
 
     [Fact]
-    public void RecordEquality_WithDifferentDebounceDelay_AreNotEqual()
+    public void Equality_WithDifferentDebounceDelay_AreNotEqual()
     {
         // ARRANGE
         var options1 = new WindowCacheOptions(
@@ -658,6 +688,26 @@ public class WindowCacheOptionsTests
 
         // ACT & ASSERT
         Assert.Equal(options1.GetHashCode(), options2.GetHashCode());
+    }
+
+    [Fact]
+    public void GetHashCode_WithDifferentValues_ReturnsDifferentHashCode()
+    {
+        // ARRANGE
+        var options1 = new WindowCacheOptions(
+            leftCacheSize: 1.0,
+            rightCacheSize: 1.0,
+            readMode: UserCacheReadMode.Snapshot
+        );
+
+        var options2 = new WindowCacheOptions(
+            leftCacheSize: 2.0,
+            rightCacheSize: 1.0,
+            readMode: UserCacheReadMode.Snapshot
+        );
+
+        // ACT & ASSERT — hash codes should differ (not guaranteed but expected for distinct values)
+        Assert.NotEqual(options1.GetHashCode(), options2.GetHashCode());
     }
 
     #endregion

@@ -2,6 +2,7 @@ using System.Threading.Channels;
 using Intervals.NET;
 using Intervals.NET.Domain.Abstractions;
 using SlidingWindowCache.Core.Rebalance.Intent;
+using SlidingWindowCache.Core.State;
 using SlidingWindowCache.Infrastructure.Concurrency;
 using SlidingWindowCache.Public.Instrumentation;
 
@@ -97,7 +98,7 @@ internal sealed class ChannelBasedRebalanceExecutionController<TRange, TData, TD
     where TDomain : IRangeDomain<TRange>
 {
     private readonly RebalanceExecutor<TRange, TData, TDomain> _executor;
-    private readonly TimeSpan _debounceDelay;
+    private readonly RuntimeCacheOptionsHolder _optionsHolder;
     private readonly ICacheDiagnostics _cacheDiagnostics;
     private readonly Channel<ExecutionRequest<TRange, TData, TDomain>> _executionChannel;
     private readonly Task _executionLoopTask;
@@ -119,7 +120,11 @@ internal sealed class ChannelBasedRebalanceExecutionController<TRange, TData, TD
     /// Initializes a new instance of the <see cref="ChannelBasedRebalanceExecutionController{TRange,TData,TDomain}"/> class.
     /// </summary>
     /// <param name="executor">The executor for performing rebalance operations.</param>
-    /// <param name="debounceDelay">The debounce delay before executing rebalance.</param>
+    /// <param name="optionsHolder">
+    ///     Shared holder for the current runtime options snapshot. The controller reads
+    ///     <see cref="RuntimeCacheOptionsHolder.Current"/> at the start of each execution to pick up
+    ///     the latest <c>DebounceDelay</c> published via <c>IWindowCache.UpdateRuntimeOptions</c>.
+    /// </param>
     /// <param name="cacheDiagnostics">The diagnostics interface for recording rebalance-related metrics and events.</param>
     /// <param name="activityCounter">Activity counter for tracking active operations.</param>
     /// <param name="capacity">The bounded channel capacity for backpressure control. Must be >= 1.</param>
@@ -137,9 +142,10 @@ internal sealed class ChannelBasedRebalanceExecutionController<TRange, TData, TD
     /// This actor guarantees single-threaded execution of all cache mutations via sequential channel processing.
     /// </para>
     /// </remarks>
+    // todo think about exposing a base class with common logic
     public ChannelBasedRebalanceExecutionController(
         RebalanceExecutor<TRange, TData, TDomain> executor,
-        TimeSpan debounceDelay,
+        RuntimeCacheOptionsHolder optionsHolder,
         ICacheDiagnostics cacheDiagnostics,
         AsyncActivityCounter activityCounter,
         int capacity
@@ -152,7 +158,7 @@ internal sealed class ChannelBasedRebalanceExecutionController<TRange, TData, TD
         }
 
         _executor = executor;
-        _debounceDelay = debounceDelay;
+        _optionsHolder = optionsHolder;
         _cacheDiagnostics = cacheDiagnostics;
         _activityCounter = activityCounter;
 
@@ -307,11 +313,16 @@ internal sealed class ChannelBasedRebalanceExecutionController<TRange, TData, TD
             var desiredNoRebalanceRange = request.DesiredNoRebalanceRange;
             var cancellationToken = request.CancellationToken;
 
+            // Snapshot DebounceDelay from the options holder at execution time.
+            // This picks up any runtime update published via IWindowCache.UpdateRuntimeOptions
+            // since this execution request was enqueued ("next cycle" semantics).
+            var debounceDelay = _optionsHolder.Current.DebounceDelay;
+
             try
             {
                 // Step 1: Apply debounce delay - allows superseded operations to be cancelled
                 // ConfigureAwait(false) ensures continuation on thread pool
-                await Task.Delay(_debounceDelay, cancellationToken)
+                await Task.Delay(debounceDelay, cancellationToken)
                     .ConfigureAwait(false);
 
                 // Step 2: Check cancellation after debounce - avoid wasted I/O work
