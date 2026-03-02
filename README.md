@@ -268,6 +268,35 @@ var options = new WindowCacheOptions(
 );
 ```
 
+## Runtime Options Update
+
+Cache sizing, threshold, and debounce options can be changed on a live cache instance without recreation. Updates take effect on the **next rebalance decision/execution cycle**.
+
+```csharp
+// Change left and right cache sizes at runtime
+cache.UpdateRuntimeOptions(update =>
+    update.WithLeftCacheSize(3.0)
+          .WithRightCacheSize(3.0));
+
+// Change debounce delay
+cache.UpdateRuntimeOptions(update =>
+    update.WithDebounceDelay(TimeSpan.Zero));
+
+// Change thresholds — or clear a threshold to null
+cache.UpdateRuntimeOptions(update =>
+    update.WithLeftThreshold(0.15)
+          .ClearRightThreshold());
+```
+
+`UpdateRuntimeOptions` uses a **fluent builder** (`RuntimeOptionsUpdateBuilder`). Only fields explicitly set via builder calls are changed — all other options remain at their current values.
+
+**Constraints:**
+- `ReadMode` and `RebalanceQueueCapacity` are creation-time only and cannot be changed at runtime.
+- All validation rules from construction still apply (`ArgumentOutOfRangeException` for negative sizes, `ArgumentException` for threshold sum > 1.0, etc.). A failed update leaves the current options unchanged — no partial application.
+- Calling `UpdateRuntimeOptions` on a disposed cache throws `ObjectDisposedException`.
+
+**`LayeredWindowCache`** delegates `UpdateRuntimeOptions` to the outermost (user-facing) layer.
+TODO mentioned that this perfectly matches with diagnostics, so you are able to build an intelligent options configuration that is adopted to use case and circumstances
 ## Diagnostics
 
 ⚠️ **CRITICAL: You MUST handle `RebalanceExecutionFailed` in production.** Rebalance operations run in background tasks. Without handling this event, failures are silently swallowed and the cache stops rebalancing with no indication.

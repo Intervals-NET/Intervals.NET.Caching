@@ -106,6 +106,22 @@ While the single-writer architecture eliminates write-write races between User P
 - Use **Task-based** for normal operation, maximum performance, minimal overhead
 - Use **Channel-based** for high-frequency rebalance scenarios requiring backpressure, or memory-constrained environments
 
+### Runtime-Updatable Options
+
+A subset of cache configuration — `LeftCacheSize`, `RightCacheSize`, `LeftThreshold`, `RightThreshold`, and `DebounceDelay` — can be changed on a live cache instance without reconstruction via `IWindowCache.UpdateRuntimeOptions`.
+
+**Mechanism:**
+- `WindowCache` constructs a `RuntimeCacheOptionsHolder` from `WindowCacheOptions` at creation time.
+- The holder is shared (by reference) with all components that need configuration: `ProportionalRangePlanner`, `NoRebalanceRangePlanner`, `TaskBasedRebalanceExecutionController`, and `ChannelBasedRebalanceExecutionController`.
+- `UpdateRuntimeOptions` applies the builder's deltas to the current `RuntimeCacheOptions` snapshot, validates the result, then publishes the new snapshot via `Volatile.Write`.
+- All readers call `holder.Current` at the start of their operation — they always see the latest published snapshot.
+
+**"Next cycle" semantics:** Changes take effect on the next rebalance decision/execution cycle. Ongoing cycles use the snapshot they already read.
+
+**Single-writer guarantee is not affected:** `RuntimeCacheOptionsHolder` is a separate shared reference from `CacheState`. Writing to it does not violate the single-writer rule (which covers cache content mutations only).
+
+**Non-updatable at runtime:** `ReadMode` (materialization strategy) and `RebalanceQueueCapacity` (execution controller selection) are determined at construction and cannot be changed.
+
 ### Intent Model (Signals, Not Commands)
 
 After a user request completes and has "delivered data" (what the caller actually received), the User Path publishes an intent containing the delivered range/data.
