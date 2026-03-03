@@ -182,6 +182,12 @@ public sealed class WindowCacheOptionsBuilder
     /// <returns>This builder instance, for fluent chaining.</returns>
     public WindowCacheOptionsBuilder WithDebounceDelay(TimeSpan value)
     {
+        if (value < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(value),
+                "DebounceDelay must be non-negative.");
+        }
+
         _debounceDelay = value;
         return this;
     }

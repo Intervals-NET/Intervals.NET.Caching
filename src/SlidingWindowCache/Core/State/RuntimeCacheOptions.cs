@@ -40,10 +40,10 @@ internal sealed class RuntimeCacheOptions
     /// <param name="rightCacheSize">The coefficient for the right cache size. Must be ≥ 0.</param>
     /// <param name="leftThreshold">The left no-rebalance threshold percentage. Must be in [0, 1] when not null.</param>
     /// <param name="rightThreshold">The right no-rebalance threshold percentage. Must be in [0, 1] when not null.</param>
-    /// <param name="debounceDelay">The debounce delay applied before executing a rebalance.</param>
+    /// <param name="debounceDelay">The debounce delay applied before executing a rebalance. Must be non-negative.</param>
     /// <exception cref="ArgumentOutOfRangeException">
     /// Thrown when <paramref name="leftCacheSize"/> or <paramref name="rightCacheSize"/> is less than 0,
-    /// or when a threshold value is outside [0, 1].
+    /// when a threshold value is outside [0, 1], or when <paramref name="debounceDelay"/> is negative.
     /// </exception>
     /// <exception cref="ArgumentException">
     /// Thrown when both thresholds are specified and their sum exceeds 1.0.
@@ -57,6 +57,12 @@ internal sealed class RuntimeCacheOptions
     {
         RuntimeOptionsValidator.ValidateCacheSizesAndThresholds(
             leftCacheSize, rightCacheSize, leftThreshold, rightThreshold);
+
+        if (debounceDelay < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(debounceDelay),
+                "DebounceDelay must be non-negative.");
+        }
 
         LeftCacheSize = leftCacheSize;
         RightCacheSize = rightCacheSize;

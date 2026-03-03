@@ -130,6 +130,12 @@ public sealed class RuntimeOptionsUpdateBuilder
     /// <returns>This builder, for fluent chaining.</returns>
     public RuntimeOptionsUpdateBuilder WithDebounceDelay(TimeSpan value)
     {
+        if (value < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(value),
+                "DebounceDelay must be non-negative.");
+        }
+
         _debounceDelay = value;
         return this;
     }

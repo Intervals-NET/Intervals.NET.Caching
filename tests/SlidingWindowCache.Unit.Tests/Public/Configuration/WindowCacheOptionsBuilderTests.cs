@@ -354,6 +354,20 @@ public class WindowCacheOptionsBuilderTests
         Assert.Equal(TimeSpan.Zero, options.DebounceDelay);
     }
 
+    [Fact]
+    public void WithDebounceDelay_WithNegativeValue_ThrowsArgumentOutOfRangeException()
+    {
+        // ARRANGE
+        var builder = new WindowCacheOptionsBuilder().WithCacheSize(1.0);
+
+        // ACT
+        var exception = Record.Exception(() => builder.WithDebounceDelay(TimeSpan.FromMilliseconds(-1)));
+
+        // ASSERT
+        Assert.NotNull(exception);
+        Assert.IsType<ArgumentOutOfRangeException>(exception);
+    }
+
     #endregion
 
     #region WithRebalanceQueueCapacity Tests

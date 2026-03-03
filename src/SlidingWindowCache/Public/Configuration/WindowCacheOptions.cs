@@ -41,7 +41,7 @@ public sealed class WindowCacheOptions : IEquatable<WindowCacheOptions>
     /// </param>
     /// <exception cref="ArgumentOutOfRangeException">
     /// Thrown when LeftCacheSize, RightCacheSize, LeftThreshold, RightThreshold is less than 0,
-    /// or when RebalanceQueueCapacity is less than or equal to 0.
+    /// when DebounceDelay is negative, or when RebalanceQueueCapacity is less than or equal to 0.
     /// </exception>
     /// <exception cref="ArgumentException">
     /// Thrown when the sum of LeftThreshold and RightThreshold exceeds 1.0.
@@ -63,6 +63,12 @@ public sealed class WindowCacheOptions : IEquatable<WindowCacheOptions>
         {
             throw new ArgumentOutOfRangeException(nameof(rebalanceQueueCapacity),
                 "RebalanceQueueCapacity must be greater than 0 or null.");
+        }
+
+        if (debounceDelay.HasValue && debounceDelay.Value < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(debounceDelay),
+                "DebounceDelay must be non-negative.");
         }
 
         LeftCacheSize = leftCacheSize;

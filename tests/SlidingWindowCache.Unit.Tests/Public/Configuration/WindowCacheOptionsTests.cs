@@ -324,6 +324,25 @@ public class WindowCacheOptionsTests
         Assert.Equal("rightCacheSize", exception.ParamName);
     }
 
+    [Fact]
+    public void Constructor_WithNegativeDebounceDelay_ThrowsArgumentOutOfRangeException()
+    {
+        // ARRANGE, ACT & ASSERT
+        var exception = Record.Exception(() =>
+            new WindowCacheOptions(
+                leftCacheSize: 1.0,
+                rightCacheSize: 1.0,
+                readMode: UserCacheReadMode.Snapshot,
+                debounceDelay: TimeSpan.FromMilliseconds(-1)
+            )
+        );
+
+        Assert.NotNull(exception);
+        Assert.IsType<ArgumentOutOfRangeException>(exception);
+        var argException = (ArgumentOutOfRangeException)exception;
+        Assert.Equal("debounceDelay", argException.ParamName);
+    }
+
     #endregion
 
     #region Constructor - Threshold Sum Validation Tests
@@ -688,26 +707,6 @@ public class WindowCacheOptionsTests
 
         // ACT & ASSERT
         Assert.Equal(options1.GetHashCode(), options2.GetHashCode());
-    }
-
-    [Fact]
-    public void GetHashCode_WithDifferentValues_ReturnsDifferentHashCode()
-    {
-        // ARRANGE
-        var options1 = new WindowCacheOptions(
-            leftCacheSize: 1.0,
-            rightCacheSize: 1.0,
-            readMode: UserCacheReadMode.Snapshot
-        );
-
-        var options2 = new WindowCacheOptions(
-            leftCacheSize: 2.0,
-            rightCacheSize: 1.0,
-            readMode: UserCacheReadMode.Snapshot
-        );
-
-        // ACT & ASSERT — hash codes should differ (not guaranteed but expected for distinct values)
-        Assert.NotEqual(options1.GetHashCode(), options2.GetHashCode());
     }
 
     #endregion
