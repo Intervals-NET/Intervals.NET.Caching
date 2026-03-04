@@ -48,14 +48,14 @@ All user-path code executes on the **⚡ User Thread** (the caller's thread). No
 
 | Invariant | Description                                                                                                                                                                            |
 |-----------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| A.0       | User requests always served immediately (never blocked by rebalance)                                                                                                                   |
-| A.3       | `UserRequestHandler` is the sole publisher of rebalance intents                                                                                                                        |
-| A.4       | Intent publication is fire-and-forget (background only)                                                                                                                                |
-| A.5       | User path is strictly read-only w.r.t. `CacheState`                                                                                                                                    |
+| A.3       | User requests always served immediately (never blocked by rebalance)                                                                                                                   |
+| A.5       | `UserRequestHandler` is the sole publisher of rebalance intents                                                                                                                        |
+| A.6       | Intent publication is fire-and-forget (background only)                                                                                                                                |
+| A.11/A.12 | User path is strictly read-only w.r.t. `CacheState`                                                                                                                                   |
 | A.10      | Returns exactly `RequestedRange` data                                                                                                                                                  |
 | A.10a     | `RangeResult` contains `Range`, `Data`, and `CacheInteraction` — all set by `UserRequestHandler`                                                                                       |
 | A.10b     | `CacheInteraction` accurately reflects the cache scenario: `FullMiss` (cold start / jump), `FullHit` (fully cached), `PartialHit` (partial overlap)                                    |
-| G.45      | I/O isolation: `IDataSource` called on user's behalf from User Thread (partial hits) or Background Thread (rebalance execution); shared `CacheDataExtensionService` used by both paths |
+| G.3       | I/O isolation: `IDataSource` called on user's behalf from User Thread (partial hits) or Background Thread (rebalance execution); shared `CacheDataExtensionService` used by both paths |
 
 See `docs/invariants.md` (Section A: User Path invariants) for full specification.
 

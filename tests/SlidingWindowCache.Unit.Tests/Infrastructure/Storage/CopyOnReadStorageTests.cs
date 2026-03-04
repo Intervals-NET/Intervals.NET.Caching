@@ -9,7 +9,7 @@ namespace SlidingWindowCache.Unit.Tests.Infrastructure.Storage;
 
 /// <summary>
 /// Unit tests for CopyOnReadStorage that verify the ICacheStorage interface contract,
-/// data correctness (Invariant B.11), dual-buffer staging pattern, and error handling.
+/// data correctness (Invariant B.1), dual-buffer staging pattern, and error handling.
 /// Shared tests are inherited from <see cref="CacheStorageTestsBase"/>.
 /// </summary>
 public class CopyOnReadStorageTests : CacheStorageTestsBase

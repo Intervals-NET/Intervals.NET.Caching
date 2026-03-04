@@ -8,7 +8,7 @@ namespace SlidingWindowCache.Unit.Tests.Infrastructure.Storage.TestInfrastructur
 
 /// <summary>
 /// Abstract base class providing shared test coverage for all <see cref="ICacheStorage{TRange,TData,TDomain}"/>
-/// implementations, enforcing the ICacheStorage interface contract, data correctness (Invariant B.11),
+/// implementations, enforcing the ICacheStorage interface contract, data correctness (Invariant B.1),
 /// and error handling.
 /// </summary>
 /// <remarks>
@@ -399,10 +399,10 @@ public abstract class CacheStorageTestsBase
 
     #endregion
 
-    #region Invariant B.11 Tests (Data/Range Consistency)
+    #region Invariant B.1 Tests (Data/Range Consistency)
 
     [Fact]
-    public void InvariantB11_DataLengthMatchesRangeSize_AfterRematerialize()
+    public void InvariantB1_DataLengthMatchesRangeSize_AfterRematerialize()
     {
         // ARRANGE
         var domain = CreateFixedStepDomain();
@@ -413,13 +413,13 @@ public abstract class CacheStorageTestsBase
         storage.Rematerialize(rangeData);
         var data = storage.Read(storage.Range);
 
-        // ASSERT - Data length must equal range size (Invariant B.11)
+        // ASSERT - Data length must equal range size (Invariant B.1)
         var expectedLength = 51; // [0, 50] inclusive = 51 elements
         Assert.Equal(expectedLength, data.Length);
     }
 
     [Fact]
-    public void InvariantB11_DataLengthMatchesRangeSize_AfterMultipleRematerializations()
+    public void InvariantB1_DataLengthMatchesRangeSize_AfterMultipleRematerializations()
     {
         // ARRANGE
         var domain = CreateFixedStepDomain();
@@ -437,7 +437,7 @@ public abstract class CacheStorageTestsBase
     }
 
     [Fact]
-    public void InvariantB11_PartialReads_ConsistentWithStoredRange()
+    public void InvariantB1_PartialReads_ConsistentWithStoredRange()
     {
         // ARRANGE
         var domain = CreateFixedStepDomain();

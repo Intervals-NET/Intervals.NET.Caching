@@ -210,7 +210,7 @@ Assert.Equal(1, diagnostics.UserRequestServed);
 **Tracks:** Cache expansion during partial cache hit  
 **Location:** `CacheDataExtensionService.CalculateMissingRanges` (intersection path)  
 **Scenarios:** User Scenario U4 (partial cache hit)  
-**Invariant:** Invariant 9a (Cache Contiguity Rule - preserves contiguity)  
+**Invariant:** Invariant A.12b (Cache Contiguity Rule - preserves contiguity)  
 **Interpretation:** Number of times cache grew while maintaining contiguity
 
 **Example Usage:**
@@ -230,7 +230,7 @@ Assert.Equal(1, diagnostics.CacheExpanded);
 **Tracks:** Cache replacement during non-intersecting jump  
 **Location:** `CacheDataExtensionService.CalculateMissingRanges` (no intersection path)  
 **Scenarios:** User Scenario U5 (full cache miss - jump)  
-**Invariant:** Invariant 9a (Cache Contiguity Rule - prevents gaps)  
+**Invariant:** Invariant A.12b (Cache Contiguity Rule - prevents gaps)  
 **Interpretation:** Number of times cache was fully replaced to maintain contiguity
 
 **Example Usage:**
@@ -349,7 +349,7 @@ Assert.Equal(1, diagnostics.DataSourceFetchMissingSegments);
 **Tracks:** A fetched chunk returned a `null` Range — the requested segment does not exist in the data source  
 **Location:** `CacheDataExtensionService.UnionAll` (when a `RangeChunk.Range` is null)  
 **Context:** User Thread (Partial Cache Hit — Scenario 3) **and** Background Thread (Rebalance Execution)  
-**Invariants:** G.48 (IDataSource Boundary Semantics), A.9a (Cache Contiguity)  
+**Invariants:** G.5 (IDataSource Boundary Semantics), A.12b (Cache Contiguity)  
 **Interpretation:** Physical boundary encountered; the unavailable segment is silently skipped to preserve cache contiguity
 
 **Typical Scenarios:**
@@ -380,7 +380,7 @@ Assert.Equal(Range.Closed(1000, 1500), result.Range);
 #### `RebalanceIntentPublished()`
 **Tracks:** Rebalance intent publication by User Path  
 **Location:** `IntentController.PublishIntent` (after scheduler receives intent)  
-**Invariants:** A.3 (User Path is sole source of intent), 24e (Intent contains delivered data)  
+**Invariants:** A.5 (User Path is sole source of intent), C.8e (Intent contains delivered data)  
 **Note:** Intent publication does NOT guarantee execution (opportunistic)
 
 **Example Usage:**
@@ -396,7 +396,7 @@ Assert.Equal(1, diagnostics.RebalanceIntentPublished);
 #### `RebalanceIntentCancelled()`
 **Tracks:** Intent cancellation before or during execution  
 **Location:** `IntentController.ProcessIntentsAsync` (background loop — when new intent supersedes pending intent)  
-**Invariants:** A.0 (User Path priority), A.0a (User cancels rebalance), C.20 (Obsolete intent doesn't start)  
+**Invariants:** A.2 (User Path priority), A.2a (User cancels rebalance), C.4 (Obsolete intent doesn't start)  
 **Interpretation:** Single-flight execution - new request cancels previous intent
 
 **Example Usage:**
@@ -424,7 +424,7 @@ Assert.True(diagnostics.RebalanceIntentCancelled >= 1);
 **Tracks:** Rebalance execution start after decision approval  
 **Location:** `IntentController.ProcessIntentsAsync` (after `RebalanceDecisionEngine` approves execution)  
 **Scenarios:** Decision Scenario D3 (rebalance required)  
-**Invariant:** 28 (Rebalance triggered only if confirmed necessary)
+**Invariant:** D.5 (Rebalance triggered only if confirmed necessary)
 
 **Example Usage:**
 ```csharp
@@ -440,7 +440,7 @@ Assert.Equal(1, diagnostics.RebalanceExecutionStarted);
 **Tracks:** Successful rebalance completion  
 **Location:** `RebalanceExecutor.ExecuteAsync` (after UpdateCacheState)  
 **Scenarios:** Rebalance Scenarios R1, R2 (build from scratch, expand cache)  
-**Invariants:** 34 (Only Rebalance writes to cache), 35 (Atomic state update)
+**Invariants:** F.2 (Only Rebalance writes to cache), B.2 (Cache updates are atomic)
 
 **Example Usage:**
 ```csharp
@@ -455,7 +455,7 @@ Assert.Equal(1, diagnostics.RebalanceExecutionCompleted);
 #### `RebalanceExecutionCancelled()`
 **Tracks:** Rebalance cancellation mid-flight  
 **Location:** `RebalanceExecutor.ExecuteAsync` (catch `OperationCanceledException`)  
-**Invariant:** 34a (Rebalance yields to User Path immediately)  
+**Invariant:** F.1a (Rebalance yields to User Path immediately)  
 **Interpretation:** User Path priority enforcement - rebalance interrupted
 
 **Example Usage:**
@@ -575,7 +575,7 @@ Assert.Equal(1, diagnostics.RebalanceExecutionFailed);
 **Tracks:** Rebalance skipped — last requested position is within the current `NoRebalanceRange`  
 **Location:** `RebalanceDecisionEngine.Evaluate` (Stage 1 early exit)  
 **Scenarios:** Decision Scenario D1 (inside current no-rebalance threshold)  
-**Invariants:** D.26 (No rebalance if inside NoRebalanceRange), D.27 (Policy-based skip)
+**Invariants:** D.3 (No rebalance if inside NoRebalanceRange), C.8b (RebalanceSkippedNoRebalanceRange counter semantics)
 
 **Example Usage:**
 ```csharp
@@ -601,7 +601,7 @@ Assert.True(diagnostics.RebalanceSkippedCurrentNoRebalanceRange >= 1);
 **Tracks:** Rebalance skipped — last requested position is within the *pending* (desired) `NoRebalanceRange` of an already-scheduled execution  
 **Location:** `RebalanceDecisionEngine.Evaluate` (Stage 2 early exit)  
 **Scenarios:** Decision Scenario D2 (pending rebalance covers the request — anti-thrashing)  
-**Invariants:** D.26a (No rebalance if pending rebalance covers request)
+**Invariants:** D.2a (No rebalance if pending rebalance covers request)
 
 **Example Usage:**
 ```csharp
@@ -621,7 +621,7 @@ Assert.True(diagnostics.RebalanceSkippedPendingNoRebalanceRange >= 1);
 **Tracks:** Rebalance skipped because desired cache range equals current cache range  
 **Location:** `RebalanceDecisionEngine.Evaluate` (Stage 4 early exit)  
 **Scenarios:** Decision Scenario D3 (DesiredCacheRange == CurrentCacheRange)  
-**Invariants:** D.27 (No rebalance if same range), D.28 (Same-range optimization)
+**Invariants:** D.4 (No rebalance if same range), C.8c (RebalanceSkippedSameRange counter semantics)
 
 **Example Usage:**
 ```csharp
@@ -639,7 +639,7 @@ Assert.True(diagnostics.RebalanceSkippedSameRange >= 0); // May or may not occur
 **Tracks:** Rebalance execution successfully scheduled after all decision stages approved  
 **Location:** `IntentController.ProcessIntentsAsync` (Stage 5 — after `RebalanceDecisionEngine` returns `ShouldSchedule=true`)  
 **Scenarios:** Decision Scenario D4 (rebalance required)  
-**Invariant:** D.28 (Rebalance triggered only if confirmed necessary)
+**Invariant:** D.5 (Rebalance triggered only if confirmed necessary)
 
 **Example Usage:**
 ```csharp

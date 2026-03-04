@@ -39,7 +39,7 @@ Configuration parameters:
 - `LeftNoRebalanceThreshold + RightNoRebalanceThreshold ≤ 1.0` (prevents overlapping shrinkage zones)
 - `RebalanceQueueCapacity > 0` (when specified)
 
-**Invariants**: E.34, E.35 (NoRebalanceRange computation and threshold sum constraint).
+**Invariants**: E.5, E.6 (NoRebalanceRange computation and threshold sum constraint).
 
 ### UserCacheReadMode
 
@@ -162,10 +162,10 @@ Composes `GetDataAsync` + conditional `WaitForIdleAsync` into a single call. Wai
 - Lower overhead than `GetDataAndWaitForIdleAsync` for workloads with frequent `FullHit` results
 
 **When NOT to use:**
-- Parallel callers — the "warm cache after await" guarantee requires serialized (one-at-a-time) access (Invariant H.49)
+- Parallel callers — the "warm cache after await" guarantee requires serialized (one-at-a-time) access (Invariant H.3)
 - Hot paths — even though `FullHit` skips the wait, missed requests still incur the full rebalance cycle delay
 
-**Idle semantics**: Inherits "was idle at some point" semantics from `WaitForIdleAsync` (Invariant H.49).
+**Idle semantics**: Inherits "was idle at some point" semantics from `WaitForIdleAsync` (Invariant H.3).
 
 **Exception propagation**: If `GetDataAsync` throws, `WaitForIdleAsync` is never called. If `WaitForIdleAsync` throws `OperationCanceledException`, the already-obtained result is returned (graceful degradation to eventual consistency). Other exceptions from `WaitForIdleAsync` propagate normally.
 
@@ -190,7 +190,7 @@ Composes `GetDataAsync` + `WaitForIdleAsync` into a single call. Always waits fo
 - Rapid sequential requests — eliminates debounce and work-avoidance benefits
 - Parallel callers — same serialized access requirement as `GetDataAndWaitOnMissAsync`
 
-**Idle semantics**: Inherits "was idle at some point" semantics from `WaitForIdleAsync` (Invariant H.49). Unlike `GetDataAndWaitOnMissAsync`, always waits even on `FullHit`.
+**Idle semantics**: Inherits "was idle at some point" semantics from `WaitForIdleAsync` (Invariant H.3). Unlike `GetDataAndWaitOnMissAsync`, always waits even on `FullHit`.
 
 **Exception propagation**: If `GetDataAsync` throws, `WaitForIdleAsync` is never called. If `WaitForIdleAsync` throws `OperationCanceledException`, the already-obtained result is returned (graceful degradation to eventual consistency). Other exceptions from `WaitForIdleAsync` propagate normally.
 

@@ -24,8 +24,8 @@ The cache is in one of three states:
 
 **2. Initialized**
 - `CacheState.IsInitialized == true`
-- `CacheState.Storage` holds a contiguous, non-empty range of data consistent with `CacheState.Storage.Range` (Invariant B.11)
-- Cache is contiguous — no gaps (Invariant A.9a)
+- `CacheState.Storage` holds a contiguous, non-empty range of data consistent with `CacheState.Storage.Range` (Invariant B.1)
+- Cache is contiguous — no gaps (Invariant A.12b)
 - Ready to serve user requests
 
 **3. Rebalancing**
@@ -71,7 +71,7 @@ Mutation authority is constant across all states:
 - **User Path**: read-only with respect to shared cache state in every state
 - **Rebalance Execution**: sole writer in every state
 
-See `docs/invariants.md` for the formal single-writer rule (Invariants A.-1, A.7, A.8, A.9).
+See `docs/invariants.md` for the formal single-writer rule (Invariants A.1, A.11, A.12, A.12a).
 
 ### Transition Details
 
@@ -87,7 +87,7 @@ See `docs/invariants.md` for the formal single-writer rule (Invariants A.-1, A.7
 - **Mutations** (Rebalance Execution only):
   - Call `Storage.Rematerialize()` with delivered data and range
   - Set `IsInitialized = true`
-- **Atomicity**: Changes applied atomically (Invariant B.12)
+- **Atomicity**: Changes applied atomically (Invariant B.2)
 - **Postcondition**: Cache enters `Initialized` after execution completes
 - **Note**: User Path is read-only; initial cache population is performed exclusively by Rebalance Execution
 
@@ -118,7 +118,7 @@ See `docs/invariants.md` for the formal single-writer rule (Invariants A.-1, A.7
   - Call `Storage.Rematerialize()` with merged, trimmed data (sets storage contents and `Storage.Range`)
   - Set `IsInitialized = true`
   - Recompute `NoRebalanceRange`
-- **Atomicity**: Changes applied atomically (Invariant B.12)
+- **Atomicity**: Changes applied atomically (Invariant B.2)
 - **Postcondition**: Cache returns to stable `Initialized` state
 
 #### T4: Rebalancing → Rebalancing (New Request MAY Cancel Active Rebalance)
@@ -143,12 +143,12 @@ See `docs/invariants.md` for the formal single-writer rule (Invariants A.-1, A.7
 | Initialized   | None                | Not active                                                                                                      |
 | Rebalancing   | None                | All cache mutations (expand, trim, Rematerialize, IsInitialized, NoRebalanceRange) — must yield on cancellation |
 
-**User Path mutations (Invariants A.7, A.8)**:
+**User Path mutations (Invariants A.11, A.12)**:
 - User Path NEVER calls `Storage.Rematerialize()`
 - User Path NEVER writes to `IsInitialized`
 - User Path NEVER writes to `NoRebalanceRange`
 
-**Rebalance Execution mutations (Invariants F.36, F.36a)**:
+**Rebalance Execution mutations (Invariants F.2, F.2a)**:
 1. Uses delivered data from intent as authoritative base
 2. Expands to `DesiredCacheRange` (fetches only truly missing ranges)
 3. Trims excess data outside `DesiredCacheRange`
@@ -167,15 +167,15 @@ See `docs/invariants.md` for the formal single-writer rule (Invariants A.-1, A.7
 5. New rebalance proceeds with new intent's delivered data (if validated)
 6. Cancelled rebalance yields without leaving cache inconsistent
 
-**Cancellation Guarantees (Invariants F.34, F.34a, F.34b)**:
+**Cancellation Guarantees (Invariants F.1, F.1a, F.1b)**:
 - Rebalance Execution MUST support cancellation at all stages
 - Rebalance Execution MUST yield immediately when cancelled
 - Cancelled execution MUST NOT leave cache inconsistent
 
 **State Safety**:
-- **Atomicity**: All cache mutations are atomic (Invariant B.12)
-- **Consistency**: `Storage` data and `Storage.Range` always consistent (Invariant B.11)
-- **Contiguity**: Cache data never contains gaps (Invariant A.9a)
+- **Atomicity**: All cache mutations are atomic (Invariant B.2)
+- **Consistency**: `Storage` data and `Storage.Range` always consistent (Invariant B.1)
+- **Contiguity**: Cache data never contains gaps (Invariant A.12b)
 - **Idempotence**: Multiple cancellations are safe
 
 ### State Invariants by State
@@ -186,17 +186,17 @@ See `docs/invariants.md` for the formal single-writer rule (Invariants A.-1, A.7
 - Rebalance Execution is not active (activates after first intent)
 
 **In Initialized**:
-- `Storage` data and `Storage.Range` consistent (Invariant B.11)
-- Cache is contiguous (Invariant A.9a)
-- User Path is read-only (Invariant A.8)
+- `Storage` data and `Storage.Range` consistent (Invariant B.1)
+- Cache is contiguous (Invariant A.12b)
+- User Path is read-only (Invariant A.12)
 - Rebalance Execution is not active
 
 **In Rebalancing**:
-- `Storage` data and `Storage.Range` remain consistent (Invariant B.11)
-- Cache is contiguous (Invariant A.9a)
-- User Path may cause cancellation but NOT mutate (Invariants A.0, A.0a)
-- Rebalance Execution is active and sole writer (Invariant F.36)
-- Rebalance Execution is cancellable (Invariant F.34)
+- `Storage` data and `Storage.Range` remain consistent (Invariant B.1)
+- Cache is contiguous (Invariant A.12b)
+- User Path may cause cancellation but NOT mutate (Invariants A.2, A.2a)
+- Rebalance Execution is active and sole writer (Invariant F.2)
+- Rebalance Execution is cancellable (Invariant F.1)
 - Single-writer architecture: no race conditions possible
 
 ## Worked Examples
@@ -253,7 +253,7 @@ State: Rebalancing (R2 executing, will replace cache at DesiredCacheRange=[450,6
 
 - Cache state consistency: `docs/invariants.md` (Cache state invariants, Section B)
 - Single-writer and atomic rematerialization: `docs/invariants.md` (Execution invariants, Section F)
-- Cancellation protocol: `docs/invariants.md` (Execution invariants F.34, F.34a, F.34b)
+- Cancellation protocol: `docs/invariants.md` (Execution invariants F.1, F.1a, F.1b)
 - Decision authority and validation pipeline: `docs/invariants.md` (Decision Path invariants, Section D)
 
 ## Usage

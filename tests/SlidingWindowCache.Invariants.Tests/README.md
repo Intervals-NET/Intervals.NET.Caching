@@ -22,8 +22,8 @@ Comprehensive unit test suite for the WindowCache library verifying system invar
 ## Recent Test Suite Enhancements
 
 ### Phase 1: High-Priority Gap Tests (2 tests added)
-- **B.15 Enhanced**: Cancellation during I/O operations - validates consistency when rebalance is cancelled during active `FetchAsync` operations
-- **B.16**: Stale result prevention - ensures only the most recent rebalance results are applied to cache, preventing race conditions from slow/obsolete executions
+- **B.5 Enhanced**: Cancellation during I/O operations - validates consistency when rebalance is cancelled during active `FetchAsync` operations
+- **B.6**: Stale result prevention - ensures only the most recent rebalance results are applied to cache, preventing race conditions from slow/obsolete executions
 
 ### Phase 2: Execution Strategy Coverage (4 tests converted to Theory)
 Tests now validate behavior across **both execution strategies**:
@@ -31,19 +31,19 @@ Tests now validate behavior across **both execution strategies**:
 - **Channel-based** (bounded, `rebalanceQueueCapacity: 10`) - Backpressure control
 
 Converted tests:
-- `Invariant_A_0a_UserRequestCancelsRebalance`
-- `Invariant_C17_AtMostOneActiveIntent`
-- `Invariant_F35_G46_RebalanceCancellationBehavior`
+- `Invariant_A_2a_UserRequestCancelsRebalance`
+- `Invariant_C_1_AtMostOneActiveIntent`
+- `Invariant_F_1_G_4_RebalanceCancellationBehavior`
 - `ConcurrencyScenario_RapidRequestsBurstWithCancellation`
 
 ### Phase 3: Medium-Priority Gap Tests (3 tests added)
-- **A.-1**: Concurrent write safety - stress test with 50 concurrent requests verifying single-writer robustness
-- **C.20**: Early exit for obsolete intents - validates Decision Engine discards superseded intents efficiently
-- **E.31**: Desired range independence - confirms desired range computation is deterministic regardless of cache history
+- **A.1**: Concurrent write safety stress test (50 concurrent requests) **[NEW]**
+- **C.4**: Early exit for obsolete intents - validates Decision Engine discards superseded intents efficiently
+- **E.2**: Desired range independence - confirms desired range computation is deterministic regardless of cache history
 
 ### Phase 4: Performance Guarantee Tests (2 tests added)
-- **F.38**: Incremental fetch optimization - verifies only missing data segments are fetched during cache expansion
-- **F.39**: Data preservation during expansion - ensures existing cached data is never refetched, preventing wasteful I/O
+- **F.4**: Incremental fetch optimization - verifies only missing data segments are fetched during cache expansion
+- **F.5**: Data preservation during expansion - ensures existing cached data is never refetched, preventing wasteful I/O
 
 ### Phase 5: Storage Strategy Coverage (3 tests converted to Theory)
 Tests now validate behavior across **both storage strategies**:
@@ -51,13 +51,13 @@ Tests now validate behavior across **both storage strategies**:
 - **CopyOnRead** (`UserCacheReadMode.CopyOnRead`) - Defensive copies, cheaper rematerialization
 
 Converted tests:
-- `Invariant_A3_8_UserPathNeverMutatesCache` (3 scenarios × 2 storage = 6 test cases)
-- `Invariant_F36a_RebalanceNormalizesCache`
-- `Invariant_F40_F41_F42_PostExecutionGuarantees`
+- `Invariant_A_12_UserPathNeverMutatesCache` (3 scenarios × 2 storage = 6 test cases)
+- `Invariant_F_2a_RebalanceNormalizesCache`
+- `Invariant_F_6_F_7_F_8_PostExecutionGuarantees`
 
 ### Test Infrastructure Enhancements
 - **Added**: `CreateTrackingMockDataSource` helper for validating fetch patterns
-- **Added**: `A3_8_TestData` MemberData provider combining scenarios and storage strategies
+- **Added**: `A_12_TestData` MemberData provider combining scenarios and storage strategies
 - **Updated**: `CreateDefaultOptions` to support `rebalanceQueueCapacity` parameter
 
 ### Coverage Summary
@@ -93,7 +93,7 @@ Converted tests:
   - `RebalanceExecutionCancelled` - Rebalance execution cancelled
   - `RebalanceSkippedCurrentNoRebalanceRange` - **Policy-based skip (Stage 1)** - Request within current NoRebalanceRange threshold
   - `RebalanceSkippedPendingNoRebalanceRange` - **Policy-based skip (Stage 2)** - Request within pending NoRebalanceRange threshold
-  - `RebalanceSkippedSameRange` - **Optimization-based skip** (Invariant D.28) - DesiredRange == CurrentRange
+  - `RebalanceSkippedSameRange` - **Optimization-based skip** (Invariant D.4) - DesiredRange == CurrentRange
 
 **Note**: `CacheExpanded` and `CacheReplaced` are incremented during range analysis by the shared `CacheDataExtensionService` 
 (used by both User Path and Rebalance Path) when determining what data needs to be fetched. They track analysis/planning, 
@@ -148,48 +148,48 @@ not actual cache mutations. Actual mutations only occur in Rebalance Execution v
 #### Test Categories:
 
 **A. User Path & Fast User Access (10 tests)**
-- A.0a: User request cancels rebalance [Theory: 2 execution strategies]
-- A.-1: Concurrent write safety stress test (50 concurrent requests) **[NEW]**
-- A.2.1: User path always serves requests
-- A.2.2: User path never waits for rebalance
-- A.2.10: User always receives exact requested range
-- A.3.8: User Path never mutates cache [Theory: 3 scenarios × 2 storage strategies = 6 tests]
-- A.3.9a: Cache contiguity maintained
+- A.2a: User request cancels rebalance [Theory: 2 execution strategies]
+- A.1: Concurrent write safety stress test (50 concurrent requests) **[NEW]**
+- A.3: User path always serves requests
+- A.4: User path never waits for rebalance
+- A.10: User always receives exact requested range
+- A.12: User Path never mutates cache [Theory: 3 scenarios × 2 storage strategies = 6 tests]
+- A.12b: Cache contiguity maintained
 
 **B. Cache State & Consistency (4 tests)**
-- B.11: CacheData and CurrentCacheRange always consistent
-- B.15: Cancelled rebalance doesn't violate consistency
-- B.15 Enhanced: Cancellation during I/O operations **[NEW]**
-- B.16: Only most recent rebalance results are applied (stale result prevention) **[NEW]**
+- B.1: CacheData and CurrentCacheRange always consistent
+- B.5: Cancelled rebalance doesn't violate consistency
+- B.5 Enhanced: Cancellation during I/O operations **[NEW]**
+- B.6: Only most recent rebalance results are applied (stale result prevention) **[NEW]**
 
 **C. Rebalance Intent & Temporal (5 tests)**
-- C.17: At most one active intent [Theory: 2 execution strategies]
-- C.18: Previous intent becomes logically superseded
-- C.20: Decision Engine exits early for obsolete intents **[NEW]**
-- C.24: Intent doesn't guarantee execution
-- C.23: System stabilizes under load
+- C.1: At most one active intent [Theory: 2 execution strategies]
+- C.2: Previous intent becomes logically superseded
+- C.4: Decision Engine exits early for obsolete intents **[NEW]**
+- C.8: Intent doesn't guarantee execution
+- C.7: System stabilizes under load
 
 **D. Rebalance Decision Path (4 tests)**
-- D.27: No rebalance if request in NoRebalanceRange
-- D.27 Stage 1: Skips when within current NoRebalanceRange
-- D.29 Stage 2: Skips when within pending NoRebalanceRange
-- D.28: Rebalance skipped when DesiredRange == CurrentRange
+- D.3: No rebalance if request in NoRebalanceRange
+- D.3 Stage 1: Skips when within current NoRebalanceRange
+- D.5 Stage 2: Skips when within pending NoRebalanceRange
+- D.4: Rebalance skipped when DesiredRange == CurrentRange
 
 **E. Cache Geometry & Policy (3 tests)**
-- E.30: DesiredRange computed from config and request
-- E.31: DesiredRange independent of cache state (determinism test) **[NEW]**
+- E.1: DesiredRange computed from config and request
+- E.2: DesiredRange independent of cache state (determinism test) **[NEW]**
 - ReadMode behavior verification (Snapshot and CopyOnRead)
 
 **F. Rebalance Execution (7 tests)**
-- F.35, F.35a, G.46: Rebalance cancellation behavior [Theory: 2 execution strategies]
-- F.36a: Rebalance normalizes cache [Theory: 2 storage strategies]
-- F.38: Incremental fetch optimization (only missing subranges fetched) **[NEW]**
-- F.39: Data preservation during expansion (no refetching) **[NEW]**
-- F.40-42: Post-execution guarantees [Theory: 2 storage strategies]
+- F.1, F.1a, G.4: Rebalance cancellation behavior [Theory: 2 execution strategies]
+- F.2a: Rebalance normalizes cache [Theory: 2 storage strategies]
+- F.4: Incremental fetch optimization (only missing subranges fetched) **[NEW]**
+- F.5: Data preservation during expansion (no refetching) **[NEW]**
+- F.6-F.8: Post-execution guarantees [Theory: 2 storage strategies]
 
 **G. Execution Context & Scheduling (2 tests)**
-- G.43-45: Execution context separation
-- G.46: User cancellation during fetch
+- G.1-G.3: Execution context separation
+- G.4: User cancellation during fetch
 
 **Additional Comprehensive Tests (2 tests)**
 - Complete scenario with multiple requests and rebalancing
@@ -263,10 +263,10 @@ not actual cache mutations. Actual mutations only occur in Rebalance Execution v
 - Cache state converges asynchronously (eventual consistency)
 
 **Architectural Invariants (enforced by code structure)**:
-- A.-1: User Path and Rebalance Execution never write concurrently (User Path doesn't write)
-- A.8: User Path MUST NOT mutate cache (enforced by removing Rematerialize calls)
-- F.36: Rebalance Execution is ONLY writer (enforced by internal setters)
-- C.24e/f: Intent contains delivered data (enforced by PublishIntent signature)
+- A.1: User Path and Rebalance Execution never write concurrently (User Path doesn't write)
+- A.12: User Path MUST NOT mutate cache (enforced by removing Rematerialize calls)
+- F.2: Rebalance Execution is ONLY writer (enforced by internal setters)
+- C.8e/f: Intent contains delivered data (enforced by PublishIntent signature)
 
 ## Usage
 
@@ -275,7 +275,7 @@ not actual cache mutations. Actual mutations only occur in Rebalance Execution v
 dotnet test tests/SlidingWindowCache.Invariants.Tests/SlidingWindowCache.Invariants.Tests.csproj --configuration Debug
 
 # Run specific test
-dotnet test --filter "FullyQualifiedName~Invariant_D28_SkipWhenDesiredEqualsCurrentRange"
+dotnet test --filter "FullyQualifiedName~Invariant_D_4_SkipWhenDesiredEqualsCurrentRange"
 
 # Run tests by category (example: all Decision Path tests)
 dotnet test --filter "FullyQualifiedName~Invariant_D"
@@ -286,13 +286,13 @@ dotnet test --filter "FullyQualifiedName~Invariant_D"
 ### Skip Condition Distinction
 The system has **two distinct skip scenarios**, tracked by separate counters:
 
-1. **Policy-Based Skip** (Invariants D.27 / D.29)
+1. **Policy-Based Skip** (Invariants D.3 / D.5)
    - Counters: `RebalanceSkippedCurrentNoRebalanceRange` (Stage 1) and `RebalanceSkippedPendingNoRebalanceRange` (Stage 2)
    - Location: `IntentController.ProcessIntentsAsync` (after `DecisionEngine` returns `ShouldSchedule=false`)
    - Reason: Request within NoRebalanceRange threshold zone (current or pending)
    - Characteristic: Execution **never starts** (decision-level optimization)
 
-2. **Optimization-Based Skip** (Invariant D.28)
+2. **Optimization-Based Skip** (Invariant D.4)
    - Counter: `RebalanceSkippedSameRange`
    - Location: `RebalanceExecutor.ExecuteAsync` (before I/O operations)
    - Reason: `CurrentCacheRange == DesiredCacheRange` (already at target)

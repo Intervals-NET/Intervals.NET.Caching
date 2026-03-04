@@ -45,11 +45,11 @@ namespace SlidingWindowCache.Core.Planning;
 /// </para>
 /// <para><strong>Invariant References:</strong></para>
 /// <list type="bullet">
-///   <item><description>E.30: DesiredCacheRange is computed solely from RequestedRange + config</description></item>
-///   <item><description>E.31: DesiredCacheRange is independent of current cache contents</description></item>
-///   <item><description>E.32: DesiredCacheRange defines canonical state for convergence semantics</description></item>
-///   <item><description>E.33: Sliding window geometry is determined solely by configuration</description></item>
-///   <item><description>D.25, D.26: Analytical/pure (CPU-only), never mutates cache state</description></item>
+///   <item><description>E.1: DesiredCacheRange is computed solely from RequestedRange + config</description></item>
+///   <item><description>E.2: DesiredCacheRange is independent of current cache contents</description></item>
+///   <item><description>E.3: DesiredCacheRange defines canonical state for convergence semantics</description></item>
+///   <item><description>E.4: Sliding window geometry is determined solely by configuration</description></item>
+///   <item><description>D.1, D.2: Analytical/pure (CPU-only), never mutates cache state</description></item>
 /// </list>
 /// <para><strong>Related:</strong> <see cref="NoRebalanceSatisfactionPolicy{TRange}"/> (threshold calculation, <b>when</b> to rebalance logic)</para>
 /// <para>See: <see href="../docs/components/decision.md" /> for architectural overview.</para>
@@ -77,7 +77,7 @@ internal sealed class ProportionalRangePlanner<TRange, TDomain>
     ///   This constructor wires the planner to a shared options holder and domain only; it does not perform any computation or validation. The planner is invoked by <c>RebalanceDecisionEngine</c> during Stage 3 (Desired Range Computation) of the decision evaluation pipeline, which executes in the background intent processing loop.
     /// </para>
     /// <para>
-    ///   <b>References:</b> Invariants E.30-E.33, D.25-D.26 (see <c>docs/invariants.md</c>).
+    ///   <b>References:</b> Invariants E.1-E.4, D.1-D.2 (see <c>docs/invariants.md</c>).
     /// </para>
     /// </remarks>
     public ProportionalRangePlanner(RuntimeCacheOptionsHolder optionsHolder, TDomain domain)
@@ -101,7 +101,7 @@ internal sealed class ProportionalRangePlanner<TRange, TDomain>
     ///     <item><description>Is pure/side-effect free: No cache state or I/O interaction</description></item>
     ///     <item><description>Applies only the current options snapshot and domain arithmetic (see <c>LeftCacheSize</c>, <c>RightCacheSize</c> on <see cref="RuntimeCacheOptions"/>)</description></item>
     ///     <item><description>Does <b>not</b> trigger or decide rebalance — strictly analytical</description></item>
-    ///     <item><description>Enforces Invariants: E.30 (function of <c>RequestedRange + config</c>), E.31 (independent of cache state), E.32 (defines canonical convergent target), D.25-D.26 (analytical/CPU-only)</description></item>
+    ///     <item><description>Enforces Invariants: E.1 (function of <c>RequestedRange + config</c>), E.2 (independent of cache state), E.3 (defines canonical convergent target), D.1-D.2 (analytical/CPU-only)</description></item>
     ///   </list>
     /// </para>
     /// <para>

@@ -75,6 +75,6 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 
 ## See Also
 
-- `docs/invariants.md` — formal Decision Path invariant specifications (D.24–D.29)
+- `docs/invariants.md` — formal Decision Path invariant specifications (D.1–D.5)
 - `docs/architecture.md` — Decision-Driven Execution section
 - `docs/components/overview.md` — Invariant Implementation Mapping (Decision subsection)

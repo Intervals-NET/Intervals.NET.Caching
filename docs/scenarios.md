@@ -129,7 +129,7 @@ Scenarios are grouped by path:
 6. Rebalance intent is published; rebalance executes asynchronously
 7. Data is returned to the user — `RangeResult.CacheInteraction == FullMiss`
 
-**Critical**: Partial cache expansion is FORBIDDEN in this case — it would create logical gaps and violate the Cache Contiguity Rule (Invariant A.9a). The cache MUST remain contiguous at all times.
+**Critical**: Partial cache expansion is FORBIDDEN in this case — it would create logical gaps and violate the Cache Contiguity Rule (Invariant A.12b). The cache MUST remain contiguous at all times.
 
 **Consistency note**: `GetDataAndWaitOnMissAsync` will call `WaitForIdleAsync` after this scenario (because `CacheInteraction != FullHit`), waiting for the background rebalance to complete.
 

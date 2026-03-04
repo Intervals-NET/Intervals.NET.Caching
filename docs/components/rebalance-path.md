@@ -36,7 +36,7 @@ These are distinct concerns with separate components:
 | **Nature**       | CPU-only, pure, deterministic    | Debounced, cancellable, may do I/O |
 | **State access** | Read-only                        | Write (sole)                       |
 | **I/O**          | Never                            | Yes (`IDataSource.FetchAsync`)     |
-| **Invariants**   | D.25, D.26, D.27, D.28, D.29     | A.7, B.12, B.13, F.35, F.37–F.39   |
+| **Invariants**   | D.1, D.2, D.3, D.4, D.5         | A.12a, F.2, B.2, B.3, F.1, F.3–F.5 |
 
 The formal 5-stage validation pipeline is specified in `docs/invariants.md` (Section D).
 
@@ -77,21 +77,22 @@ The decision about *whether* to cancel is made by `RebalanceDecisionEngine` (via
 
 | Invariant | Description                                                    |
 |-----------|----------------------------------------------------------------|
-| A.7       | Only `RebalanceExecutor` writes `CacheState`                   |
-| B.12      | Atomic cache updates via `Rematerialize`                       |
-| B.13      | Consistency under cancellation (discard, never partial-apply)  |
-| B.15      | Cache contiguity maintained after every rematerialization      |
-| C.19      | Cooperative cancellation via `CancellationToken`               |
-| C.20      | Cancellation checked after debounce, before execution          |
-| C.21      | At most one active rebalance scheduled at a time               |
-| D.25      | Decision path is purely analytical (no I/O, no state mutation) |
-| D.26      | Decision never mutates cache state                             |
-| D.27      | No rebalance if inside current NoRebalanceRange (Stage 1)      |
-| D.28      | No rebalance if DesiredRange == CurrentRange (Stage 4)         |
-| D.29      | Execution proceeds only if ALL 5 stages pass                   |
-| F.35      | Multiple cancellation checkpoints in execution                 |
-| F.35a     | Cancellation-before-mutation guarantee                         |
-| F.37–F.39 | Correct atomic rematerialization with data preservation        |
+| A.12a     | Only `RebalanceExecutor` writes `CacheState` (exclusive authority) |
+| F.2       | Rebalance Execution is the sole component permitted to mutate cache state |
+| B.2       | Atomic cache updates via `Rematerialize`                       |
+| B.3       | Consistency under cancellation (discard, never partial-apply)  |
+| B.5       | Cancelled rebalance execution cannot violate cache consistency  |
+| C.3       | Cooperative cancellation via `CancellationToken`               |
+| C.4       | Cancellation checked after debounce, before execution          |
+| C.5       | At most one active rebalance scheduled at a time               |
+| D.1       | Decision path is purely analytical (no I/O, no state mutation) |
+| D.2       | Decision never mutates cache state                             |
+| D.3       | No rebalance if inside current NoRebalanceRange (Stage 1)      |
+| D.4       | No rebalance if DesiredRange == CurrentRange (Stage 4)         |
+| D.5       | Execution proceeds only if ALL 5 stages pass                   |
+| F.1       | Multiple cancellation checkpoints in execution                 |
+| F.1a      | Cancellation-before-mutation guarantee                         |
+| F.3–F.5   | Correct atomic rematerialization with data preservation        |
 
 See `docs/invariants.md` (Sections B, C, D, F) for full specification.
 
