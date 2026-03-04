@@ -1,6 +1,6 @@
-﻿# Sliding Window Cache - Storage Strategies Guide
+# Sliding Window Cache - Storage Strategies Guide
 
-> **📖 For component implementation details, see:**
+> **?? For component implementation details, see:**
 > - `docs/components/infrastructure.md` - Storage components in context
 
 ## Overview
@@ -35,12 +35,12 @@ This guide explains when to use each strategy and their trade-offs.
 ### Design
 
 ```
-┌─────────────────────────────────┐
-│   SnapshotReadStorage           │
-├─────────────────────────────────┤
-│  _storage: TData[]              │  ← Single array
-│  Range: Range<TRange>           │
-└─────────────────────────────────┘
+┌──────────────────────────────────┐
+│   SnapshotReadStorage            │
+├──────────────────────────────────┤
+│  _storage: TData[]               │  < Single array
+│  Range: Range<TRange>            │
+└──────────────────────────────────┘
 ```
 
 ### Behavior
@@ -60,10 +60,10 @@ return new ReadOnlyMemory<TData>(_storage, offset, length);  // Zero allocation
 
 ### Characteristics
 
-- ✅ **Zero-allocation reads**: Returns `ReadOnlyMemory` slice over internal array
-- ✅ **Simple and predictable**: Single buffer, no complexity
-- ❌ **Expensive rematerialization**: Always allocates new array (even if size unchanged)
-- ❌ **LOH pressure**: Arrays ≥85KB go to Large Object Heap (no compaction)
+- ? **Zero-allocation reads**: Returns `ReadOnlyMemory` slice over internal array
+- ? **Simple and predictable**: Single buffer, no complexity
+- ? **Expensive rematerialization**: Always allocates new array (even if size unchanged)
+- ? **LOH pressure**: Arrays ?85KB go to Large Object Heap (no compaction)
 
 ### When to Use
 
@@ -79,7 +79,7 @@ return new ReadOnlyMemory<TData>(_storage, offset, length);  // Zero allocation
 var options = new WindowCacheOptions(
     leftCacheSize: 0.5,
     rightCacheSize: 0.5,
-    readMode: UserCacheReadMode.Snapshot  // ← Zero-allocation reads
+    readMode: UserCacheReadMode.Snapshot  // < Zero-allocation reads
 );
 
 var cache = new WindowCache<int, GridRow, IntegerFixedStepDomain>(
@@ -89,7 +89,7 @@ var cache = new WindowCache<int, GridRow, IntegerFixedStepDomain>(
 for (int i = 0; i < 100; i++)
 {
     var data = await cache.GetDataAsync(Range.Closed(i, i + 20), ct);
-    // ← Zero allocation on each read
+    // < Zero allocation on each read
 }
 ```
 
@@ -100,34 +100,34 @@ for (int i = 0; i < 100; i++)
 ### Design
 
 ```
-┌─────────────────────────────────┐
-│   CopyOnReadStorage             │
-├─────────────────────────────────┤
-│  _activeStorage: List<TData>    │  ← Active (immutable during reads)
-│  _stagingBuffer: List<TData>    │  ← Staging (write-only during rematerialize)
-│  Range: Range<TRange>           │
-└─────────────────────────────────┘
+┌──────────────────────────────────┐
+│   CopyOnReadStorage              │
+├──────────────────────────────────┤
+│  _activeStorage: List<TData>     │  < Active (immutable during reads)
+│  _stagingBuffer: List<TData>     │  < Staging (write-only during rematerialize)
+│  Range: Range<TRange>            │
+└──────────────────────────────────┘
 
 Rematerialize Flow:
-┌──────────────┐     ┌──────────────┐
-│ Active       │     │ Staging      │
-│ [old data]   │     │ [empty]      │
-└──────────────┘     └──────────────┘
-                             ↓ Clear() preserves capacity
-                     ┌──────────────┐
-                     │ Staging      │
-                     │ []           │
-                     └──────────────┘
-                             ↓ AddRange(newData)
-                     ┌──────────────┐
-                     │ Staging      │
-                     │ [new data]   │
-                     └──────────────┘
-                             ↓ Swap references
-┌──────────────┐     ┌──────────────┐
-│ Active       │ ←── │ Staging      │
-│ [new data]   │     │ [old data]   │
-└──────────────┘     └──────────────┘
+┌───────────────┐     ┌───────────────┐
+│ Active        │     │ Staging       │
+│ [old data]    │     │ [empty]       │
+└───────────────┘     └───────────────┘
+                               v Clear() preserves capacity
+                      ┌───────────────┐
+                      │ Staging       │
+                      │ []            │
+                      └───────────────┘
+                               v AddRange(newData)
+                      ┌───────────────┐
+                      │ Staging       │
+                      │ [new data]    │
+                      └───────────────┘
+                               v Swap references
+┌───────────────┐     ┌───────────────┐
+│ Active        │ <-- │ Staging       │
+│ [new data]    │     │ [old data]    │
+└───────────────┘     └───────────────┘
 ```
 
 ### Staging Buffer Pattern
@@ -176,14 +176,14 @@ lock (_lock)
 
 ### Characteristics
 
-- ✅ **Cheap rematerialization**: Reuses capacity, no allocation if size ≤ capacity
-- ✅ **No LOH pressure**: List growth strategy avoids large single allocations
-- ✅ **Correct enumeration**: Staging buffer prevents corruption during LINQ-derived expansion
-- ✅ **Amortized performance**: Cost decreases over time as capacity stabilizes
-- ✅ **Safe concurrent access**: `Read()`, `Rematerialize()`, and `ToRangeData()` share a lock; mid-swap observation is impossible
-- ❌ **Expensive reads**: Each read acquires a lock, allocates, and copies
-- ❌ **Higher memory**: Two buffers instead of one
-- ⚠️ **Lock contention**: Reader briefly blocks if rematerialization is in progress (bounded to a single `Rematerialize()` call duration)
+- ? **Cheap rematerialization**: Reuses capacity, no allocation if size ? capacity
+- ? **No LOH pressure**: List growth strategy avoids large single allocations
+- ? **Correct enumeration**: Staging buffer prevents corruption during LINQ-derived expansion
+- ? **Amortized performance**: Cost decreases over time as capacity stabilizes
+- ? **Safe concurrent access**: `Read()`, `Rematerialize()`, and `ToRangeData()` share a lock; mid-swap observation is impossible
+- ? **Expensive reads**: Each read acquires a lock, allocates, and copies
+- ? **Higher memory**: Two buffers instead of one
+- ?? **Lock contention**: Reader briefly blocks if rematerialization is in progress (bounded to a single `Rematerialize()` call duration)
 
 ### Memory Behavior
 
@@ -204,18 +204,18 @@ lock (_lock)
 The library provides built-in support for layered cache composition via `LayeredWindowCacheBuilder` and `WindowCacheDataSourceAdapter`.
 
 ```csharp
-// Two-layer cache: L2 (CopyOnRead, large) → L1 (Snapshot, small)
+// Two-layer cache: L2 (CopyOnRead, large) > L1 (Snapshot, small)
 await using var cache = WindowCacheBuilder.Layered(slowDataSource, domain)
     .AddLayer(new WindowCacheOptions(    // L2: deep background cache
         leftCacheSize: 10.0,
         rightCacheSize: 10.0,
         leftThreshold: 0.3,
         rightThreshold: 0.3,
-        readMode: UserCacheReadMode.CopyOnRead))  // ← cheap rematerialization
+        readMode: UserCacheReadMode.CopyOnRead))  // < cheap rematerialization
     .AddLayer(new WindowCacheOptions(    // L1: user-facing cache
         leftCacheSize: 0.5,
         rightCacheSize: 0.5,
-        readMode: UserCacheReadMode.Snapshot))    // ← zero-allocation reads
+        readMode: UserCacheReadMode.Snapshot))    // < zero-allocation reads
     .Build();
 
 // User scrolls:
@@ -254,18 +254,18 @@ var userCache = new WindowCache<int, byte[], IntegerFixedStepDomain>(
 
 ### Choose **Snapshot** if:
 
-1. ✅ You expect **many reads per rematerialization** (>10:1 ratio)
-2. ✅ Cache size is **predictable and modest** (<85KB)
-3. ✅ Read latency is **critical** (user-facing UI)
-4. ✅ Memory allocation during rematerialization is **acceptable**
+1. ? You expect **many reads per rematerialization** (>10:1 ratio)
+2. ? Cache size is **predictable and modest** (<85KB)
+3. ? Read latency is **critical** (user-facing UI)
+4. ? Memory allocation during rematerialization is **acceptable**
 
 ### Choose **CopyOnRead** if:
 
-1. ✅ You expect **frequent rematerialization** (random access, non-sequential)
-2. ✅ Cache size is **large** (>100KB)
-3. ✅ Read latency is **less critical** (background layer)
-4. ✅ You want to **amortize allocation cost** over time
-5. ✅ You're building a **multi-level cache composition**
+1. ? You expect **frequent rematerialization** (random access, non-sequential)
+2. ? Cache size is **large** (>100KB)
+3. ? Read latency is **less critical** (background layer)
+4. ? You want to **amortize allocation cost** over time
+5. ? You're building a **multi-level cache composition**
 
 ### Default Recommendation
 
@@ -282,7 +282,7 @@ var userCache = new WindowCache<int, byte[], IntegerFixedStepDomain>(
 | Operation     | Time | Allocation    |
 |---------------|------|---------------|
 | Read          | O(1) | 0 bytes       |
-| Rematerialize | O(n) | n × sizeof(T) |
+| Rematerialize | O(n) | n ? sizeof(T) |
 | ToRangeData   | O(1) | 0 bytes*      |
 
 *Returns lazy enumerable
@@ -291,10 +291,10 @@ var userCache = new WindowCache<int, byte[], IntegerFixedStepDomain>(
 
 | Operation            | Time | Allocation    | Notes                                  |
 |----------------------|------|---------------|----------------------------------------|
-| Read                 | O(n) | n × sizeof(T) | Lock acquired + copy                   |
-| Rematerialize (cold) | O(n) | n × sizeof(T) | Enumerate outside lock                 |
+| Read                 | O(n) | n ? sizeof(T) | Lock acquired + copy                   |
+| Rematerialize (cold) | O(n) | n ? sizeof(T) | Enumerate outside lock                 |
 | Rematerialize (warm) | O(n) | 0 bytes**     | Enumerate outside lock                 |
-| ToRangeData          | O(n) | n × sizeof(T) | Lock acquired + array snapshot copy    |
+| ToRangeData          | O(n) | n ? sizeof(T) | Lock acquired + array snapshot copy    |
 
 **When capacity is sufficient
 
@@ -325,7 +325,7 @@ Real-world measurements from `RebalanceFlowBenchmarks` demonstrate the allocatio
 
 These results validate the design philosophy: CopyOnRead trades per-read allocation cost for dramatically reduced rematerialization overhead.
 
-For complete benchmark details, see [Benchmark Suite README](../benchmarks/SlidingWindowCache.Benchmarks/README.md).
+For complete benchmark details, see [Benchmark Suite README](../benchmarks/Intervals.NET.Caching.Benchmarks/README.md).
 
 ---
 
@@ -339,7 +339,7 @@ Consider cache expansion during user request:
 // Current cache: [100, 110]
 var currentData = cache.ToRangeData();
 // CopyOnReadStorage: acquires _lock, copies _activeStorage to a new array, returns immutable snapshot.
-// The returned RangeData.Data is decoupled from the live buffers — no lazy reference.
+// The returned RangeData.Data is decoupled from the live buffers � no lazy reference.
 
 // User requests: [105, 115]
 var extendedData = await ExtendCacheAsync(currentData, [105, 115]);
@@ -354,7 +354,7 @@ cache.Rematerialize(extendedData);
 > **Why the snapshot copy matters:** Without `.ToArray()`, `ToRangeData()` would return a lazy
 > `IEnumerable` over the live `_activeStorage` list. That reference is published as an `Intent`
 > and consumed asynchronously on the rebalance thread. A second `Rematerialize()` call would swap
-> the list to `_stagingBuffer` and clear it before the Intent is consumed — silently emptying the
+> the list to `_stagingBuffer` and clear it before the Intent is consumed � silently emptying the
 > enumerable mid-enumeration (or causing `InvalidOperationException`). The snapshot copy eliminates
 > this race entirely.
 
@@ -364,7 +364,7 @@ cache.Rematerialize(extendedData);
 2. **Staging buffer is write-only during rematerialization**: Cleared and filled outside the lock, then swapped under lock
 3. **Swap is lock-protected**: `Read()`, `ToRangeData()`, and `Rematerialize()` share `_lock`; all callers always observe a consistent `(_activeStorage, Range)` pair
 4. **Buffers never shrink**: Capacity grows monotonically, amortizing allocation cost
-5. **`ToRangeData()` snapshots are immutable**: `ToRangeData()` copies `_activeStorage` to a new array under the lock, ensuring the returned `RangeData` is decoupled from buffer reuse — a subsequent `Rematerialize()` cannot corrupt or empty data still referenced by an outstanding enumerable
+5. **`ToRangeData()` snapshots are immutable**: `ToRangeData()` copies `_activeStorage` to a new array under the lock, ensuring the returned `RangeData` is decoupled from buffer reuse � a subsequent `Rematerialize()` cannot corrupt or empty data still referenced by an outstanding enumerable
 
 ### Memory Growth Example
 
@@ -374,16 +374,16 @@ _activeStorage: capacity=0, count=0
 _stagingBuffer: capacity=0, count=0
 
 After Rematerialize([100 items]):
-_activeStorage: capacity=128, count=100  ← List grew to 128
+_activeStorage: capacity=128, count=100  < List grew to 128
 _stagingBuffer: capacity=0, count=0
 
 After Rematerialize([150 items]):
-_activeStorage: capacity=256, count=150  ← Reused capacity=128, grew to 256
-_stagingBuffer: capacity=128, count=100  ← Swapped, now has old capacity
+_activeStorage: capacity=256, count=150  < Reused capacity=128, grew to 256
+_stagingBuffer: capacity=128, count=100  < Swapped, now has old capacity
 
 After Rematerialize([120 items]):
-_activeStorage: capacity=128, count=120  ← Reused capacity=128, no allocation!
-_stagingBuffer: capacity=256, count=150  ← Swapped
+_activeStorage: capacity=128, count=120  < Reused capacity=128, no allocation!
+_stagingBuffer: capacity=256, count=150  < Swapped
 
 Steady state reached: Both buffers have sufficient capacity, no more allocations
 ```
@@ -415,7 +415,7 @@ The staging buffer pattern directly supports key system invariants:
 - `CopyOnReadStorage` is **conditionally compliant**: `Read()` and `ToRangeData()` acquire `_lock`,
   which is also held by `Rematerialize()` for the duration of the buffer swap and Range update (a fast,
   bounded operation).
-- Contention is limited to the swap itself — not the full rebalance cycle (fetch + decision + execution).
+- Contention is limited to the swap itself � not the full rebalance cycle (fetch + decision + execution).
   The enumeration into the staging buffer happens **before** the lock is acquired, so the lock hold time
   is just the cost of two field writes and a property assignment.
 - `SnapshotReadStorage` remains fully lock-free if strict A.4 compliance is required.
