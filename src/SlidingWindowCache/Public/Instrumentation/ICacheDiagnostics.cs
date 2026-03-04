@@ -206,7 +206,7 @@ public interface ICacheDiagnostics
     /// Called when RebalanceExecutor detects that delivered data range already matches desired range, avoiding redundant I/O.
     /// Indicates same-range optimization preventing unnecessary fetch operations (Decision Scenario D2).
     /// Location: RebalanceExecutor.ExecuteAsync (before expensive I/O operations)
-    /// Related: Invariant D.4 (No rebalance if DesiredCacheRange == CurrentCacheRange), Invariant D.5 (Same-range optimization tracking)
+    /// Related: Invariant D.4 (No rebalance if DesiredCacheRange == CurrentCacheRange), Invariant C.8c (RebalanceSkippedSameRange counter semantics)
     /// </summary>
     void RebalanceSkippedSameRange();
 

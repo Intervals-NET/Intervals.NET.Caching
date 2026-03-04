@@ -196,7 +196,7 @@ without polling or timing dependencies.
   `ToRangeData()`, shared with `Rematerialize()`. The lock is held only for the buffer swap and `Range`
   update (in `Rematerialize()`), or for the duration of the array copy (in `Read()` and `ToRangeData()`).
   All contention is sub-millisecond and bounded. `SnapshotReadStorage` remains
-  fully lock-free. See [Storage Strategies Guide](storage-strategies.md#invariant-a2---user-path-never-waits-for-rebalance-conditional-compliance) for details.
+  fully lock-free. See [Storage Strategies Guide](storage-strategies.md#invariant-a4---user-path-never-waits-for-rebalance-conditional-compliance) for details.
 
 **A.5** 🔵 **[Architectural]** The User Path is the **sole source of rebalance intent**.
 

@@ -575,7 +575,7 @@ Assert.Equal(1, diagnostics.RebalanceExecutionFailed);
 **Tracks:** Rebalance skipped — last requested position is within the current `NoRebalanceRange`  
 **Location:** `RebalanceDecisionEngine.Evaluate` (Stage 1 early exit)  
 **Scenarios:** Decision Scenario D1 (inside current no-rebalance threshold)  
-**Invariants:** D.3 (No rebalance if inside NoRebalanceRange), D.4 (Policy-based skip)
+**Invariants:** D.3 (No rebalance if inside NoRebalanceRange), C.8b (RebalanceSkippedNoRebalanceRange counter semantics)
 
 **Example Usage:**
 ```csharp
@@ -621,7 +621,7 @@ Assert.True(diagnostics.RebalanceSkippedPendingNoRebalanceRange >= 1);
 **Tracks:** Rebalance skipped because desired cache range equals current cache range  
 **Location:** `RebalanceDecisionEngine.Evaluate` (Stage 4 early exit)  
 **Scenarios:** Decision Scenario D3 (DesiredCacheRange == CurrentCacheRange)  
-**Invariants:** D.4 (No rebalance if same range), D.5 (Same-range optimization)
+**Invariants:** D.4 (No rebalance if same range), C.8c (RebalanceSkippedSameRange counter semantics)
 
 **Example Usage:**
 ```csharp

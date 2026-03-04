@@ -100,8 +100,8 @@ In both cases, `OperationCanceledException` is reported via `ICacheDiagnostics.R
 
 | Invariant | Description                                                                                            |
 |-----------|--------------------------------------------------------------------------------------------------------|
-| A.11      | Only `RebalanceExecutor` writes to `CacheState` (single-writer)                                        |
-| A.12      | User path never blocks waiting for rebalance                                                           |
+| A.12a/F.2 | Only `RebalanceExecutor` writes to `CacheState` (single-writer)                                        |
+| A.4       | User path never blocks waiting for rebalance                                                           |
 | B.2       | Cache updates are atomic (all-or-nothing via `Rematerialize`)                                          |
 | B.3       | Consistency under cancellation: mutations discarded if cancelled                                       |
 | B.5       | Cache contiguity maintained after every `Rematerialize`                                                |
