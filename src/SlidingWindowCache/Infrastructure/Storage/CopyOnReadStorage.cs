@@ -41,7 +41,7 @@ namespace SlidingWindowCache.Infrastructure.Storage;
 /// <para>
 /// This ensures that active storage is never observed mid-swap by a concurrent <c>Read()</c> or
 /// <c>ToRangeData()</c> call, preventing data races when range data is derived from the same storage
-/// (e.g., during cache expansion per Invariant A.3.8).
+/// (e.g., during cache expansion per Invariant A.12).
 /// </para>
 /// <para><strong>Synchronization:</strong></para>
 /// <para>
@@ -67,7 +67,7 @@ namespace SlidingWindowCache.Infrastructure.Storage;
 /// </description></item>
 /// </list>
 /// <para>
-/// See Invariant A.2 for the conditional compliance note regarding this lock.
+    /// See Invariant A.4 for the conditional compliance note regarding this lock.
 /// </para>
 /// <para><strong>Memory Behavior:</strong></para>
 /// <list type="bullet">
@@ -129,7 +129,7 @@ internal sealed class CopyOnReadStorage<TRange, TData, TDomain> : ICacheStorage<
     /// <remarks>
     /// <para><strong>Staging Buffer Rematerialization:</strong></para>
     /// <para>
-    /// This method implements a dual-buffer pattern to satisfy Invariants A.3.8, B.11-12:
+    /// This method implements a dual-buffer pattern to satisfy Invariants A.12, B.1-2:
     /// </para>
     /// <list type="number">
     /// <item><description>Acquire <c>_lock</c> (shared with <c>Read()</c> and <c>ToRangeData()</c>)</description></item>
@@ -142,7 +142,7 @@ internal sealed class CopyOnReadStorage<TRange, TData, TDomain> : ICacheStorage<
     /// <strong>Why this pattern?</strong> When <paramref name="rangeData"/> contains data derived from
     /// the same storage (e.g., during cache expansion via LINQ operations like Concat/Union), direct
     /// mutation of active storage would corrupt the enumeration. The staging buffer ensures active
-    /// storage remains unchanged during enumeration, satisfying Invariant A.3.9a (cache contiguity).
+    /// storage remains unchanged during enumeration, satisfying Invariant A.12b (cache contiguity).
     /// </para>
     /// <para>
     /// <strong>Why the lock?</strong> The buffer swap consists of two separate field writes, which are

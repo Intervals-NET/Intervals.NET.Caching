@@ -7,7 +7,7 @@ namespace SlidingWindowCache.Unit.Tests.Infrastructure.Storage;
 
 /// <summary>
 /// Unit tests for SnapshotReadStorage that verify the ICacheStorage interface contract,
-/// data correctness (Invariant B.11), and error handling.
+/// data correctness (Invariant B.1), and error handling.
 /// Shared tests are inherited from <see cref="CacheStorageTestsBase"/>.
 /// </summary>
 public class SnapshotReadStorageTests : CacheStorageTestsBase

@@ -402,7 +402,7 @@ Canonical guide: `docs/diagnostics.md`.
 
 By default, `GetDataAsync` is **eventually consistent**: data is returned immediately while the cache window converges asynchronously in the background. Two opt-in extension methods provide stronger consistency guarantees. Both require a `using SlidingWindowCache.Public;` import.
 
-> **Serialized access requirement:** The hybrid and strong consistency modes provide their warm-cache guarantee only when requests are made one at a time (serialized). Under concurrent/parallel callers they remain safe (no crashes or hangs) but the guarantee degrades — due to `AsyncActivityCounter`'s "was idle at some point" semantics (Invariant H.49) and a brief gap between the counter increment and TCS publication in `IncrementActivity`, a concurrent waiter may observe a previously completed idle TCS and return without waiting for the new rebalance.
+> **Serialized access requirement:** The hybrid and strong consistency modes provide their warm-cache guarantee only when requests are made one at a time (serialized). Under concurrent/parallel callers they remain safe (no crashes or hangs) but the guarantee degrades — due to `AsyncActivityCounter`'s "was idle at some point" semantics (Invariant H.3) and a brief gap between the counter increment and TCS publication in `IncrementActivity`, a concurrent waiter may observe a previously completed idle TCS and return without waiting for the new rebalance.
 
 ### Eventual Consistency (Default)
 

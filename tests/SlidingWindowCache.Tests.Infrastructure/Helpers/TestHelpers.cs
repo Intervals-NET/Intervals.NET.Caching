@@ -437,7 +437,7 @@ public static class TestHelpers
     }
 
     /// <summary>
-    /// Asserts that rebalance was skipped because DesiredCacheRange equals CurrentCacheRange (Stage 3 / D.28).
+    /// Asserts that rebalance was skipped because DesiredCacheRange equals CurrentCacheRange (Stage 3 / D.4).
     /// </summary>
     /// <param name="cacheDiagnostics">The diagnostics instance to check.</param>
     /// <param name="minExpected">Minimum number of same-range skips expected (default: 1).</param>

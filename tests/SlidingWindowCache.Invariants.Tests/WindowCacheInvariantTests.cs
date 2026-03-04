@@ -11,7 +11,7 @@ using SlidingWindowCache.Public.Instrumentation;
 namespace SlidingWindowCache.Invariants.Tests;
 
 /// <summary>
-/// Comprehensive test suite verifying all 47 system invariants for WindowCache.
+/// Comprehensive test suite verifying all 56 system invariants for WindowCache.
 /// Each test references its corresponding invariant number and description.
 /// Tests use DEBUG instrumentation counters to verify behavioral properties.
 /// Uses Intervals.NET for proper range handling and inclusivity considerations.
@@ -79,9 +79,9 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         };
 
     /// <summary>
-    /// Provides test data combining scenarios and storage strategies for A3_8 test.
+    /// Provides test data combining scenarios and storage strategies for A_12 test.
     /// </summary>
-    public static IEnumerable<object[]> A3_8_TestData
+    public static IEnumerable<object[]> A_12_TestData
     {
         get
         {
@@ -116,20 +116,19 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
 
     #region A. User Path & Fast User Access Invariants
 
-    #region A.1 Concurrency & Priority
-
+    #region A.2 Concurrency & Priority
     /// <summary>
-    /// Tests Invariant A.0a (🟢 Behavioral): User Request MAY cancel ongoing or pending Rebalance Execution
+    /// Tests Invariant A.2a (🟢 Behavioral): User Request MAY cancel ongoing or pending Rebalance Execution
     /// ONLY when a new rebalance is validated as necessary by the multi-stage decision pipeline.
     /// Verifies cancellation is validation-driven coordination, not automatic request-driven behavior.
-    /// Related: A.0 (Architectural - User Path has higher priority than Rebalance Execution)
+    /// Related: A.2 (Architectural - User Path has higher priority than Rebalance Execution)
     /// Parameterized by execution strategy to verify behavior across both task-based and channel-based controllers.
     /// </summary>
     /// <param name="executionStrategy">Human-readable name of execution strategy for test output</param>
     /// <param name="queueCapacity">Queue capacity: null = task-based (unbounded), >= 1 = channel-based (bounded)</param>
     [Theory]
     [MemberData(nameof(ExecutionStrategyTestData))]
-    public async Task Invariant_A_0a_UserRequestCancelsRebalance(string executionStrategy, int? queueCapacity)
+    public async Task Invariant_A_2a_UserRequestCancelsRebalance(string executionStrategy, int? queueCapacity)
     {
         // ARRANGE
         var options = TestHelpers.CreateDefaultOptions(
@@ -164,14 +163,14 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Tests Invariant A.-1 (🔵 Architectural): Concurrent write safety under extreme load.
+    /// Tests Invariant A.1 (🔵 Architectural): Concurrent write safety under extreme load.
     /// Single-writer architecture ensures only Rebalance Execution mutates cache state, but this
     /// stress test verifies robustness under high concurrency with many threads making rapid requests.
     /// Validates that all requests are served correctly without data corruption or race conditions.
     /// Gap identified: No existing stress test validates concurrent safety at scale.
     /// </summary>
     [Fact]
-    public async Task Invariant_A_Minus1_ConcurrentWriteSafety()
+    public async Task Invariant_A_1_ConcurrentWriteSafety()
     {
         // ARRANGE: Create cache with moderate debounce to allow overlapping operations
         var options = TestHelpers.CreateDefaultOptions(
@@ -220,14 +219,14 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
 
     #endregion
 
-    #region A.2 User-Facing Guarantees
+    #region A.3 User-Facing Guarantees
 
     /// <summary>
-    /// Tests Invariant A.1 (🟢 Behavioral): User Path always serves user requests regardless
+    /// Tests Invariant A.3 (🟢 Behavioral): User Path always serves user requests regardless
     /// of rebalance execution state. Validates core guarantee that users are never blocked by cache maintenance.
     /// </summary>
     [Fact]
-    public async Task Invariant_A2_1_UserPathAlwaysServesRequests()
+    public async Task Invariant_A_3_UserPathAlwaysServesRequests()
     {
         // ARRANGE
         var (cache, _) = TrackCache(TestHelpers.CreateCacheWithDefaults(_domain, _cacheDiagnostics));
@@ -245,11 +244,11 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Tests Invariant A.2 (🟢 Behavioral): User Path never waits for rebalance execution to complete.
+    /// Tests Invariant A.4 (🟢 Behavioral): User Path never waits for rebalance execution to complete.
     /// Verifies requests complete quickly without waiting for debounce delay or background rebalance.
     /// </summary>
     [Fact]
-    public async Task Invariant_A2_2_UserPathNeverWaitsForRebalance()
+    public async Task Invariant_A_4_UserPathNeverWaitsForRebalance()
     {
         // ARRANGE: Cache with slow rebalance (1s debounce)
         var options = TestHelpers.CreateDefaultOptions(debounceDelay: TimeSpan.FromSeconds(1));
@@ -275,7 +274,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     /// This is a fundamental correctness guarantee.
     /// </summary>
     [Fact]
-    public async Task Invariant_A2_10_UserAlwaysReceivesExactRequestedRange()
+    public async Task Invariant_A_10_UserAlwaysReceivesExactRequestedRange()
     {
         // ARRANGE
         var (cache, _) = TrackCache(TestHelpers.CreateCacheWithDefaults(_domain, _cacheDiagnostics));
@@ -301,7 +300,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     #region A.3 Cache Mutation Rules (User Path)
 
     /// <summary>
-    /// Tests Invariant A.8 (🟢 Behavioral): User Path MUST NOT mutate cache under any circumstance.
+    /// Tests Invariant A.12 (🟢 Behavioral): User Path MUST NOT mutate cache under any circumstance.
     /// Cache mutations (population, expansion, replacement) are performed exclusively by Rebalance Execution (single-writer).
     /// Parameterized by storage strategy to verify behavior across both Snapshot and CopyOnRead modes.
     /// </summary>
@@ -314,8 +313,8 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     /// Cache mutations occur asynchronously via Rebalance Execution.
     /// </remarks>
     [Theory]
-    [MemberData(nameof(A3_8_TestData))]
-    public async Task Invariant_A3_8_UserPathNeverMutatesCache(
+    [MemberData(nameof(A_12_TestData))]
+    public async Task Invariant_A_12_UserPathNeverMutatesCache(
         string scenario, int reqStart, int reqEnd, int priorStart, int priorEnd, bool hasPriorRequest,
         string storageName, UserCacheReadMode readMode)
     {
@@ -352,12 +351,12 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Tests Invariant A.9a (🟢 Behavioral): Cache always represents a single contiguous range, never fragmented.
+    /// Tests Invariant A.12b (🟢 Behavioral): Cache always represents a single contiguous range, never fragmented.
     /// When non-intersecting requests arrive, cache replaces its contents entirely rather than maintaining
     /// multiple disjoint ranges, ensuring efficient memory usage and predictable behavior.
     /// </summary>
     [Fact]
-    public async Task Invariant_A3_9a_CacheContiguityMaintained()
+    public async Task Invariant_A_12b_CacheContiguityMaintained()
     {
         // ARRANGE
         var (cache, _) = TrackCache(TestHelpers.CreateCacheWithDefaults(_domain, _cacheDiagnostics));
@@ -380,11 +379,11 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     #region B. Cache State & Consistency Invariants
 
     /// <summary>
-    /// Tests Invariant B.11 (🟢 Behavioral): CacheData and CurrentCacheRange are always consistent.
+    /// Tests Invariant B.1 (🟢 Behavioral): CacheData and CurrentCacheRange are always consistent.
     /// At all observable points, cache's data content matches its declared range. Fundamental correctness invariant.
     /// </summary>
     [Fact]
-    public async Task Invariant_B11_CacheDataAndRangeAlwaysConsistent()
+    public async Task Invariant_B_1_CacheDataAndRangeAlwaysConsistent()
     {
         // ARRANGE
         var (cache, _) = TrackCache(TestHelpers.CreateCacheWithDefaults(_domain, _cacheDiagnostics));
@@ -407,12 +406,12 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Tests Invariant B.15 (🟢 Behavioral): Partially executed or cancelled Rebalance Execution
+    /// Tests Invariant B.5 (🟢 Behavioral): Partially executed or cancelled Rebalance Execution
     /// MUST NOT leave cache in inconsistent state. Verifies aggressive cancellation for user responsiveness
-    /// doesn't compromise correctness. Also validates F.35b (same guarantee from execution perspective).
+    /// doesn't compromise correctness. Also validates F.1b (same guarantee from execution perspective).
     /// </summary>
     [Fact]
-    public async Task Invariant_B15_CancelledRebalanceDoesNotViolateConsistency()
+    public async Task Invariant_B_5_CancelledRebalanceDoesNotViolateConsistency()
     {
         // ARRANGE
         var options = TestHelpers.CreateDefaultOptions(debounceDelay: TimeSpan.FromMilliseconds(100));
@@ -431,14 +430,14 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Tests Invariant B.15 Enhanced (🟢 Behavioral): Cancellation during I/O operations (during FetchAsync)
+    /// Tests Invariant B.5 Enhanced (🟢 Behavioral): Cancellation during I/O operations (during FetchAsync)
     /// MUST NOT leave cache in inconsistent state. This test verifies that when rebalance execution is cancelled
     /// while actively fetching data from the data source (not just during debounce), the cache remains consistent.
-    /// Gap identified: Original B.15 test only covers cancellation between requests (during debounce delay).
+    /// Gap identified: Original B.5 test only covers cancellation between requests (during debounce delay).
     /// This test covers cancellation during actual I/O operations when FetchAsync is in progress.
     /// </summary>
     [Fact]
-    public async Task Invariant_B15_Enhanced_CancellationDuringIO()
+    public async Task Invariant_B_5_Enhanced_CancellationDuringIO()
     {
         // ARRANGE: Cache with slow data source to allow cancellation during fetch
         var options = TestHelpers.CreateDefaultOptions(
@@ -476,14 +475,14 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Tests Invariant B.16 (🔵 Architectural): Only most recent RebalanceResult is applied to cache.
+    /// Tests Invariant B.6 (🔵 Architectural): Only most recent RebalanceResult is applied to cache.
     /// Verifies stale result prevention - if execution completes for an obsolete intent, results are discarded.
     /// This architectural guarantee prevents race conditions where slow rebalances from old intents
     /// could overwrite cache with stale data. Gap identified: No existing test validates result application
     /// guards against applying stale rebalance results.
     /// </summary>
     [Fact]
-    public async Task Invariant_B16_OnlyLatestResultsApplied()
+    public async Task Invariant_B_6_OnlyLatestResultsApplied()
     {
         // ARRANGE: Cache with longer debounce to control timing
         var options = TestHelpers.CreateDefaultOptions(
@@ -527,7 +526,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     #region C. Rebalance Intent & Temporal Invariants
 
     /// <summary>
-    /// Tests Invariant C.17 (🔵 Architectural): At most one rebalance intent may be active at any time.
+    /// Tests Invariant C.1 (🔵 Architectural): At most one rebalance intent may be active at any time.
     /// This is an architectural constraint enforced by single-writer design. Test verifies system stability
     /// and lifecycle integrity under rapid concurrent requests, not deterministic cancellation counts.
     /// Parameterized by execution strategy to verify behavior across both task-based and channel-based controllers.
@@ -536,7 +535,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     /// <param name="queueCapacity">Queue capacity: null = task-based (unbounded), >= 1 = channel-based (bounded)</param>
     [Theory]
     [MemberData(nameof(ExecutionStrategyTestData))]
-    public async Task Invariant_C17_AtMostOneActiveIntent(string executionStrategy, int? queueCapacity)
+    public async Task Invariant_C_1_AtMostOneActiveIntent(string executionStrategy, int? queueCapacity)
     {
         // ARRANGE
         var options = TestHelpers.CreateDefaultOptions(
@@ -564,12 +563,12 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Tests Invariant C.18 (🟡 Conceptual): Previously created intents may become logically superseded.
+    /// Tests Invariant C.2 (🟡 Conceptual): Previously created intents may become logically superseded.
     /// This is a conceptual design intent. Test verifies system stability and cache consistency when
     /// multiple intents are published, not deterministic cancellation behavior (obsolescence ≠ cancellation).
     /// </summary>
     [Fact]
-    public async Task Invariant_C18_PreviousIntentBecomesObsolete()
+    public async Task Invariant_C_2_PreviousIntentBecomesObsolete()
     {
         // ARRANGE
         var options = TestHelpers.CreateDefaultOptions(debounceDelay: TimeSpan.FromMilliseconds(150));
@@ -600,14 +599,14 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Tests Invariant C.20 (🔵 Architectural): Decision Engine MUST exit early if intent becomes obsolete.
+    /// Tests Invariant C.4 (🔵 Architectural): Decision Engine MUST exit early if intent becomes obsolete.
     /// When processing an intent, if the intent reference changes (new intent published), Decision Engine
     /// should detect obsolescence and exit without scheduling execution. This prevents wasted work and
     /// ensures the system processes only the most recent intent. Gap identified: No test validates
     /// early exit behavior when intents become obsolete during decision processing.
     /// </summary>
     [Fact]
-    public async Task Invariant_C20_DecisionEngineExitsEarlyForObsoleteIntent()
+    public async Task Invariant_C_4_DecisionEngineExitsEarlyForObsoleteIntent()
     {
         // ARRANGE: Longer debounce to allow time for multiple intents to be published
         var options = TestHelpers.CreateDefaultOptions(
@@ -648,13 +647,13 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Tests Invariant C.24 (🟡 Conceptual): Intent does not guarantee execution. Execution is opportunistic
-    /// and may be skipped due to: C.24a (request within NoRebalanceRange), C.24b (debounce), 
-    /// C.24c (DesiredCacheRange equals CurrentCacheRange), C.24d (cancellation).
+    /// Tests Invariant C.8 (🟡 Conceptual): Intent does not guarantee execution. Execution is opportunistic
+    /// and may be skipped due to: C.8a (request within NoRebalanceRange), C.8b (debounce), 
+    /// C.8c (DesiredCacheRange equals CurrentCacheRange), C.8d (cancellation).
     /// Demonstrates cache's opportunistic, efficiency-focused design.
     /// </summary>
     [Fact]
-    public async Task Invariant_C24_IntentDoesNotGuaranteeExecution()
+    public async Task Invariant_C_8_IntentDoesNotGuaranteeExecution()
     {
         // ARRANGE: Large threshold creates large NoRebalanceRange to block rebalance
         var options = TestHelpers.CreateDefaultOptions(leftCacheSize: 2.0, rightCacheSize: 2.0,
@@ -680,13 +679,13 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Tests Invariant C.23 (🟢 Behavioral): System stabilizes when user access patterns stabilize.
+    /// Tests Invariant C.7 (🟢 Behavioral): System stabilizes when user access patterns stabilize.
     /// After initial burst, when access patterns stabilize (requests in same region), system converges
     /// to stable state where subsequent requests are served from cache without triggering rebalance.
-    /// Demonstrates cache's convergence behavior. Related: C.22 (best-effort convergence guarantee).
+    /// Demonstrates cache's convergence behavior. Related: C.6 (best-effort convergence guarantee).
     /// </summary>
     [Fact]
-    public async Task Invariant_C23_SystemStabilizesUnderLoad()
+    public async Task Invariant_C_7_SystemStabilizesUnderLoad()
     {
         // ARRANGE
         var options = TestHelpers.CreateDefaultOptions(debounceDelay: TimeSpan.FromMilliseconds(50));
@@ -714,13 +713,13 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     #region D. Rebalance Decision Path Invariants
 
     /// <summary>
-    /// Tests Invariant D.27 (🟢 Behavioral): If RequestedRange is fully contained within NoRebalanceRange,
+    /// Tests Invariant D.3 (🟢 Behavioral): If RequestedRange is fully contained within NoRebalanceRange,
     /// rebalance execution is prohibited. Verifies ThresholdRebalancePolicy prevents unnecessary rebalance
     /// when requests fall within "dead zone" around current cache, reducing I/O and CPU usage.
-    /// Corresponds to sub-invariant C.24a (execution skipped due to policy).
+    /// Corresponds to sub-invariant C.8a (execution skipped due to policy).
     /// </summary>
     [Fact]
-    public async Task Invariant_D27_NoRebalanceIfRequestInNoRebalanceRange()
+    public async Task Invariant_D_3_NoRebalanceIfRequestInNoRebalanceRange()
     {
         // ARRANGE: Large thresholds to create wide NoRebalanceRange
         var options = TestHelpers.CreateDefaultOptions(leftCacheSize: 2.0, rightCacheSize: 2.0,
@@ -740,14 +739,14 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Tests Invariant D.27 Stage 1: Rebalance skipped when request is within current cache's NoRebalanceRange.
+    /// Tests Invariant D.3 Stage 1: Rebalance skipped when request is within current cache's NoRebalanceRange.
     /// Stage 1 (current cache stability check) is the fast-path optimization that prevents unnecessary
     /// rebalance when the requested range is fully covered by the existing cache's no-rebalance threshold zone.
     /// This validates the first stage of the multi-stage decision pipeline.
-    /// Related: D.27 (NoRebalanceRange policy), C.24a (execution skipped due to policy).
+    /// Related: D.3 (NoRebalanceRange policy), C.8a (execution skipped due to policy).
     /// </summary>
     [Fact]
-    public async Task Invariant_D27_Stage1_SkipsWhenWithinCurrentNoRebalanceRange()
+    public async Task Invariant_D_3_Stage1_SkipsWhenWithinCurrentNoRebalanceRange()
     {
         // ARRANGE: Set up cache with threshold configuration
         var options = TestHelpers.CreateDefaultOptions(
@@ -776,14 +775,14 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Tests Invariant D.29 Stage 2: Rebalance skipped when request is within pending rebalance's NoRebalanceRange.
+    /// Tests Invariant D.5 Stage 2: Rebalance skipped when request is within pending rebalance's NoRebalanceRange.
     /// Stage 2 (pending rebalance stability check) is the anti-thrashing optimization that prevents
     /// cancellation storms when a scheduled rebalance will already satisfy the incoming request.
     /// This validates the second stage of the multi-stage decision pipeline.
-    /// Related: D.29 (multi-stage validation), C.18 (intent supersession with validation).
+    /// Related: D.5 (multi-stage validation), C.2 (intent supersession with validation).
     /// </summary>
     [Fact]
-    public async Task Invariant_D29_Stage2_SkipsWhenWithinPendingNoRebalanceRange()
+    public async Task Invariant_D_5_Stage2_SkipsWhenWithinPendingNoRebalanceRange()
     {
         // ARRANGE: Set up cache with threshold and debounce to allow multiple intents
         var options = TestHelpers.CreateDefaultOptions(
@@ -829,14 +828,14 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Tests Invariant D.28 (🟢 Behavioral): If DesiredCacheRange == CurrentCacheRange, rebalance execution
+    /// Tests Invariant D.4 (🟢 Behavioral): If DesiredCacheRange == CurrentCacheRange, rebalance execution
     /// is not required (Stage 3 validation / same-range optimization). This is the final decision stage that
     /// prevents no-op rebalance operations when the cache is already in optimal configuration for the request.
     /// Verifies the RebalanceSkippedSameRange counter tracks this optimization.
-    /// Related: C.24c (execution skipped due to same range), D.29 (multi-stage decision pipeline).
+    /// Related: C.8c (execution skipped due to same range), D.5 (multi-stage decision pipeline).
     /// </summary>
     [Fact]
-    public async Task Invariant_D28_SkipWhenDesiredEqualsCurrentRange()
+    public async Task Invariant_D_4_SkipWhenDesiredEqualsCurrentRange()
     {
         // ARRANGE
         var options = TestHelpers.CreateDefaultOptions(
@@ -874,14 +873,14 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     #region E. Cache Geometry & Policy Invariants
 
     /// <summary>
-    /// Tests Invariant E.30 (🟢 Behavioral): DesiredCacheRange is computed solely from RequestedRange
+    /// Tests Invariant E.1 (🟢 Behavioral): DesiredCacheRange is computed solely from RequestedRange
     /// and cache configuration. Verifies ProportionalRangePlanner computes desired cache range deterministically
     /// based only on user's requested range and config parameters (leftCacheSize, rightCacheSize), independent
     /// of current cache contents. With config (leftSize=1.0, rightSize=1.0), cache expands by RequestedRange.Span
-    /// on each side. Related: E.31 (Architectural - DesiredCacheRange independent of current cache contents).
+    /// on each side. Related: E.2 (Architectural - DesiredCacheRange independent of current cache contents).
     /// </summary>
     [Fact]
-    public async Task Invariant_E30_DesiredRangeComputedFromConfigAndRequest()
+    public async Task Invariant_E_1_DesiredRangeComputedFromConfigAndRequest()
     {
         // ARRANGE: Expansion coefficients: leftSize=1.0 (expand left by 100%), rightSize=1.0 (expand right by 100%)
         var options = TestHelpers.CreateDefaultOptions(leftCacheSize: 1.0, rightCacheSize: 1.0,
@@ -914,14 +913,14 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Tests Invariant E.31 (🔵 Architectural): DesiredCacheRange is independent of current cache contents.
+    /// Tests Invariant E.2 (🔵 Architectural): DesiredCacheRange is independent of current cache contents.
     /// Verifies that DesiredCacheRange is computed deterministically based only on RequestedRange and config,
     /// not influenced by CurrentCacheRange or intermediate cache states. Two identical requests should produce
     /// identical desired ranges regardless of what cache state existed before. Gap identified: No test validates
     /// that desired range computation is truly independent of cache history.
     /// </summary>
     [Fact]
-    public async Task Invariant_E31_DesiredRangeIndependentOfCacheState()
+    public async Task Invariant_E_2_DesiredRangeIndependentOfCacheState()
     {
         // ARRANGE: Create two separate cache instances with identical configuration
         var options = TestHelpers.CreateDefaultOptions(
@@ -968,7 +967,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         await cache2.DisposeAsync();
     }
 
-    // NOTE: Invariant E.32, E.33, E.34: DesiredCacheRange represents canonical target state,
+    // NOTE: Invariant E.3, E.4, E.5: DesiredCacheRange represents canonical target state,
     // represents canonical target state, geometry determined by configuration,
     // NoRebalanceRange derived from CurrentCacheRange and config
     // Cannot be directly observed via public API - requires internal state inspection
@@ -1048,20 +1047,20 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     #region F. Rebalance Execution Invariants
 
     /// <summary>
-    /// Tests Invariants F.35 (🟢 Behavioral), F.35a (🔵 Architectural), and G.46 (🟢 Behavioral):
+    /// Tests Invariants F.1 (🟢 Behavioral), F.1a (🔵 Architectural), and G.4 (🟢 Behavioral):
     /// Rebalance Execution MUST be cancellation-safe at all stages (before I/O, during I/O, before mutations).
     /// Validates deterministic termination, no partial mutations, lifecycle integrity, and that cancellation
     /// support works as a high-level guarantee (not deterministic per-request behavior).
     /// Uses slow data source to allow cancellation during execution. Verifies DEBUG instrumentation counters
-    /// ensure proper lifecycle tracking. Related: A.0a (User Path priority via validation-driven cancellation),
-    /// C.24d (execution skipped due to cancellation).
+    /// ensure proper lifecycle tracking. Related: A.2a (User Path priority via validation-driven cancellation),
+    /// C.8d (execution skipped due to cancellation).
     /// Parameterized by execution strategy to verify behavior across both task-based and channel-based controllers.
     /// </summary>
     /// <param name="executionStrategy">Human-readable name of execution strategy for test output</param>
     /// <param name="queueCapacity">Queue capacity: null = task-based (unbounded), >= 1 = channel-based (bounded)</param>
     [Theory]
     [MemberData(nameof(ExecutionStrategyTestData))]
-    public async Task Invariant_F35_G46_RebalanceCancellationBehavior(string executionStrategy, int? queueCapacity)
+    public async Task Invariant_F_1_G_4_RebalanceCancellationBehavior(string executionStrategy, int? queueCapacity)
     {
         // ARRANGE: Slow data source to allow cancellation during execution
         var options = TestHelpers.CreateDefaultOptions(
@@ -1078,11 +1077,11 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
         await cache.GetDataAsync(TestHelpers.CreateRange(110, 120), CancellationToken.None);
         await cache.WaitForIdleAsync();
 
-        // ASSERT: Verify cancellation-safety (F.35, G.46)
+        // ASSERT: Verify cancellation-safety (F.1, G.4)
         // Focus on lifecycle integrity and system stability, not deterministic cancellation counts
         // Cancellation is triggered by Decision Engine scheduling, not automatically by requests
 
-        // Verify Rebalance lifecycle integrity: every started execution reaches terminal state (F.35)
+        // Verify Rebalance lifecycle integrity: every started execution reaches terminal state (F.1)
         TestHelpers.AssertRebalanceLifecycleIntegrity(_cacheDiagnostics);
 
         // Verify system stability: at least one rebalance completed successfully
@@ -1091,7 +1090,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Tests Invariant F.36 (🔵 Architectural) and F.36a (🟢 Behavioral): Rebalance Execution Path is the
+    /// Tests Invariant F.2 (🔵 Architectural) and F.2a (🟢 Behavioral): Rebalance Execution Path is the
     /// only path responsible for cache normalization (expanding, trimming, recomputing NoRebalanceRange).
     /// After rebalance completes, cache is normalized to serve data from expanded range beyond original request.
     /// User Path performs minimal mutations while Rebalance Execution handles optimization.
@@ -1101,7 +1100,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     /// <param name="readMode">Storage read mode: Snapshot or CopyOnRead</param>
     [Theory]
     [MemberData(nameof(StorageStrategyTestData))]
-    public async Task Invariant_F36a_RebalanceNormalizesCache(string storageName, UserCacheReadMode readMode)
+    public async Task Invariant_F_2a_RebalanceNormalizesCache(string storageName, UserCacheReadMode readMode)
     {
         // ARRANGE
         _ = storageName;
@@ -1126,9 +1125,9 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Tests Invariants F.40, F.41, F.42 (🟢 Behavioral/🟡 Conceptual): Post-execution guarantees.
-    /// F.40: CacheData corresponds to DesiredCacheRange. F.41: CurrentCacheRange == DesiredCacheRange.
-    /// F.42: NoRebalanceRange is recomputed. After successful rebalance, cache reaches normalized state
+    /// Tests Invariants F.6, F.7, F.8 (🟢 Behavioral/🟡 Conceptual): Post-execution guarantees.
+    /// F.6: CacheData corresponds to DesiredCacheRange. F.7: CurrentCacheRange == DesiredCacheRange.
+    /// F.8: NoRebalanceRange is recomputed. After successful rebalance, cache reaches normalized state
     /// serving data from expanded/optimized range (based on config with leftSize=1.0, rightSize=1.0).
     /// Parameterized by storage strategy to verify behavior across both Snapshot and CopyOnRead modes.
     /// </summary>
@@ -1136,7 +1135,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     /// <param name="readMode">Storage read mode: Snapshot or CopyOnRead</param>
     [Theory]
     [MemberData(nameof(StorageStrategyTestData))]
-    public async Task Invariant_F40_F41_F42_PostExecutionGuarantees(string storageName, UserCacheReadMode readMode)
+    public async Task Invariant_F_6_F_7_F_8_PostExecutionGuarantees(string storageName, UserCacheReadMode readMode)
     {
         // ARRANGE
         _ = storageName;
@@ -1152,7 +1151,7 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
 
         // ASSERT: At least one rebalance must complete for the post-execution guarantees to be meaningful
         Assert.True(_cacheDiagnostics.RebalanceExecutionCompleted > 0,
-            "At least one rebalance must complete so that F.40/F.41/F.42 post-execution guarantees can be verified.");
+            "At least one rebalance must complete so that F.6/F.7/F.8 post-execution guarantees can be verified.");
         // Verify rebalance was scheduled
         TestHelpers.AssertRebalanceScheduled(_cacheDiagnostics, 1);
         // After rebalance, cache should serve data from normalized range [100-10, 110+10] = [90, 120]
@@ -1161,13 +1160,13 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Tests Invariant F.38 (🟢 Behavioral): Incremental fetch optimization - only missing subranges are fetched.
+    /// Tests Invariant F.4 (🟢 Behavioral): Incremental fetch optimization - only missing subranges are fetched.
     /// When cache needs to expand, the system should fetch only the missing data segments from IDataSource,
     /// not the entire desired range. This optimization reduces I/O overhead and data source load.
     /// Gap identified: No test validates that only missing segments are fetched during cache expansion.
     /// </summary>
     [Fact]
-    public async Task Invariant_F38_IncrementalFetchOptimization()
+    public async Task Invariant_F_4_IncrementalFetchOptimization()
     {
         // ARRANGE: Create tracking mock to observe which ranges are fetched
         var options = TestHelpers.CreateDefaultOptions(
@@ -1225,13 +1224,13 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Tests Invariant F.39 (🟢 Behavioral): Data preservation during expansion - existing data is not refetched.
+    /// Tests Invariant F.5 (🟢 Behavioral): Data preservation during expansion - existing data is not refetched.
     /// When cache expands to include additional data, the system MUST NOT refetch ranges that are already
     /// present in the cache. This is a critical efficiency guarantee that prevents wasteful I/O operations.
     /// Gap identified: No test validates that existing cached data is preserved without refetching.
     /// </summary>
     [Fact]
-    public async Task Invariant_F39_DataPreservationDuringExpansion()
+    public async Task Invariant_F_5_DataPreservationDuringExpansion()
     {
         // ARRANGE: Create tracking mock to observe fetch patterns
         var options = TestHelpers.CreateDefaultOptions(
@@ -1287,15 +1286,15 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     #region G. Execution Context & Scheduling Invariants
 
     /// <summary>
-    /// Tests Invariants G.43, G.44, G.45: Execution context separation between User Path and Rebalance operations.
-    /// G.43: User Path operates in user execution context (request completes quickly).
-    /// G.44: Rebalance Decision/Execution Path execute outside user context (Task.Run).
-    /// G.45: Rebalance Execution performs I/O only in background context (not blocking user).
+    /// Tests Invariants G.1, G.2, G.3: Execution context separation between User Path and Rebalance operations.
+    /// G.1: User Path operates in user execution context (request completes quickly).
+    /// G.2: Rebalance Decision/Execution Path execute outside user context (Task.Run).
+    /// G.3: Rebalance Execution performs I/O only in background context (not blocking user).
     /// Verifies user requests complete quickly without blocking on background operations, proving rebalance
     /// work is properly scheduled on background threads. Critical for maintaining responsive user-facing latency.
     /// </summary>
     [Fact]
-    public async Task Invariant_G43_G44_G45_ExecutionContextSeparation()
+    public async Task Invariant_G_1_G_2_G_3_ExecutionContextSeparation()
     {
         // ARRANGE
         var options = TestHelpers.CreateDefaultOptions(debounceDelay: TimeSpan.FromMilliseconds(100));
@@ -1316,14 +1315,14 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Tests Invariant G.46 (🟢 Behavioral): User-facing cancellation during IDataSource fetch operations.
+    /// Tests Invariant G.4 (🟢 Behavioral): User-facing cancellation during IDataSource fetch operations.
     /// Verifies User Path properly propagates cancellation token through to IDataSource.FetchAsync().
     /// Users can cancel their own requests during potentially long-running data source operations.
-    /// Related: G.46 covers "all scenarios" - this test focuses on user-facing cancellation.
-    /// See also: Invariant_F35_G46 for background rebalance cancellation.
+    /// Related: G.4 covers "all scenarios" - this test focuses on user-facing cancellation.
+    /// See also: Invariant_F_1_G_4 for background rebalance cancellation.
     /// </summary>
     [Fact]
-    public async Task Invariant_G46_UserCancellationDuringFetch()
+    public async Task Invariant_G_4_UserCancellationDuringFetch()
     {
         // ARRANGE: Slow mock data source to allow cancellation during fetch
         var (cache, _) = TrackCache(TestHelpers.CreateCacheWithDefaults(_domain, _cacheDiagnostics,
@@ -1350,9 +1349,9 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
 
     /// <summary>
     /// Comprehensive integration test covering multiple invariants in realistic usage scenario.
-    /// Tests: Cold start (A.8), Cache expansion (A.8), Background rebalance normalization (F.36a),
-    /// Non-intersecting replacement (A.8, A.9a), Cache consistency (B.11).
-    /// Validates all components work correctly together. Verifies: user requests always served (A.1),
+    /// Tests: Cold start (A.12), Cache expansion (A.12), Background rebalance normalization (F.2a),
+    /// Non-intersecting replacement (A.12, A.12b), Cache consistency (B.1).
+    /// Validates all components work correctly together. Verifies: user requests always served (A.3),
     /// data is correct (A.10), cache properly maintains state through multiple transitions.
     /// </summary>
     [Fact]
@@ -1399,9 +1398,9 @@ public sealed class WindowCacheInvariantTests : IAsyncDisposable
 
     /// <summary>
     /// Comprehensive concurrency test with rapid burst of 20 concurrent requests verifying intent cancellation
-    /// and system stability under high load. Validates: All requests served correctly (A.1, A.10),
-    /// Intent cancellation works (C.17, C.18), At most one active intent (C.17),
-    /// Cache remains consistent (B.11, B.15). Ensures single-consumer model with cancellation-based
+    /// and system stability under high load. Validates: All requests served correctly (A.3, A.10),
+    /// Intent cancellation works (C.1, C.2), At most one active intent (C.1),
+    /// Cache remains consistent (B.1, B.5). Ensures single-consumer model with cancellation-based
     /// coordination handles realistic high-load scenarios without data corruption or request failures.
     /// Parameterized by execution strategy to verify behavior across both task-based and channel-based controllers.
     /// </summary>

@@ -53,7 +53,7 @@ The execution subsystem performs debounced, cancellable background work and is t
 6. Update `CacheState.NoRebalanceRange` — new stability zone
 7. Set `CacheState.IsInitialized = true` (if first execution)
 
-**Cancellation checkpoints** (Invariant F.35):
+**Cancellation checkpoints** (Invariant F.1):
 - Before I/O: avoids unnecessary fetches
 - After I/O: discards fetched data if superseded
 - Before mutation: guarantees only latest validated execution applies changes
@@ -67,7 +67,7 @@ The execution subsystem performs debounced, cancellable background work and is t
 - Merges new data with preserved existing data (union operation)
 - Propagates `CancellationToken` to `IDataSource.FetchAsync`
 
-**Invariants**: F.38 (incremental fetching), F.39 (data preservation during expansion).
+**Invariants**: F.4 (incremental fetching), F.5 (data preservation during expansion).
 
 ## Responsibilities
 
@@ -100,21 +100,21 @@ In both cases, `OperationCanceledException` is reported via `ICacheDiagnostics.R
 
 | Invariant | Description                                                                                            |
 |-----------|--------------------------------------------------------------------------------------------------------|
-| A.7       | Only `RebalanceExecutor` writes to `CacheState` (single-writer)                                        |
-| A.8       | User path never blocks waiting for rebalance                                                           |
-| B.12      | Cache updates are atomic (all-or-nothing via `Rematerialize`)                                          |
-| B.13      | Consistency under cancellation: mutations discarded if cancelled                                       |
-| B.15      | Cache contiguity maintained after every `Rematerialize`                                                |
-| B.16      | Obsolete results never applied (cancellation token identity check)                                     |
-| C.21      | Serial execution: at most one active rebalance at a time                                               |
-| F.35      | Multiple cancellation checkpoints: before I/O, after I/O, before mutation                              |
-| F.35a     | Cancellation-before-mutation guarantee                                                                 |
-| F.37      | `Rematerialize` accepts arbitrary range and data (full replacement)                                    |
-| F.38      | Incremental fetching: only missing subranges fetched                                                   |
-| F.39      | Data preservation: existing cached data merged during expansion                                        |
-| G.45      | I/O isolation: `IDataSource` called by execution path only (not by user path during normal cache hits) |
-| H.47      | Activity counter incremented before channel write / task chain step                                    |
-| H.48      | Activity counter decremented in `finally` blocks                                                       |
+| A.11      | Only `RebalanceExecutor` writes to `CacheState` (single-writer)                                        |
+| A.12      | User path never blocks waiting for rebalance                                                           |
+| B.2       | Cache updates are atomic (all-or-nothing via `Rematerialize`)                                          |
+| B.3       | Consistency under cancellation: mutations discarded if cancelled                                       |
+| B.5       | Cache contiguity maintained after every `Rematerialize`                                                |
+| B.6       | Obsolete results never applied (cancellation token identity check)                                     |
+| C.5       | Serial execution: at most one active rebalance at a time                                               |
+| F.1       | Multiple cancellation checkpoints: before I/O, after I/O, before mutation                              |
+| F.1a      | Cancellation-before-mutation guarantee                                                                 |
+| F.3       | `Rematerialize` accepts arbitrary range and data (full replacement)                                    |
+| F.4       | Incremental fetching: only missing subranges fetched                                                   |
+| F.5       | Data preservation: existing cached data merged during expansion                                        |
+| G.3       | I/O isolation: `IDataSource` called by execution path only (not by user path during normal cache hits) |
+| H.1       | Activity counter incremented before channel write / task chain step                                    |
+| H.2       | Activity counter decremented in `finally` blocks                                                       |
 
 See `docs/invariants.md` (Sections A, B, C, F, G, H) for full specification.
 

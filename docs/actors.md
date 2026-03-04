@@ -35,19 +35,18 @@ Non-responsibilities
 - Does not compute `DesiredCacheRange` (belongs to Cache Geometry Policy).
 
 Invariant ownership
-- -1. User Path and Rebalance Execution never write to cache concurrently
-- 0. User Path has higher priority than rebalance execution
-- 0a. User Request MAY cancel any ongoing or pending Rebalance Execution ONLY when a new rebalance is validated as necessary
-- 1. User Path always serves user requests
-- 2. User Path never waits for rebalance execution
-- 3. User Path is the sole source of rebalance intent
-- 5. Performs only work necessary to return data
-- 6. May synchronously request from IDataSource
-- 7. May read cache and source, but does not mutate cache state
-- 8. MUST NOT mutate cache under any circumstance (read-only)
-- 10. Always returns exactly RequestedRange
-- 24e. Intent MUST contain delivered data (RangeData)
-- 24f. Delivered data represents what user actually received
+- A.1. User Path and Rebalance Execution never write to cache concurrently
+- A.2. User Path has higher priority than rebalance execution
+- A.2a. User Request MAY cancel any ongoing or pending Rebalance Execution ONLY when a new rebalance is validated as necessary
+- A.3. User Path always serves user requests
+- A.4. User Path never waits for rebalance execution
+- A.5. User Path is the sole source of rebalance intent
+- A.7. Performs only work necessary to return data
+- A.8. May synchronously request from IDataSource
+- A.11. May read cache and source, but does not mutate cache state
+- A.12. MUST NOT mutate cache under any circumstance (read-only)
+- C.8e. Intent MUST contain delivered data (RangeData)
+- C.8f. Delivered data represents what user actually received
 
 Components
 - `WindowCache<TRange, TData, TDomain>` (facade / composition root; also owns `RuntimeCacheOptionsHolder` and exposes `UpdateRuntimeOptions`)
@@ -69,12 +68,12 @@ Non-responsibilities
 - Does not perform I/O.
 
 Invariant ownership
-- 29. DesiredCacheRange computed from RequestedRange + config
-- 30. Independent of current cache contents
-- 31. Canonical target cache state
-- 32. Sliding window geometry defined by configuration
-- 33. NoRebalanceRange derived from current cache range + config
-- 35. Threshold sum constraint (leftThreshold + rightThreshold ≤ 1.0)
+- E.1. DesiredCacheRange computed from RequestedRange + config
+- E.2. Independent of current cache contents
+- E.3. Canonical target cache state
+- E.4. Sliding window geometry defined by configuration
+- E.5. NoRebalanceRange derived from current cache range + config
+- E.6. Threshold sum constraint (leftThreshold + rightThreshold ≤ 1.0)
 
 Components
 - `ProportionalRangePlanner<TRange, TDomain>` — computes `DesiredCacheRange`; reads configuration from `RuntimeCacheOptionsHolder` at invocation time
@@ -95,11 +94,11 @@ Non-responsibilities
 - Does not call `IDataSource`.
 
 Invariant ownership
-- 24. Decision Path is purely analytical (CPU-only, no I/O)
-- 25. Never mutates cache state
-- 26. No rebalance if inside NoRebalanceRange (Stage 1 validation)
-- 27. No rebalance if DesiredCacheRange == CurrentCacheRange (Stage 4 validation)
-- 28. Rebalance triggered only if ALL validation stages confirm necessity
+- D.1. Decision Path is purely analytical (CPU-only, no I/O)
+- D.2. Never mutates cache state
+- D.3. No rebalance if inside NoRebalanceRange (Stage 1 validation)
+- D.4. No rebalance if DesiredCacheRange == CurrentCacheRange (Stage 4 validation)
+- D.5. Rebalance triggered only if ALL validation stages confirm necessity
 
 Components
 - `RebalanceDecisionEngine<TRange, TDomain>`
@@ -121,14 +120,14 @@ Non-responsibilities
 - Does not determine rebalance necessity (delegates to Decision Engine).
 
 Invariant ownership
-- 17. At most one active rebalance intent
-- 18. Older intents may become logically superseded
-- 19. Executions can be cancelled based on validation results
-- 20. Obsolete intent must not start execution
-- 21. At most one rebalance execution active
-- 22. Execution reflects latest access pattern and validated necessity
-- 23. System eventually stabilizes under load through work avoidance
-- 24. Intent does not guarantee execution — execution is opportunistic and validation-driven
+- C.1. At most one active rebalance intent
+- C.2. Older intents may become logically superseded
+- C.3. Executions can be cancelled based on validation results
+- C.4. Obsolete intent must not start execution
+- C.5. At most one rebalance execution active
+- C.6. Execution reflects latest access pattern and validated necessity
+- C.7. System eventually stabilizes under load through work avoidance
+- C.8. Intent does not guarantee execution — execution is opportunistic and validation-driven
 
 Components
 - `IntentController<TRange, TData, TDomain>`
@@ -164,18 +163,18 @@ Non-responsibilities
 - Does not check if `DesiredCacheRange == CurrentCacheRange` (Stage 4 already passed).
 
 Invariant ownership
-- A.4. Rebalance is asynchronous relative to User Path
-- F.35. MUST support cancellation at all stages
-- F.35a. MUST yield to User Path requests immediately upon cancellation
-- F.35b. Partially executed or cancelled execution MUST NOT leave cache inconsistent
-- F.36. Only path responsible for cache normalization (single-writer architecture)
-- F.36a. Mutates cache ONLY for normalization using delivered data from intent
-- F.37. May replace / expand / shrink cache to achieve normalization
-- F.38. Requests data only for missing subranges (not covered by delivered data)
-- F.39. Does not overwrite intersecting data
-- F.40. Upon completion: CacheData corresponds to DesiredCacheRange
-- F.41. Upon completion: CurrentCacheRange == DesiredCacheRange
-- F.42. Upon completion: NoRebalanceRange recomputed
+- A.6. Rebalance is asynchronous relative to User Path
+- F.1. MUST support cancellation at all stages
+- F.1a. MUST yield to User Path requests immediately upon cancellation
+- F.1b. Partially executed or cancelled execution MUST NOT leave cache inconsistent
+- F.2. Only path responsible for cache normalization (single-writer architecture)
+- F.2a. Mutates cache ONLY for normalization using delivered data from intent
+- F.3. May replace / expand / shrink cache to achieve normalization
+- F.4. Requests data only for missing subranges (not covered by delivered data)
+- F.5. Does not overwrite intersecting data
+- F.6. Upon completion: CacheData corresponds to DesiredCacheRange
+- F.7. Upon completion: CurrentCacheRange == DesiredCacheRange
+- F.8. Upon completion: NoRebalanceRange recomputed
 
 Components
 - `RebalanceExecutor<TRange, TData, TDomain>`
@@ -190,12 +189,12 @@ Responsibilities
 - Coordinate single-writer access between User Path (reads) and Rebalance Execution (writes).
 
 Invariant ownership
-- 11. CacheData and CurrentCacheRange are consistent
-- 12. Changes applied atomically
-- 13. No permanent inconsistent state
-- 14. Temporary inefficiencies are acceptable
-- 15. Partial / cancelled execution cannot break consistency
-- 16. Only latest intent results may be applied
+- B.1. CacheData and CurrentCacheRange are consistent
+- B.2. Changes applied atomically
+- B.3. No permanent inconsistent state
+- B.4. Temporary inefficiencies are acceptable
+- B.5. Partial / cancelled execution cannot break consistency
+- B.6. Only latest intent results may be applied
 
 Components
 - `CacheState<TRange, TData, TDomain>`

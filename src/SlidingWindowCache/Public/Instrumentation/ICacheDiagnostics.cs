@@ -28,7 +28,7 @@ public interface ICacheDiagnostics
     /// Note: This is called by the shared CacheDataExtensionService used by both User Path and Rebalance Path.
     /// The actual cache mutation (Rematerialize) only happens in Rebalance Execution.
     /// Location: CacheDataExtensionService.CalculateMissingRanges (when intersection exists)
-    /// Related: Invariant 9a (Cache Contiguity Rule)
+    /// Related: Invariant A.12b (Cache Contiguity Rule)
     /// </summary>
     void CacheExpanded();
 
@@ -39,7 +39,7 @@ public interface ICacheDiagnostics
     /// not that mutation occurred. The actual cache mutation (Rematerialize) only happens in Rebalance Execution.
     /// Note: This is called by the shared CacheDataExtensionService used by both User Path and Rebalance Path.
     /// Location: CacheDataExtensionService.CalculateMissingRanges (when no intersection exists)
-    /// Related: Invariant 9a (Cache Contiguity Rule - forbids gaps)
+    /// Related: Invariant A.12b (Cache Contiguity Rule - forbids gaps)
     /// </summary>
     void CacheReplaced();
 
@@ -98,7 +98,7 @@ public interface ICacheDiagnostics
     /// <para><strong>Context:</strong> User Thread (Partial Cache Hit — Scenario 3) and Background Thread (Rebalance Execution)</para>
     /// <para>
     /// This is informational only - the system handles boundaries gracefully by skipping
-    /// unavailable segments during cache union (UnionAll), preserving cache contiguity (Invariant A.9a).
+    /// unavailable segments during cache union (UnionAll), preserving cache contiguity (Invariant A.12b).
     /// </para>
     /// <para><strong>Typical Scenarios:</strong></para>
     /// <list type="bullet">
@@ -110,7 +110,7 @@ public interface ICacheDiagnostics
     /// Location: CacheDataExtensionService.UnionAll (when a fetched chunk has a null Range)
     /// </para>
     /// <para>
-    /// Related: Invariant G.48 (IDataSource Boundary Semantics), Invariant A.9a (Cache Contiguity)
+    /// Related: Invariant G.5 (IDataSource Boundary Semantics), Invariant A.12b (Cache Contiguity)
     /// </para>
     /// </remarks>
     void DataSegmentUnavailable();
@@ -124,9 +124,9 @@ public interface ICacheDiagnostics
     /// Called after UserRequestHandler publishes an intent containing delivered data to IntentController.
     /// Intent is published only when the user request results in assembled data (assembledData != null).
     /// Physical boundary misses — where IDataSource returns null for the requested range — do not produce an intent
-    /// because there is no delivered data to embed in the intent (see Invariant C.24e).
+    /// because there is no delivered data to embed in the intent (see Invariant C.8e).
     /// Location: IntentController.PublishIntent (after scheduler receives intent)
-    /// Related: Invariant A.3 (User Path is sole source of rebalance intent), Invariant 24e (Intent must contain delivered data)
+    /// Related: Invariant A.5 (User Path is sole source of rebalance intent), Invariant C.8e (Intent must contain delivered data)
     /// Note: Intent publication does NOT guarantee execution (opportunistic behavior)
     /// </summary>
     void RebalanceIntentPublished();
@@ -140,7 +140,7 @@ public interface ICacheDiagnostics
     /// Called when DecisionEngine determines rebalance is necessary (RequestedRange outside NoRebalanceRange and DesiredCacheRange != CurrentCacheRange).
     /// Indicates transition from Decision Path to Execution Path (Decision Scenario D3).
     /// Location: TaskBasedRebalanceExecutionController.ExecuteRequestAsync / ChannelBasedRebalanceExecutionController.ProcessExecutionRequestsAsync (before executor invocation)
-    /// Related: Invariant 28 (Rebalance triggered only if confirmed necessary)
+    /// Related: Invariant D.5 (Rebalance triggered only if confirmed necessary)
     /// </summary>
     void RebalanceExecutionStarted();
 
@@ -149,7 +149,7 @@ public interface ICacheDiagnostics
     /// Called after RebalanceExecutor successfully extends cache to DesiredCacheRange, trims excess data, and updates cache state.
     /// Indicates cache normalization completed and state mutations applied (Rebalance Scenarios R1, R2).
     /// Location: RebalanceExecutor.ExecuteAsync (final step after UpdateCacheState)
-    /// Related: Invariant 34 (Only Rebalance Execution writes to cache), Invariant 35 (Cache state update is atomic)
+    /// Related: Invariant F.2 (Only Rebalance Execution writes to cache), Invariant F.6 (Cache state update is atomic)
     /// </summary>
     void RebalanceExecutionCompleted();
 
@@ -158,7 +158,7 @@ public interface ICacheDiagnostics
     /// Called when intentToken is cancelled during rebalance execution (after execution started but before completion).
     /// Indicates User Path priority enforcement and single-flight execution (yielding to new requests).
     /// Location: TaskBasedRebalanceExecutionController.ExecuteRequestAsync / ChannelBasedRebalanceExecutionController.ProcessExecutionRequestsAsync (catch OperationCanceledException during execution)
-    /// Related: Invariant 34a (Rebalance Execution must yield to User Path immediately)
+    /// Related: Invariant F.1a (Rebalance Execution must yield to User Path immediately)
     /// </summary>
     void RebalanceExecutionCancelled();
 
@@ -177,7 +177,7 @@ public interface ICacheDiagnostics
     /// <para><strong>Location:</strong> IntentController.RecordReason (RebalanceReason.WithinCurrentNoRebalanceRange)</para>
     /// <para><strong>Related Invariants:</strong></para>
     /// <list type="bullet">
-    /// <item><description>D.26: No rebalance if RequestedRange ⊆ CurrentNoRebalanceRange</description></item>
+    /// <item><description>D.3: No rebalance if RequestedRange ⊆ CurrentNoRebalanceRange</description></item>
     /// <item><description>Stage 1 is the primary fast-path optimization</description></item>
     /// </list>
     /// </remarks>
@@ -206,7 +206,7 @@ public interface ICacheDiagnostics
     /// Called when RebalanceExecutor detects that delivered data range already matches desired range, avoiding redundant I/O.
     /// Indicates same-range optimization preventing unnecessary fetch operations (Decision Scenario D2).
     /// Location: RebalanceExecutor.ExecuteAsync (before expensive I/O operations)
-    /// Related: Invariant D.27 (No rebalance if DesiredCacheRange == CurrentCacheRange), Invariant D.28 (Same-range optimization tracking)
+    /// Related: Invariant D.4 (No rebalance if DesiredCacheRange == CurrentCacheRange), Invariant D.5 (Same-range optimization tracking)
     /// </summary>
     void RebalanceSkippedSameRange();
 

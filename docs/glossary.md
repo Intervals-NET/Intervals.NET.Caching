@@ -107,7 +107,7 @@ AsyncActivityCounter
 WaitForIdleAsync (“Was Idle” Semantics)
 - Completes when the system was idle at some point, which is appropriate for tests and convergence checks.
 - It does not guarantee the system is still idle after the task completes.
-- Under serialized (one-at-a-time) access this is sufficient for hybrid and strong consistency guarantees. Under parallel access the guarantee degrades: a caller may observe an already-completed (stale) idle TCS if another thread incremented the activity counter between the 0→1 transition and the new TCS publication. See Invariant H.49 and `docs/architecture.md`.
+- Under serialized (one-at-a-time) access this is sufficient for hybrid and strong consistency guarantees. Under parallel access the guarantee degrades: a caller may observe an already-completed (stale) idle TCS if another thread incremented the activity counter between the 0→1 transition and the new TCS publication. See Invariant H.3 and `docs/architecture.md`.
 
 CacheInteraction
 - A per-request classification set on every `RangeResult` by `UserRequestHandler`, indicating how the cache contributed to serving the request.
@@ -126,7 +126,7 @@ Hybrid Consistency Mode
 Serialized Access
 - An access pattern in which calls to a cache are issued one at a time (each call completes before the next begins).
 - Required for the `GetDataAndWaitOnMissAsync` and `GetDataAndWaitForIdleAsync` extension methods to provide their “cache has converged” guarantee.
-- Under parallel access the extension methods remain safe (no deadlocks or data corruption) but the idle-wait may return early due to `AsyncActivityCounter`’s “was idle at some point” semantics (see Invariant H.49).
+- Under parallel access the extension methods remain safe (no deadlocks or data corruption) but the idle-wait may return early due to `AsyncActivityCounter`’s “was idle at some point” semantics (see Invariant H.3).
 
 GetDataAndWaitOnMissAsync
 - Extension method on `IWindowCache` providing hybrid consistency mode.

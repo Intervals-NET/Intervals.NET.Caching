@@ -152,7 +152,7 @@ internal sealed class CacheDataExtensionService<TRange, TData, TDomain>
     /// <para>
     /// Segments with null Range (unavailable data from DataSource) are filtered out
     /// before union. This ensures cache only contains contiguous available data,
-    /// preserving Invariant A.9a (Cache Contiguity).
+    /// preserving Invariant A.12b (Cache Contiguity).
     /// </para>
     /// <para>
     /// When DataSource returns RangeChunk with Range = null (e.g., request beyond database boundaries),

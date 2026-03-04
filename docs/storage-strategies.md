@@ -394,23 +394,23 @@ Steady state reached: Both buffers have sufficient capacity, no more allocations
 
 The staging buffer pattern directly supports key system invariants:
 
-### Invariant A.3.8 - Cache Mutation Rules
+### Invariant A.12 - Cache Mutation Rules
 
 - **Cold Start**: Staging buffer safely materializes initial cache
 - **Expansion**: Active storage stays immutable while LINQ chains enumerate it
 - **Replacement**: Atomic swap ensures clean transition
 
-### Invariant A.3.9a - Cache Contiguity
+### Invariant A.12b - Cache Contiguity
 
 - Single-pass enumeration into staging buffer maintains contiguity
 - No partial or gapped states
 
-### Invariant B.11-12 - Atomic Consistency
+### Invariant B.1-2 - Atomic Consistency
 
 - Swap and Range update both happen inside `lock (_lock)`, so `Read()` always observes a consistent `(_activeStorage, Range)` pair
 - No intermediate inconsistent state is observable
 
-### Invariant A.2 - User Path Never Waits for Rebalance (Conditional Compliance)
+### Invariant A.4 - User Path Never Waits for Rebalance (Conditional Compliance)
 
 - `CopyOnReadStorage` is **conditionally compliant**: `Read()` and `ToRangeData()` acquire `_lock`,
   which is also held by `Rematerialize()` for the duration of the buffer swap and Range update (a fast,
@@ -418,9 +418,9 @@ The staging buffer pattern directly supports key system invariants:
 - Contention is limited to the swap itself — not the full rebalance cycle (fetch + decision + execution).
   The enumeration into the staging buffer happens **before** the lock is acquired, so the lock hold time
   is just the cost of two field writes and a property assignment.
-- `SnapshotReadStorage` remains fully lock-free if strict A.2 compliance is required.
+- `SnapshotReadStorage` remains fully lock-free if strict A.4 compliance is required.
 
-### Invariant B.15 - Cancellation Safety
+### Invariant B.5 - Cancellation Safety
 
 - If rematerialization is cancelled mid-AddRange, staging buffer is abandoned
 - Active storage remains unchanged, cache stays consistent

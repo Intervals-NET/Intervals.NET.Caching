@@ -24,7 +24,7 @@ Intent management bridges the user path and background work. It receives access 
 Called by `UserRequestHandler` after serving a request:
 
 1. Atomically replaces pending intent via `Interlocked.Exchange` (latest wins; previous intent superseded)
-2. Increments `AsyncActivityCounter` (before signalling — ordering required by Invariant H.47)
+2. Increments `AsyncActivityCounter` (before signalling — ordering required by Invariant H.1)
 3. Releases semaphore (wakes up `ProcessIntentsAsync` if sleeping)
 4. Records `RebalanceIntentPublished` diagnostic event
 5. Returns immediately (fire-and-forget)
@@ -80,15 +80,15 @@ User burst: intent₁ → intent₂ → intent₃
 
 | Invariant | Description                                                              |
 |-----------|--------------------------------------------------------------------------|
-| C.17      | At most one pending intent at any time (atomic replacement)              |
-| C.18      | Previous intents become obsolete when superseded                         |
-| C.19      | Cancellation is cooperative via `CancellationToken`                      |
-| C.20      | Cancellation checked after debounce before execution starts              |
-| C.21      | At most one active rebalance scheduled at a time                         |
-| C.24      | Intent does not guarantee execution                                      |
-| C.24e     | Intent carries `deliveredData` (the data the user actually received)     |
-| H.47      | Activity counter incremented before semaphore signal (ordering)          |
-| H.48      | Activity counter decremented in `finally` blocks (unconditional cleanup) |
+| C.1       | At most one pending intent at any time (atomic replacement)              |
+| C.2       | Previous intents become obsolete when superseded                         |
+| C.3       | Cancellation is cooperative via `CancellationToken`                      |
+| C.4       | Cancellation checked after debounce before execution starts              |
+| C.5       | At most one active rebalance scheduled at a time                         |
+| C.8       | Intent does not guarantee execution                                      |
+| C.8e      | Intent carries `deliveredData` (the data the user actually received)     |
+| H.1       | Activity counter incremented before semaphore signal (ordering)          |
+| H.2       | Activity counter decremented in `finally` blocks (unconditional cleanup) |
 
 See `docs/invariants.md` (Section C: Intent invariants, Section H: Activity counter invariants) for full specification.
 

@@ -25,7 +25,7 @@ namespace SlidingWindowCache.Core.UserPath;
 /// <para>
 /// Every user access that results in assembled data publishes a rebalance intent.
 /// Requests where IDataSource returns null for the requested range (physical boundary misses)
-/// do not publish an intent, as there is no delivered data to embed (see Invariant C.24e).
+/// do not publish an intent, as there is no delivered data to embed (see Invariant C.8e).
 /// The UserRequestHandler NEVER invokes decision logic.
 /// </para>
 /// <para><strong>Responsibilities:</strong></para>
@@ -202,7 +202,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
 
         // Publish intent only when there was a physical data hit (assembledData is not null).
         // Full vacuum (out-of-physical-bounds) requests produce no intent — there is no
-        // meaningful cache shift to signal to the rebalance pipeline (see Invariant C.24e).
+        // meaningful cache shift to signal to the rebalance pipeline (see Invariant C.8e).
         if (assembledData is not null)
         {
             _intentController.PublishIntent(new Intent<TRange, TData, TDomain>(requestedRange, assembledData));

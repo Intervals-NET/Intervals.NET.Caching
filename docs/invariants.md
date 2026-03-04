@@ -4,7 +4,7 @@
 
 ## Understanding This Document
 
-This document lists **54 system invariants** that define the behavior, architecture, and design intent of the Sliding Window Cache.
+This document lists **56 system invariants** that define the behavior, architecture, and design intent of the Sliding Window Cache.
 
 ### Invariant Categories
 
@@ -148,7 +148,7 @@ without polling or timing dependencies.
 
 ### A.1 Concurrency & Priority
 
-**A.-1** 🔵 **[Architectural]** The User Path and Rebalance Execution **never write to cache concurrently**.
+**A.1** 🔵 **[Architectural]** The User Path and Rebalance Execution **never write to cache concurrently**.
 
 **Formal Specification:**
 - At any point in time, at most one component has write permission to CacheState
@@ -159,7 +159,7 @@ without polling or timing dependencies.
 
 **Implementation:** See `docs/components/overview.md` and `docs/architecture.md` for enforcement mechanism details.
 
-**A.0** 🔵 **[Architectural]** The User Path **always has higher priority** than Rebalance Execution.
+**A.2** 🔵 **[Architectural]** The User Path **always has higher priority** than Rebalance Execution.
 
 **Formal Specification:**
 - User requests take precedence over background rebalance operations
@@ -170,7 +170,7 @@ without polling or timing dependencies.
 
 **Implementation:** See `docs/architecture.md` and `docs/components/execution.md` for enforcement mechanism details.
 
-**A.0a** 🟢 **[Behavioral — Test: `Invariant_A_0a_UserRequestCancelsRebalance`]** A User Request **MAY cancel** an ongoing or pending Rebalance Execution **ONLY when a new rebalance is validated as necessary** by the multi-stage decision pipeline.
+**A.2a** 🟢 **[Behavioral — Test: `Invariant_A_2a_UserRequestCancelsRebalance`]** A User Request **MAY cancel** an ongoing or pending Rebalance Execution **ONLY when a new rebalance is validated as necessary** by the multi-stage decision pipeline.
 
 **Formal Specification:**
 - Cancellation is a coordination mechanism, not a decision mechanism
@@ -185,11 +185,11 @@ without polling or timing dependencies.
 
 ### A.2 User-Facing Guarantees
 
-**A.1** 🟢 **[Behavioral — Test: `Invariant_A2_1_UserPathAlwaysServesRequests`]** The User Path **always serves user requests** regardless of the state of rebalance execution.
+**A.3** 🟢 **[Behavioral — Test: `Invariant_A_3_UserPathAlwaysServesRequests`]** The User Path **always serves user requests** regardless of the state of rebalance execution.
 - *Observable via*: Public API always returns data successfully
 - *Test verifies*: Multiple requests all complete and return correct data
 
-**A.2** 🟢 **[Behavioral — Test: `Invariant_A2_2_UserPathNeverWaitsForRebalance`]** The User Path **never waits for rebalance execution** to complete.
+**A.4** 🟢 **[Behavioral — Test: `Invariant_A_4_UserPathNeverWaitsForRebalance`]** The User Path **never waits for rebalance execution** to complete.
 - *Observable via*: Request completion time vs. debounce delay
 - *Test verifies*: Request completes in <500ms with 1-second debounce
 - *Conditional compliance*: `CopyOnReadStorage` acquires a short-lived `_lock` in `Read()` and
@@ -198,7 +198,7 @@ without polling or timing dependencies.
   All contention is sub-millisecond and bounded. `SnapshotReadStorage` remains
   fully lock-free. See [Storage Strategies Guide](storage-strategies.md#invariant-a2---user-path-never-waits-for-rebalance-conditional-compliance) for details.
 
-**A.3** 🔵 **[Architectural]** The User Path is the **sole source of rebalance intent**.
+**A.5** 🔵 **[Architectural]** The User Path is the **sole source of rebalance intent**.
 
 **Formal Specification:**
 - Only User Path publishes rebalance intents
@@ -209,7 +209,7 @@ without polling or timing dependencies.
 
 **Implementation:** See `docs/components/user-path.md` for enforcement mechanism details.
 
-**A.4** 🔵 **[Architectural]** Rebalance execution is **always performed asynchronously** relative to the User Path.
+**A.6** 🔵 **[Architectural]** Rebalance execution is **always performed asynchronously** relative to the User Path.
 
 **Formal Specification:**
 - User requests return immediately without waiting for rebalance completion
@@ -220,7 +220,7 @@ without polling or timing dependencies.
 
 **Implementation:** See `docs/architecture.md` and `docs/components/execution.md` for enforcement mechanism details.
 
-**A.5** 🔵 **[Architectural]** The User Path performs **only the work necessary to return data to the user**.
+**A.7** 🔵 **[Architectural]** The User Path performs **only the work necessary to return data to the user**.
 
 **Formal Specification:**
 - User Path does minimal work: assemble data, return to user
@@ -231,11 +231,11 @@ without polling or timing dependencies.
 
 **Implementation:** See `docs/components/user-path.md` for enforcement mechanism details.
 
-**A.6** 🟡 **[Conceptual]** The User Path may synchronously request data from `IDataSource` in the user execution context if needed to serve `RequestedRange`.
+**A.8** 🟡 **[Conceptual]** The User Path may synchronously request data from `IDataSource` in the user execution context if needed to serve `RequestedRange`.
 - *Design decision*: Prioritizes user-facing latency over background work
 - *Rationale*: User must get data immediately; background prefetch is opportunistic
 
-**A.10** 🟢 **[Behavioral — Test: `Invariant_A2_10_UserAlwaysReceivesExactRequestedRange`]** The User always receives data **exactly corresponding to `RequestedRange`**.
+**A.10** 🟢 **[Behavioral — Test: `Invariant_A_10_UserAlwaysReceivesExactRequestedRange`]** The User always receives data **exactly corresponding to `RequestedRange`**.
 - *Observable via*: Returned data length and content
 - *Test verifies*: Data matches requested range exactly (no more, no less)
 
@@ -270,7 +270,7 @@ without polling or timing dependencies.
 
 ### A.3 Cache Mutation Rules (User Path)
 
-**A.7** 🔵 **[Architectural]** The User Path may read from cache and `IDataSource` but **does not mutate cache state**.
+**A.11** 🔵 **[Architectural]** The User Path may read from cache and `IDataSource` but **does not mutate cache state**.
 
 **Formal Specification:**
 - User Path has read-only access to cache state
@@ -281,7 +281,7 @@ without polling or timing dependencies.
 
 **Implementation:** See `docs/architecture.md` and `docs/components/overview.md` for enforcement mechanism details.
 
-**A.8** 🔵 **[Architectural — Tests: `Invariant_A3_8_ColdStart`, `_CacheExpansion`, `_FullCacheReplacement`]** The User Path **MUST NOT mutate cache under any circumstance**.
+**A.12** 🔵 **[Architectural — Tests: `Invariant_A_12_ColdStart`, `_CacheExpansion`, `_FullCacheReplacement`]** The User Path **MUST NOT mutate cache under any circumstance**.
 
 **Formal Specification:**
 - User Path is strictly read-only with respect to cache state
@@ -293,7 +293,7 @@ without polling or timing dependencies.
 
 **Implementation:** See `docs/architecture.md` and `docs/components/overview.md` for enforcement mechanism details.
 
-**A.9** 🔵 **[Architectural]** Cache mutations are performed **exclusively by Rebalance Execution** (single-writer architecture).
+**A.12a** 🔵 **[Architectural]** Cache mutations are performed **exclusively by Rebalance Execution** (single-writer architecture).
 
 **Formal Specification:**
 - Only one component has permission to write to cache state
@@ -304,7 +304,7 @@ without polling or timing dependencies.
 
 **Implementation:** See `docs/architecture.md` and `docs/components/overview.md` for enforcement mechanism details.
 
-**A.9a** 🟢 **[Behavioral — Test: `Invariant_A3_9a_CacheContiguityMaintained`]** **Cache Contiguity Rule:** `CacheData` **MUST always remain contiguous** — gapped or partially materialized cache states are invalid.
+**A.12b** 🟢 **[Behavioral — Test: `Invariant_A_12b_CacheContiguityMaintained`]** **Cache Contiguity Rule:** `CacheData` **MUST always remain contiguous** — gapped or partially materialized cache states are invalid.
 - *Observable via*: All requests return valid contiguous data
 - *Test verifies*: Sequential overlapping requests all succeed
 
@@ -312,11 +312,11 @@ without polling or timing dependencies.
 
 ## B. Cache State & Consistency Invariants
 
-**B.11** 🟢 **[Behavioral — Test: `Invariant_B11_CacheDataAndRangeAlwaysConsistent`]** `CacheData` and `CurrentCacheRange` are **always consistent** with each other.
+**B.1** 🟢 **[Behavioral — Test: `Invariant_B_1_CacheDataAndRangeAlwaysConsistent`]** `CacheData` and `CurrentCacheRange` are **always consistent** with each other.
 - *Observable via*: Data length always matches range size
 - *Test verifies*: For any request, returned data length matches expected range size
 
-**B.12** 🔵 **[Architectural]** Changes to `CacheData` and the corresponding `CurrentCacheRange` are performed **atomically**.
+**B.2** 🔵 **[Architectural]** Changes to `CacheData` and the corresponding `CurrentCacheRange` are performed **atomically**.
 
 **Formal Specification:**
 - Cache data and range updates are indivisible operations
@@ -327,7 +327,7 @@ without polling or timing dependencies.
 
 **Implementation:** See `docs/invariants.md` (atomicity invariants) and source XML docs; architecture context in `docs/architecture.md`.
 
-**B.13** 🔵 **[Architectural]** The system **never enters a permanently inconsistent state** with respect to `CacheData ↔ CurrentCacheRange`.
+**B.3** 🔵 **[Architectural]** The system **never enters a permanently inconsistent state** with respect to `CacheData ↔ CurrentCacheRange`.
 
 **Formal Specification:**
 - Cache data always matches its declared range
@@ -338,15 +338,15 @@ without polling or timing dependencies.
 
 **Implementation:** See `docs/architecture.md` and execution invariants in `docs/invariants.md`.
 
-**B.14** 🟡 **[Conceptual]** Temporary geometric or coverage inefficiencies in the cache are acceptable **if they can be resolved by rebalance execution**.
+**B.4** 🟡 **[Conceptual]** Temporary geometric or coverage inefficiencies in the cache are acceptable **if they can be resolved by rebalance execution**.
 - *Design decision*: User Path prioritizes speed over optimal cache shape
 - *Rationale*: Background rebalance will normalize; temporary inefficiency is acceptable
 
-**B.15** 🟢 **[Behavioral — Test: `Invariant_B15_CancelledRebalanceDoesNotViolateConsistency`]** Partially executed or cancelled rebalance execution **cannot violate `CacheData ↔ CurrentCacheRange` consistency**.
+**B.5** 🟢 **[Behavioral — Test: `Invariant_B_5_CancelledRebalanceDoesNotViolateConsistency`]** Partially executed or cancelled rebalance execution **cannot violate `CacheData ↔ CurrentCacheRange` consistency**.
 - *Observable via*: Cache continues serving valid data after cancellation
 - *Test verifies*: Rapid request changes don't corrupt cache
 
-**B.16** 🔵 **[Architectural]** Results from rebalance execution are applied **only if they correspond to the latest active rebalance intent**.
+**B.6** 🔵 **[Architectural]** Results from rebalance execution are applied **only if they correspond to the latest active rebalance intent**.
 
 **Formal Specification:**
 - Obsolete rebalance results are discarded
@@ -361,7 +361,7 @@ without polling or timing dependencies.
 
 ## C. Rebalance Intent & Temporal Invariants
 
-**C.17** 🔵 **[Architectural]** At most one rebalance intent may be active at any time.
+**C.1** 🔵 **[Architectural]** At most one rebalance intent may be active at any time.
 
 **Formal Specification:**
 - System maintains at most one pending rebalance intent
@@ -372,11 +372,11 @@ without polling or timing dependencies.
 
 **Implementation:** See `docs/components/intent-management.md`.
 
-**C.18** 🟡 **[Conceptual]** Previously created intents may become **logically superseded** when a new intent is published, but rebalance execution relevance is determined by the **multi-stage rebalance validation logic**.
+**C.2** 🟡 **[Conceptual]** Previously created intents may become **logically superseded** when a new intent is published, but rebalance execution relevance is determined by the **multi-stage rebalance validation logic**.
 - *Design intent*: Obsolescence ≠ cancellation; obsolescence ≠ guaranteed execution prevention
 - *Clarification*: Intents are access signals, not commands. An intent represents "user accessed this range," not "must execute rebalance." Execution decisions are governed by the Rebalance Decision Engine's analytical validation (Stage 1: Current Cache NoRebalanceRange check, Stage 2: Pending Desired Cache NoRebalanceRange check if applicable, Stage 3: DesiredCacheRange vs CurrentCacheRange equality check). Previously created intents may be superseded or cancelled, but the decision to execute is always based on current validation state, not intent age. Cancellation occurs ONLY when Decision Engine validation confirms a new rebalance is necessary.
 
-**C.19** 🔵 **[Architectural]** Any rebalance execution can be **cancelled or have its results ignored**.
+**C.3** 🔵 **[Architectural]** Any rebalance execution can be **cancelled or have its results ignored**.
 
 **Formal Specification:**
 - Rebalance operations are interruptible
@@ -387,7 +387,7 @@ without polling or timing dependencies.
 
 **Implementation:** See `docs/architecture.md` and `docs/components/intent-management.md`.
 
-**C.20** 🔵 **[Architectural]** If a rebalance intent becomes obsolete before execution begins, the execution **must not start**.
+**C.4** 🔵 **[Architectural]** If a rebalance intent becomes obsolete before execution begins, the execution **must not start**.
 
 **Formal Specification:**
 - Obsolete rebalance operations must not execute
@@ -398,7 +398,7 @@ without polling or timing dependencies.
 
 **Implementation:** See `docs/components/decision.md` and decision invariants in `docs/invariants.md`.
 
-**C.21** 🔵 **[Architectural]** At any point in time, **at most one rebalance execution is active**.
+**C.5** 🔵 **[Architectural]** At any point in time, **at most one rebalance execution is active**.
 
 **Formal Specification:**
 - Only one rebalance operation executes at a time
@@ -409,15 +409,15 @@ without polling or timing dependencies.
 
 **Implementation:** See `docs/architecture.md` (execution strategies) and `docs/components/execution.md`.
 
-**C.22** 🟡 **[Conceptual]** The results of rebalance execution **always reflect the latest user access pattern**.
+**C.6** 🟡 **[Conceptual]** The results of rebalance execution **always reflect the latest user access pattern**.
 - *Design guarantee*: Obsolete results are discarded
 - *Rationale*: System converges to user's actual navigation pattern
 
-**C.23** 🟢 **[Behavioral — Test: `Invariant_C23_SystemStabilizesUnderLoad`]** During spikes of user requests, the system **eventually stabilizes** to a consistent cache state.
+**C.7** 🟢 **[Behavioral — Test: `Invariant_C_7_SystemStabilizesUnderLoad`]** During spikes of user requests, the system **eventually stabilizes** to a consistent cache state.
 - *Observable via*: After burst of requests, system serves data correctly
 - *Test verifies*: Rapid burst + wait → final request succeeds
 
-**C.24** 🟡 **[Conceptual — Test: `Invariant_C24_IntentDoesNotGuaranteeExecution`]** **Intent does not guarantee execution. Execution is opportunistic and may be skipped entirely.**
+**C.8** 🟡 **[Conceptual — Test: `Invariant_C_8_IntentDoesNotGuaranteeExecution`]** **Intent does not guarantee execution. Execution is opportunistic and may be skipped entirely.**
    - Publishing an intent does NOT guarantee that rebalance will execute
    - Execution may be cancelled before starting (due to new intent)
    - Execution may be cancelled during execution (User Path priority)
@@ -426,7 +426,15 @@ without polling or timing dependencies.
 - *Design decision*: Rebalance is opportunistic, not mandatory
 - *Test note*: Test verifies skip behavior exists, but non-execution is acceptable
 
-**C.24e** 🔵 **[Architectural]** Intent **MUST contain delivered data** representing what was actually returned to the user for the requested range.
+**C.8a** 🟢 **[Behavioral]** Intent delivery and cache interaction classification are coupled: intent MUST be published with the actual `CacheInteraction` value for the served request.
+
+**C.8b** 🟢 **[Behavioral]** `RebalanceSkippedNoRebalanceRange` counter increments when execution is skipped because `RequestedRange ⊆ NoRebalanceRange`.
+
+**C.8c** 🟢 **[Behavioral]** `RebalanceSkippedSameRange` counter increments when execution is skipped because `DesiredCacheRange == CurrentCacheRange`.
+
+**C.8d** 🟢 **[Behavioral]** Execution is skipped when cancelled before it starts (not counted in skip counters; counted in cancellation counters).
+
+**C.8e** 🔵 **[Architectural]** Intent **MUST contain delivered data** representing what was actually returned to the user for the requested range.
 
 **Formal Specification:**
 - Intent includes actual data delivered to user
@@ -437,7 +445,7 @@ without polling or timing dependencies.
 
 **Implementation:** See `docs/components/user-path.md` and intent invariants in `docs/invariants.md`.
 
-**C.24f** 🟡 **[Conceptual]** Delivered data in intent serves as the **authoritative source** for Rebalance Execution, avoiding duplicate fetches and ensuring consistency with user view.
+**C.8f** 🟡 **[Conceptual]** Delivered data in intent serves as the **authoritative source** for Rebalance Execution, avoiding duplicate fetches and ensuring consistency with user view.
 - *Design guarantee*: Rebalance Execution uses delivered data as base, not current cache
 - *Rationale*: Eliminates redundant IDataSource calls, ensures cache converges to what user received
 
@@ -513,7 +521,7 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 
 **Trade-off:** Slight delay in cache optimization vs. system stability and resource efficiency
 
-**D.25** 🔵 **[Architectural]** The Rebalance Decision Path is **purely analytical** and has **no side effects**.
+**D.1** 🔵 **[Architectural]** The Rebalance Decision Path is **purely analytical** and has **no side effects**.
 
 **Formal Specification:**
 - Decision logic is pure: inputs → decision
@@ -525,7 +533,7 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 
 **Implementation:** See `docs/components/execution.md`.
 
-**D.26** 🔵 **[Architectural]** The Decision Path **never mutates cache state**.
+**D.2** 🔵 **[Architectural]** The Decision Path **never mutates cache state**.
 
 **Formal Specification:**
 - Decision logic has no write access to cache
@@ -536,16 +544,28 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 
 **Implementation:** See `docs/architecture.md` and `docs/components/execution.md`.
 
-**D.27** 🟢 **[Behavioral — Test: `Invariant_D27_NoRebalanceIfRequestInNoRebalanceRange`]** If `RequestedRange` is fully contained within `NoRebalanceRange`, **rebalance execution is prohibited**.
-- *Observable via*: DEBUG counters showing execution skipped (policy-based, see C.24b)
+**D.2a** 🔵 **[Architectural]** Stage 2 (Pending Desired Cache NoRebalanceRange Validation) **MUST evaluate against the pending execution's `DesiredNoRebalanceRange`**, not the current cache's NoRebalanceRange.
+
+**Formal Specification:**
+- Stage 2 reads `lastExecutionRequest?.DesiredNoRebalanceRange` (the NoRebalanceRange that will hold once the pending execution completes)
+- If `RequestedRange ⊆ PendingDesiredNoRebalanceRange`, skip rebalance (anti-thrashing)
+- This check is skipped if there is no pending execution (`lastExecutionRequest == null`)
+- Must NOT fall back to CurrentCacheRange's NoRebalanceRange for this check (that is Stage 1)
+
+**Rationale:** Prevents oscillation when a rebalance is in-flight: a new intent for a nearby range should not interrupt an already-optimal pending execution.
+
+**Implementation:** See `RebalanceDecisionEngine` source and `docs/components/decision.md`.
+
+**D.3** 🟢 **[Behavioral — Test: `Invariant_D_3_NoRebalanceIfRequestInNoRebalanceRange`]** If `RequestedRange` is fully contained within `NoRebalanceRange`, **rebalance execution is prohibited**.
+- *Observable via*: DEBUG counters showing execution skipped (policy-based, see C.8b)
 - *Test verifies*: Request within NoRebalanceRange doesn't trigger execution
 
-**D.28** 🟢 **[Behavioral — Test: `Invariant_D28_SkipWhenDesiredEqualsCurrentRange`]** If `DesiredCacheRange == CurrentCacheRange`, **rebalance execution is not required**.
-- *Observable via*: DEBUG counter `RebalanceSkippedSameRange` (optimization-based, see C.24c)
+**D.4** 🟢 **[Behavioral — Test: `Invariant_D_4_SkipWhenDesiredEqualsCurrentRange`]** If `DesiredCacheRange == CurrentCacheRange`, **rebalance execution is not required**.
+- *Observable via*: DEBUG counter `RebalanceSkippedSameRange` (optimization-based, see C.8c)
 - *Test verifies*: Repeated request with same range increments skip counter
 - *Implementation*: Early exit in `RebalanceDecisionEngine.Evaluate` (Stage 4) before execution is scheduled
 
-**D.29** 🔵 **[Architectural]** Rebalance execution is triggered **only if ALL stages of the multi-stage decision pipeline confirm necessity**.
+**D.5** 🔵 **[Architectural]** Rebalance execution is triggered **only if ALL stages of the multi-stage decision pipeline confirm necessity**.
 
 **Formal Specification:**
 - Five-stage validation pipeline gates execution
@@ -568,11 +588,11 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 
 ## E. Cache Geometry & Policy Invariants
 
-**E.30** 🟢 **[Behavioral — Test: `Invariant_E30_DesiredRangeComputedFromConfigAndRequest`]** `DesiredCacheRange` is computed **solely from `RequestedRange` and cache configuration**.
+**E.1** 🟢 **[Behavioral — Test: `Invariant_E_1_DesiredRangeComputedFromConfigAndRequest`]** `DesiredCacheRange` is computed **solely from `RequestedRange` and cache configuration**.
 - *Observable via*: After rebalance, cache covers expected expanded range
 - *Test verifies*: With config (leftSize=1.0, rightSize=1.0), cache expands as expected
 
-**E.31** 🔵 **[Architectural]** `DesiredCacheRange` is **independent of the current cache contents**, but may use configuration and `RequestedRange`.
+**E.2** 🔵 **[Architectural]** `DesiredCacheRange` is **independent of the current cache contents**, but may use configuration and `RequestedRange`.
 
 **Formal Specification:**
 - Desired range computed only from configuration and requested range
@@ -583,15 +603,15 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 
 **Implementation:** See range planner source XML docs; architecture context in `docs/components/decision.md`.
 
-**E.32** 🟡 **[Conceptual]** `DesiredCacheRange` represents the **canonical target state** towards which the system converges.
+**E.3** 🟡 **[Conceptual]** `DesiredCacheRange` represents the **canonical target state** towards which the system converges.
 - *Design concept*: Single source of truth for "what cache should be"
 - *Rationale*: Ensures deterministic convergence behavior
 
-**E.33** 🟡 **[Conceptual]** The geometry of the sliding window is **determined by configuration**, not by scenario-specific logic.
+**E.4** 🟡 **[Conceptual]** The geometry of the sliding window is **determined by configuration**, not by scenario-specific logic.
 - *Design principle*: Configuration drives behavior, not hard-coded heuristics
 - *Rationale*: Predictable, user-controllable cache shape
 
-**E.34** 🔵 **[Architectural]** `NoRebalanceRange` is derived **from `CurrentCacheRange` and configuration**.
+**E.5** 🔵 **[Architectural]** `NoRebalanceRange` is derived **from `CurrentCacheRange` and configuration**.
 
 **Formal Specification:**
 - No-rebalance range computed from current cache range and threshold configuration
@@ -602,7 +622,7 @@ The system prioritizes **decision correctness and work avoidance** over aggressi
 
 **Implementation:** See `docs/components/decision.md`.
 
-**E.35** 🟢 **[Behavioral]** When both `LeftThreshold` and `RightThreshold` are specified (non-null), their sum must not exceed 1.0.
+**E.6** 🟢 **[Behavioral]** When both `LeftThreshold` and `RightThreshold` are specified (non-null), their sum must not exceed 1.0.
 
 **Formal Specification:**
 ```
@@ -627,7 +647,7 @@ leftThreshold.HasValue && rightThreshold.HasValue
 
 ### F.1 Execution Control & Cancellation
 
-**F.35** 🟢 **[Behavioral — Test: `Invariant_F35_G46_RebalanceCancellationBehavior`]** Rebalance Execution **MUST be cancellation-safe** at all stages (before I/O, during I/O, before mutations).
+**F.1** 🟢 **[Behavioral — Test: `Invariant_F_1_G_4_RebalanceCancellationBehavior`]** Rebalance Execution **MUST be cancellation-safe** at all stages (before I/O, during I/O, before mutations).
 - *Observable via*: Lifecycle tracking integrity (Started == Completed + Cancelled), system stability under concurrent requests
 - *Test verifies*: 
   - Deterministic termination: Every started execution reaches terminal state
@@ -635,9 +655,9 @@ leftThreshold.HasValue && rightThreshold.HasValue
   - Lifecycle integrity: Accounting remains correct under cancellation
 - *Implementation details*: `ThrowIfCancellationRequested()` at multiple checkpoints in execution pipeline
 - *Note*: Cancellation is triggered by scheduling decisions (Decision Engine validation), not automatically by user requests
-- *Related*: C.24d (execution skipped due to cancellation), A.0a (User Path priority via validation-driven cancellation), G.46 (high-level guarantee)
+- *Related*: C.8d (execution skipped due to cancellation), A.2a (User Path priority via validation-driven cancellation), G.4 (high-level guarantee)
 
-**F.35a** 🔵 **[Architectural]** Rebalance Execution **MUST yield** to User Path requests immediately upon cancellation.
+**F.1a** 🔵 **[Architectural]** Rebalance Execution **MUST yield** to User Path requests immediately upon cancellation.
 
 **Formal Specification:**
 - Background operations must check for cancellation signals
@@ -648,13 +668,13 @@ leftThreshold.HasValue && rightThreshold.HasValue
 
 **Implementation:** See `docs/components/execution.md`.
 
-**F.35b** 🟢 **[Behavioral — Covered by `Invariant_B15`]** Partially executed or cancelled Rebalance Execution **MUST NOT leave cache in inconsistent state**.
+**F.1b** 🟢 **[Behavioral — Covered by `Invariant_B_5`]** Partially executed or cancelled Rebalance Execution **MUST NOT leave cache in inconsistent state**.
 - *Observable via*: Cache continues serving valid data after cancellation
-- *Same test as B.15*
+- *Same test as B.5*
 
 ### F.2 Cache Mutation Rules (Rebalance Execution)
 
-**F.36** 🔵 **[Architectural]** The Rebalance Execution Path is the **ONLY component that mutates cache state** (single-writer architecture).
+**F.2** 🔵 **[Architectural]** The Rebalance Execution Path is the **ONLY component that mutates cache state** (single-writer architecture).
 
 **Formal Specification:**
 - Only one component has write permission to cache state
@@ -665,7 +685,7 @@ leftThreshold.HasValue && rightThreshold.HasValue
 
 **Implementation:** See `docs/architecture.md`.
 
-**F.36a** 🟢 **[Behavioral — Test: `Invariant_F36a_RebalanceNormalizesCache`]** Rebalance Execution mutates cache for normalization using **delivered data from intent as authoritative base**:
+**F.2a** 🟢 **[Behavioral — Test: `Invariant_F_2a_RebalanceNormalizesCache`]** Rebalance Execution mutates cache for normalization using **delivered data from intent as authoritative base**:
    - **Uses delivered data** from intent (not current cache) as starting point
    - **Expanding to DesiredCacheRange** by fetching only truly missing ranges
    - **Trimming excess data** outside `DesiredCacheRange`
@@ -676,7 +696,7 @@ leftThreshold.HasValue && rightThreshold.HasValue
 - *Test verifies*: Cache covers larger area after rebalance completes
 - *Single-writer guarantee*: These are the ONLY mutations in the system
 
-**F.37** 🔵 **[Architectural]** Rebalance Execution may **replace, expand, or shrink cache data** to achieve normalization.
+**F.3** 🔵 **[Architectural]** Rebalance Execution may **replace, expand, or shrink cache data** to achieve normalization.
 
 **Formal Specification:**
 - Full mutation capability: expand, trim, or replace cache entirely
@@ -687,7 +707,7 @@ leftThreshold.HasValue && rightThreshold.HasValue
 
 **Implementation:** See `docs/components/execution.md`.
 
-**F.38** 🔵 **[Architectural]** Rebalance Execution requests data from `IDataSource` **only for missing subranges**.
+**F.4** 🔵 **[Architectural]** Rebalance Execution requests data from `IDataSource` **only for missing subranges**.
 
 **Formal Specification:**
 - Fetch only gaps between existing cache and desired range
@@ -698,7 +718,7 @@ leftThreshold.HasValue && rightThreshold.HasValue
 
 **Implementation:** See `docs/components/user-path.md`.
 
-**F.39** 🔵 **[Architectural]** Rebalance Execution **does not overwrite existing data** that intersects with `DesiredCacheRange`.
+**F.5** 🔵 **[Architectural]** Rebalance Execution **does not overwrite existing data** that intersects with `DesiredCacheRange`.
 
 **Formal Specification:**
 - Existing cached data is preserved during rebalance
@@ -711,15 +731,15 @@ leftThreshold.HasValue && rightThreshold.HasValue
 
 ### F.3 Post-Execution Guarantees
 
-**F.40** 🟢 **[Behavioral — Test: `Invariant_F40_F41_F42_PostExecutionGuarantees`]** Upon successful completion, `CacheData` **strictly corresponds to `DesiredCacheRange`**.
+**F.6** 🟢 **[Behavioral — Test: `Invariant_F_6_F_7_F_8_PostExecutionGuarantees`]** Upon successful completion, `CacheData` **strictly corresponds to `DesiredCacheRange`**.
 - *Observable via*: After rebalance, cache serves data from expected normalized range
 - *Test verifies*: Can read from expected expanded range
 
-**F.41** 🟢 **[Behavioral — Covered by same test as F.40]** Upon successful completion, `CurrentCacheRange == DesiredCacheRange`.
+**F.7** 🟢 **[Behavioral — Covered by same test as F.6]** Upon successful completion, `CurrentCacheRange == DesiredCacheRange`.
 - *Observable indirectly*: Cache behavior matches expected range
-- *Same test as F.40*
+- *Same test as F.6*
 
-**F.42** 🟡 **[Conceptual — Covered by same test as F.40]** Upon successful completion, `NoRebalanceRange` is **recomputed**.
+**F.8** 🟡 **[Conceptual — Covered by same test as F.6]** Upon successful completion, `NoRebalanceRange` is **recomputed**.
 - *Internal state*: Not directly observable via public API
 - *Design guarantee*: Threshold zone updated after normalization
 
@@ -727,11 +747,11 @@ leftThreshold.HasValue && rightThreshold.HasValue
 
 ## G. Execution Context & Scheduling Invariants
 
-**G.43** 🟢 **[Behavioral — Test: `Invariant_G43_G44_G45_ExecutionContextSeparation`]** The User Path operates in the **user execution context**.
+**G.1** 🟢 **[Behavioral — Test: `Invariant_G_1_G_2_G_3_ExecutionContextSeparation`]** The User Path operates in the **user execution context**.
 - *Observable via*: Request completes quickly without waiting for background work
 - *Test verifies*: Request time < debounce delay
 
-### G.44: Rebalance Decision Path and Rebalance Execution Path execute outside the user execution context
+### G.2: Rebalance Decision Path and Rebalance Execution Path execute outside the user execution context
 
 **Formal Specification:**
 The Rebalance Decision Path and Rebalance Execution Path MUST execute asynchronously outside the user execution context. User requests MUST return immediately without waiting for background analysis or I/O operations.
@@ -744,9 +764,9 @@ The Rebalance Decision Path and Rebalance Execution Path MUST execute asynchrono
 **Rationale:** Ensures user requests remain responsive by offloading all optimization work to background threads.
 
 **Implementation:** See `docs/architecture.md`.
-- 🔵 **[Architectural — Covered by same test as G.43]**
+- 🔵 **[Architectural — Covered by same test as G.1]**
 
-### G.45: I/O responsibilities are separated between User Path and Rebalance Execution Path
+### G.3: I/O responsibilities are separated between User Path and Rebalance Execution Path
 
 **Formal Specification:**
 I/O operations (data fetching via IDataSource) are divided by responsibility:
@@ -762,19 +782,25 @@ I/O operations (data fetching via IDataSource) are divided by responsibility:
 **Rationale:** Separates the latency-critical user-serving fetch (minimal, unavoidable) from the background optimization fetch (potentially large, deferrable). User Path I/O is bounded by the requested range; background I/O is bounded by cache geometry policy.
 
 **Implementation:** See `docs/architecture.md` and execution invariants.
-- 🔵 **[Architectural — Covered by same test as G.43]**
+- 🔵 **[Architectural — Covered by same test as G.1]**
 
-**G.46** 🟢 **[Behavioral — Tests: `Invariant_G46_UserCancellationDuringFetch`, `Invariant_F35_G46_RebalanceCancellationBehavior`]** Cancellation **must be supported** for all scenarios:
-1. **User-facing cancellation**: User-provided CancellationToken propagates through User Path to IDataSource.FetchAsync()
-2. **Background rebalance cancellation**: System supports cancellation of pending/ongoing rebalance execution
-- *Observable via*: 
-  - User cancellation: OperationCanceledException thrown during IDataSource fetch
-  - Rebalance cancellation: System stability and lifecycle integrity under concurrent requests
-- *Test verifies*: 
-  - `Invariant_G46_UserCancellationDuringFetch`: Cancelling during IDataSource fetch throws OperationCanceledException
-  - `Invariant_F35_G46_RebalanceCancellationBehavior`: Background rebalance supports cancellation mechanism (high-level guarantee)
+**G.4** 🟢 **[Behavioral — Tests: `Invariant_G_4_UserCancellationDuringFetch`, `Invariant_F_1_G_4_RebalanceCancellationBehavior`]** Cancellation **must be supported** for all scenarios:
+  - `Invariant_G_4_UserCancellationDuringFetch`: Cancelling during IDataSource fetch throws OperationCanceledException
+  - `Invariant_F_1_G_4_RebalanceCancellationBehavior`: Background rebalance supports cancellation mechanism (high-level guarantee)
 - *Important*: System does NOT guarantee cancellation on new requests. Cancellation MAY occur depending on Decision Engine scheduling validation. Focus is on system stability and cache consistency, not deterministic cancellation behavior.
-- *Related*: F.35 (detailed rebalance execution cancellation mechanics), A.0a (User Path priority via validation-driven cancellation)
+- *Related*: F.1 (detailed rebalance execution cancellation mechanics), A.2a (User Path priority via validation-driven cancellation)
+
+**G.5** 🔵 **[Architectural]** `IDataSource.FetchAsync` **MUST respect boundary semantics**: it may return a range smaller than requested (or null) for bounded data sources, and the cache must propagate this truncated result correctly.
+
+**Formal Specification:**
+- `IDataSource.FetchAsync` returns `RangeData<TRange, TData>?` — nullable to signal unavailability
+- A non-null result MAY have a smaller range than the requested range (partial fulfillment for bounded sources)
+- The cache MUST use the actual returned range, not the requested range, when assembling `RangeResult`
+- Callers MUST NOT assume the returned range equals the requested range
+
+**Rationale:** Bounded data sources (e.g., finite files, fixed-size datasets) cannot always fulfill the full requested range. The contract allows graceful truncation without exceptions.
+
+**Implementation:** See `IDataSource` contract, `UserRequestHandler`, `CacheDataExtensionService`, and [Boundary Handling Guide](boundary-handling.md).
 
 ---
 
@@ -791,7 +817,7 @@ The `AsyncActivityCounter` component implements this using lock-free synchroniza
 
 ### The Two Critical Invariants
 
-### H.47: Increment-Before-Publish Invariant
+### H.1: Increment-Before-Publish Invariant
 
 **Formal Specification:**
 Any operation that schedules, publishes, or enqueues background work MUST increment the activity counter BEFORE making that work visible to consumers (via semaphore signal, channel write, volatile write, or task chain).
@@ -810,7 +836,7 @@ When activity counter reaches zero (idle state), NO work exists in any of these 
 **Implementation:** See `src/SlidingWindowCache/Infrastructure/Concurrency/AsyncActivityCounter.cs`.
 - 🔵 **[Architectural — Enforced by call site ordering]**
 
-### H.48: Decrement-After-Completion Invariant
+### H.2: Decrement-After-Completion Invariant
 
 **Formal Specification:**
 Any operation representing completion of background work MUST decrement the activity counter AFTER work is fully completed, cancelled, or failed. Decrement MUST execute unconditionally regardless of success/failure/cancellation path.
@@ -829,7 +855,7 @@ Activity counter accurately reflects active work count at all times:
 **Implementation:** See `src/SlidingWindowCache/Infrastructure/Concurrency/AsyncActivityCounter.cs`.
 - 🔵 **[Architectural — Enforced by finally blocks]**
 
-**H.49** 🟡 **[Conceptual — Eventual consistency design]** **"Was Idle" Semantics:**
+**H.3** 🟡 **[Conceptual — Eventual consistency design]** **"Was Idle" Semantics:**
 `WaitForIdleAsync()` completes when the system **was idle at some point in time**, NOT when "system is idle now".
 
 - *Design rationale*: State-based completion semantics provide eventual consistency
@@ -847,7 +873,7 @@ Under parallel access, the methods remain safe (no deadlocks, no crashes, no dat
 
 ### Activity-Based Stabilization Barrier
 
-The combination of H.47 and H.48 creates a **stabilization barrier** with strong guarantees:
+The combination of H.1 and H.2 creates a **stabilization barrier** with strong guarantees:
 
 **Idle state (counter=0) means:**
 - ✅ No intents being processed
@@ -924,19 +950,19 @@ Complete trace demonstrating both invariants in current architecture:
 
 ### Relation to Other Invariants
 
-- **A.-1** (Single-Writer Architecture): Activity tracking supports single-writer by tracking execution lifecycle
-- **F.35** (Cancellation Support): DecrementActivity in finally blocks ensures counter correctness even on cancellation
-- **G.46** (User/Background Cancellation): Activity counter remains balanced regardless of cancellation timing
+- **A.1** (Single-Writer Architecture): Activity tracking supports single-writer by tracking execution lifecycle
+- **F.1** (Cancellation Support): DecrementActivity in finally blocks ensures counter correctness even on cancellation
+- **G.4** (User/Background Cancellation): Activity counter remains balanced regardless of cancellation timing
 
 ---
 
 ## I. Runtime Options Update Invariants
 
-**I.50** 🟢 **[Behavioral — Tests: `RuntimeOptionsUpdateTests`]** `UpdateRuntimeOptions` **validates the merged options** before publishing. Invalid updates (negative sizes, threshold sum > 1.0, out-of-range threshold) throw and leave the current options unchanged.
+**I.1** 🟢 **[Behavioral — Tests: `RuntimeOptionsUpdateTests`]** `UpdateRuntimeOptions` **validates the merged options** before publishing. Invalid updates (negative sizes, threshold sum > 1.0, out-of-range threshold) throw and leave the current options unchanged.
 - *Observable via*: Exception type and cache still accepts subsequent valid updates
 - *Test verifies*: `ArgumentOutOfRangeException` / `ArgumentException` thrown; cache not partially updated
 
-**I.51** 🔵 **[Architectural]** `UpdateRuntimeOptions` uses **next-cycle semantics**: the new options snapshot takes effect on the next rebalance decision/execution cycle. Ongoing cycles use the snapshot already read at cycle start.
+**I.2** 🔵 **[Architectural]** `UpdateRuntimeOptions` uses **next-cycle semantics**: the new options snapshot takes effect on the next rebalance decision/execution cycle. Ongoing cycles use the snapshot already read at cycle start.
 
 **Formal Specification:**
 - `RuntimeCacheOptionsHolder.Update` performs a `Volatile.Write` (release fence)
@@ -947,7 +973,7 @@ Complete trace demonstrating both invariants in current architecture:
 
 **Implementation:** `RuntimeCacheOptionsHolder.Update` in `src/SlidingWindowCache/Core/State/RuntimeCacheOptionsHolder.cs`.
 
-**I.52** 🔵 **[Architectural]** `UpdateRuntimeOptions` on a disposed cache **always throws `ObjectDisposedException`**.
+**I.3** 🔵 **[Architectural]** `UpdateRuntimeOptions` on a disposed cache **always throws `ObjectDisposedException`**.
 
 **Formal Specification:**
 - Disposal state checked via `Volatile.Read` before any options update work
@@ -955,7 +981,7 @@ Complete trace demonstrating both invariants in current architecture:
 
 **Implementation:** Disposal guard in `WindowCache.UpdateRuntimeOptions`.
 
-**I.53** 🟡 **[Conceptual]** **`ReadMode` and `RebalanceQueueCapacity` are creation-time only** — they determine the storage strategy and execution controller strategy, which are wired at construction and cannot be replaced at runtime without reconstruction.
+**I.4** 🟡 **[Conceptual]** **`ReadMode` and `RebalanceQueueCapacity` are creation-time only** — they determine the storage strategy and execution controller strategy, which are wired at construction and cannot be replaced at runtime without reconstruction.
 - *Design decision*: These choices affect fundamental system structure (object graph), not just configuration parameters
 - *Rationale*: Storage strategies and execution controllers have different object identities and lifecycles; hot-swapping them would require disposal and re-creation of component graphs
 
@@ -963,20 +989,20 @@ Complete trace demonstrating both invariants in current architecture:
 
 ## Summary Statistics
 
-### Total Invariants: 54
+### Total Invariants: 56
 
 #### By Category:
-- 🟢 **Behavioral** (test-covered): 20 invariants
-- 🔵 **Architectural** (structure-enforced): 25 invariants  
+- 🟢 **Behavioral** (test-covered): 21 invariants
+- 🔵 **Architectural** (structure-enforced): 26 invariants  
 - 🟡 **Conceptual** (design-level): 9 invariants
 
 #### Test Coverage Analysis:
 - **29 automated tests** in `WindowCacheInvariantTests`
-- **20 behavioral invariants** directly covered
-- **25 architectural invariants** enforced by code structure (not tested)
+- **21 behavioral invariants** directly covered
+- **26 architectural invariants** enforced by code structure (not tested)
 - **9 conceptual invariants** documented as design guidance (not tested)
 
-**This is by design.** The gap between 54 invariants and 29 tests is intentional:
+**This is by design.** The gap between 56 invariants and 29 tests is intentional:
 - Architecture enforces structural constraints automatically
 - Conceptual invariants guide development, not runtime behavior
 - Tests focus on externally observable behavior

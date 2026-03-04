@@ -52,7 +52,7 @@ namespace SlidingWindowCache.Public.Extensions;
 /// However, the consistency guarantee may degrade:
 /// <list type="bullet">
 /// <item><description>
-/// Due to the <c>AsyncActivityCounter</c>'s "was idle at some point" semantics (Invariant H.49),
+/// Due to the <c>AsyncActivityCounter</c>'s "was idle at some point" semantics (Invariant H.3),
 /// a thread that calls <c>WaitForIdleAsync</c> during the window between
 /// <c>Interlocked.Increment</c> (counter 0→1) and the subsequent <c>Volatile.Write</c> of the
 /// new <c>TaskCompletionSource</c> will observe the previous (already-completed) TCS and return
@@ -139,7 +139,7 @@ public static class WindowCacheConsistencyExtensions
     /// the wait ensures the background rebalance builds the cache window around the new position.
     /// </description></item>
     /// </list>
-    /// <para><strong>Idle Semantics (Invariant H.49):</strong></para>
+    /// <para><strong>Idle Semantics (Invariant H.3):</strong></para>
     /// <para>
     /// The idle wait uses "was idle at some point" semantics inherited from
     /// <see cref="IWindowCache{TRange,TData,TDomain}.WaitForIdleAsync"/>. This is sufficient for
@@ -346,7 +346,7 @@ public static class WindowCacheConsistencyExtensions
     /// <see cref="GetDataAndWaitOnMissAsync{TRange,TData,TDomain}"/> (hybrid consistency).
     /// </description></item>
     /// </list>
-    /// <para><strong>Idle Semantics (Invariant H.49):</strong></para>
+    /// <para><strong>Idle Semantics (Invariant H.3):</strong></para>
     /// <para>
     /// The idle wait uses "was idle at some point" semantics inherited from
     /// <see cref="IWindowCache{TRange, TData, TDomain}.WaitForIdleAsync"/>. This is sufficient
