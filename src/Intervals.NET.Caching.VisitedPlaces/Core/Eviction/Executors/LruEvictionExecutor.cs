@@ -11,7 +11,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Executors;
 /// <see cref="SegmentStatistics.LastAccessedAt"/>.</para>
 /// <para><strong>Execution Context:</strong> Background Path (single writer thread)</para>
 /// <para><strong>Invariant VPC.E.3 — Just-stored immunity:</strong>
-/// The <c>justStored</c> segment is always excluded from the eviction candidate set.</para>
+/// All segments in <c>justStoredSegments</c> are always excluded from the eviction candidate set.</para>
 /// <para><strong>Invariant VPC.E.2a — Single-pass eviction:</strong>
 /// A single invocation satisfies ALL fired evaluator constraints simultaneously by computing
 /// the combined target count before beginning the removal loop.</para>
@@ -38,19 +38,18 @@ internal sealed class LruEvictionExecutor<TRange, TData> : IEvictionExecutor<TRa
     /// <remarks>
     /// <para><strong>Selection algorithm:</strong></para>
     /// <list type="number">
-    /// <item><description>Build the candidate set = all segments except <paramref name="justStored"/> (immunity rule)</description></item>
+    /// <item><description>Build the candidate set = all segments except those in <paramref name="justStoredSegments"/> (immunity rule)</description></item>
     /// <item><description>Sort candidates ascending by <see cref="SegmentStatistics.LastAccessedAt"/></description></item>
-    /// <item><description>Compute target removal count = max of all fired evaluator removal counts</description></item>
-    /// <item><description>Return the first <c>removalCount</c> candidates</description></item>
+    /// <item><description>Return the first <paramref name="removalCount"/> candidates</description></item>
     /// </list>
     /// </remarks>
     public IReadOnlyList<CachedSegment<TRange, TData>> SelectForEviction(
         IReadOnlyList<CachedSegment<TRange, TData>> allSegments,
-        CachedSegment<TRange, TData>? justStored,
-        IReadOnlyList<IEvictionEvaluator<TRange, TData>> firedEvaluators)
+        IReadOnlyList<CachedSegment<TRange, TData>> justStoredSegments,
+        int removalCount)
     {
         var candidates = allSegments
-            .Where(s => !ReferenceEquals(s, justStored))
+            .Where(s => !justStoredSegments.Contains(s))
             .OrderBy(s => s.Statistics.LastAccessedAt)
             .ToList();
 
@@ -60,7 +59,6 @@ internal sealed class LruEvictionExecutor<TRange, TData> : IEvictionExecutor<TRa
             return [];
         }
 
-        var removalCount = firedEvaluators.Max(e => e.ComputeRemovalCount(allSegments.Count, allSegments));
         return candidates.Take(removalCount).ToList();
     }
 }

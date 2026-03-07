@@ -65,11 +65,8 @@ internal sealed class MaxTotalSpanEvaluator<TRange, TData, TDomain> : IEvictionE
     }
 
     /// <inheritdoc/>
-    public bool ShouldEvict(int count, IReadOnlyList<CachedSegment<TRange, TData>> allSegments) =>
-        allSegments.Sum(s => s.Range.Span(_domain).Value) > MaxTotalSpan;
-
-    /// <inheritdoc/>
-    public int ComputeRemovalCount(int count, IReadOnlyList<CachedSegment<TRange, TData>> allSegments)
+    /// TODO: looks like the parameter list is not optimal. I guess we can pass just allSegments without precalculated count - everything else must be inside this method.
+    public int ComputeEvictionCount(int count, IReadOnlyList<CachedSegment<TRange, TData>> allSegments)
     {
         var totalSpan = allSegments.Sum(s => s.Range.Span(_domain).Value);
         var excessSpan = totalSpan - MaxTotalSpan;

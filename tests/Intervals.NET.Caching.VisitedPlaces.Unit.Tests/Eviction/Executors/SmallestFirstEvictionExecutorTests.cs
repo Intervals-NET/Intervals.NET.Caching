@@ -49,9 +49,10 @@ public sealed class SmallestFirstEvictionExecutorTests
 
         var allSegments = storage.GetAllSegments();
         var evaluator = new MaxSegmentCountEvaluator<int, int>(2);
+        var removalCount = evaluator.ComputeEvictionCount(allSegments.Count, allSegments);
 
         // ACT
-        var toRemove = executor.SelectForEviction(allSegments, justStored: null, [evaluator]);
+        var toRemove = executor.SelectForEviction(allSegments, justStoredSegments: [], removalCount);
         foreach (var s in toRemove) storage.Remove(s);
 
         // ASSERT — smallest (span 3) removed
@@ -73,9 +74,10 @@ public sealed class SmallestFirstEvictionExecutorTests
 
         var allSegments = storage.GetAllSegments();
         var evaluator = new MaxSegmentCountEvaluator<int, int>(1);
+        var removalCount = evaluator.ComputeEvictionCount(allSegments.Count, allSegments);
 
         // ACT
-        var toRemove = executor.SelectForEviction(allSegments, justStored: justStored, [evaluator]);
+        var toRemove = executor.SelectForEviction(allSegments, justStoredSegments: [justStored], removalCount);
 
         // ASSERT — no-op (VPC.E.3a)
         Assert.Empty(toRemove);
@@ -99,9 +101,10 @@ public sealed class SmallestFirstEvictionExecutorTests
 
         var allSegments = storage.GetAllSegments();
         var evaluator = new MaxSegmentCountEvaluator<int, int>(2);
+        var removalCount = evaluator.ComputeEvictionCount(allSegments.Count, allSegments);
 
         // ACT — justStored=small is immune, so medium (next smallest) should be selected
-        var toRemove = executor.SelectForEviction(allSegments, justStored: small, [evaluator]);
+        var toRemove = executor.SelectForEviction(allSegments, justStoredSegments: [small], removalCount);
         foreach (var s in toRemove) storage.Remove(s);
 
         // ASSERT

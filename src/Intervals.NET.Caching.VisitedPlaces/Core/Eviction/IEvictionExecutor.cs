@@ -20,8 +20,8 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 /// </para>
 /// <para><strong>Just-stored immunity (Invariant VPC.E.3):</strong></para>
 /// <para>
-/// The <paramref name="justStored"/> segment (if not <see langword="null"/>) must be excluded
-/// from the returned eviction set.
+/// All segments in <paramref name="justStoredSegments"/> must be excluded from the returned
+/// eviction set. This covers every segment stored within the current event processing cycle.
 /// </para>
 /// </remarks>
 public interface IEvictionExecutor<TRange, TData>
@@ -48,18 +48,17 @@ public interface IEvictionExecutor<TRange, TData>
     /// The caller is responsible for removing the returned segments from storage.
     /// </summary>
     /// <param name="allSegments">All currently stored segments (the full candidate pool).</param>
-    /// <param name="justStored">
-    /// The segment most recently stored (immune from eviction per Invariant VPC.E.3).
-    /// May be <see langword="null"/> when no segment was stored in the current event.
+    /// <param name="justStoredSegments">
+    /// All segments stored during the current event processing cycle (immune from eviction per
+    /// Invariant VPC.E.3). Empty when no segments were stored in this cycle.
     /// </param>
-    /// <param name="firedEvaluators">
-    /// All evaluators that returned <see langword="true"/> from
-    /// <see cref="IEvictionEvaluator{TRange,TData}.ShouldEvict"/>. Non-empty.
-    /// TODO: looks like we are passing fired evaluators in order to use them to get the removal count. We can simplify this and pass just the needed amount of segments to remove instead of the whole evaluators.
+    /// <param name="removalCount">
+    /// The maximum number of segments to remove, computed as the maximum across all fired evaluators.
+    /// Always greater than 0 when this method is called.
     /// </param>
-    /// <returns>The segments that should be removed from storage. May be empty. TODO: I guess we can return IEnumerable instead of materialized collection of segments to remove.</returns>
+    /// <returns>The segments that should be removed from storage. May be empty.</returns>
     IReadOnlyList<CachedSegment<TRange, TData>> SelectForEviction(
         IReadOnlyList<CachedSegment<TRange, TData>> allSegments,
-        CachedSegment<TRange, TData>? justStored,
-        IReadOnlyList<IEvictionEvaluator<TRange, TData>> firedEvaluators);
+        IReadOnlyList<CachedSegment<TRange, TData>> justStoredSegments,
+        int removalCount);
 }

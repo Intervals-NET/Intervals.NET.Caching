@@ -27,7 +27,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Public.Cache;
 /// <list type="bullet">
 /// <item><description><strong>UserRequestHandler</strong> — User Path (read-only, fires events)</description></item>
 /// <item><description><strong>BackgroundEventProcessor</strong> — Background Storage Loop (single writer)</description></item>
-/// <item><description><strong>ChannelBasedWorkScheduler</strong> — serializes background events, manages activity</description></item>
+/// <item><description><strong>TaskBasedWorkScheduler / ChannelBasedWorkScheduler</strong> — serializes background events, manages activity</description></item>
 /// </list>
 /// <para><strong>Threading Model:</strong></para>
 /// <para>
@@ -65,7 +65,7 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
     /// </summary>
     /// <param name="dataSource">The data source from which to fetch missing data.</param>
     /// <param name="domain">The domain defining range characteristics (used by domain-aware eviction executors).</param>
-    /// <param name="options">Configuration options (storage strategy, channel capacity).</param>
+    /// <param name="options">Configuration options (storage strategy, scheduler type/capacity).</param>
     /// <param name="evaluators">
     /// One or more eviction evaluators. Eviction runs when ANY fires (OR semantics, Invariant VPC.E.1a).
     /// </param>
@@ -103,18 +103,23 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
             cacheDiagnostics);
 
         // Diagnostics adapter: maps IWorkSchedulerDiagnostics → ICacheDiagnostics.
-        // todo maybe we can get rid of this weird adapter by utilizing interface inheritance?
         var schedulerDiagnostics = new VisitedPlacesWorkSchedulerDiagnostics(cacheDiagnostics);
 
-        // Scheduler: serializes background events via a bounded channel.
-        // Debounce is always zero — VPC processes every event without delay.
-        // TODO: allow to use not only channel based scheduler - there is another one based on Task chaining. Check SWC implementation for reference.
-        var scheduler = new ChannelBasedWorkScheduler<BackgroundEvent<TRange, TData>>(
-            executor: (evt, ct) => processor.ProcessEventAsync(evt, ct),
-            debounceProvider: static () => TimeSpan.Zero,
-            diagnostics: schedulerDiagnostics,
-            activityCounter: _activityCounter,
-            capacity: options.EventChannelCapacity);
+        // Scheduler: serializes background events without delay (debounce = zero).
+        // When EventChannelCapacity is null, use unbounded TaskBasedWorkScheduler (default).
+        // When EventChannelCapacity is set, use bounded ChannelBasedWorkScheduler with backpressure.
+        IWorkScheduler<BackgroundEvent<TRange, TData>> scheduler = options.EventChannelCapacity is { } capacity
+            ? new ChannelBasedWorkScheduler<BackgroundEvent<TRange, TData>>(
+                executor: (evt, ct) => processor.ProcessEventAsync(evt, ct),
+                debounceProvider: static () => TimeSpan.Zero,
+                diagnostics: schedulerDiagnostics,
+                activityCounter: _activityCounter,
+                capacity: capacity)
+            : new TaskBasedWorkScheduler<BackgroundEvent<TRange, TData>>(
+                executor: (evt, ct) => processor.ProcessEventAsync(evt, ct),
+                debounceProvider: static () => TimeSpan.Zero,
+                diagnostics: schedulerDiagnostics,
+                activityCounter: _activityCounter);
 
         // User request handler: read-only User Path, publishes events to the scheduler.
         _userRequestHandler = new UserRequestHandler<TRange, TData, TDomain>(

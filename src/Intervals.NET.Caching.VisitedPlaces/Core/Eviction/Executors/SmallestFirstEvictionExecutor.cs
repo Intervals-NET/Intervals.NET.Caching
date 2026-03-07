@@ -20,7 +20,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Executors;
 /// because they are more likely to be re-used.
 /// </para>
 /// <para><strong>Invariant VPC.E.3 — Just-stored immunity:</strong>
-/// The <c>justStored</c> segment is always excluded from the eviction candidate set.</para>
+/// All segments in <c>justStoredSegments</c> are always excluded from the eviction candidate set.</para>
 /// <para><strong>Invariant VPC.E.2a — Single-pass eviction:</strong>
 /// A single invocation satisfies ALL fired evaluator constraints simultaneously.</para>
 /// </remarks>
@@ -66,19 +66,18 @@ internal sealed class SmallestFirstEvictionExecutor<TRange, TData, TDomain> : IE
     /// <remarks>
     /// <para><strong>Selection algorithm:</strong></para>
     /// <list type="number">
-    /// <item><description>Build the candidate set = all segments except <paramref name="justStored"/> (immunity rule)</description></item>
+    /// <item><description>Build the candidate set = all segments except those in <paramref name="justStoredSegments"/> (immunity rule)</description></item>
     /// <item><description>Sort candidates ascending by <c>segment.Range.Span(domain)</c></description></item>
-    /// <item><description>Compute target removal count = max of all fired evaluator removal counts</description></item>
-    /// <item><description>Return the first <c>removalCount</c> candidates</description></item>
+    /// <item><description>Return the first <paramref name="removalCount"/> candidates</description></item>
     /// </list>
     /// </remarks>
     public IReadOnlyList<CachedSegment<TRange, TData>> SelectForEviction(
         IReadOnlyList<CachedSegment<TRange, TData>> allSegments,
-        CachedSegment<TRange, TData>? justStored,
-        IReadOnlyList<IEvictionEvaluator<TRange, TData>> firedEvaluators)
+        IReadOnlyList<CachedSegment<TRange, TData>> justStoredSegments,
+        int removalCount)
     {
         var candidates = allSegments
-            .Where(s => !ReferenceEquals(s, justStored))
+            .Where(s => !justStoredSegments.Contains(s))
             .OrderBy(s => s.Range.Span(_domain).Value)
             .ToList();
 
@@ -88,7 +87,6 @@ internal sealed class SmallestFirstEvictionExecutor<TRange, TData, TDomain> : IE
             return [];
         }
 
-        var removalCount = firedEvaluators.Max(e => e.ComputeRemovalCount(allSegments.Count, allSegments));
         return candidates.Take(removalCount).ToList();
     }
 }

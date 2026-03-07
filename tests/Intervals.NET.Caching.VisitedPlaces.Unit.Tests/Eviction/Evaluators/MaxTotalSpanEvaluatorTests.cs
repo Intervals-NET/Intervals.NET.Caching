@@ -39,10 +39,10 @@ public sealed class MaxTotalSpanEvaluatorTests
 
     #endregion
 
-    #region ShouldEvict Tests
+    #region ComputeEvictionCount Tests — No Eviction
 
     [Fact]
-    public void ShouldEvict_WhenTotalSpanBelowMax_ReturnsFalse()
+    public void ComputeEvictionCount_WhenTotalSpanBelowMax_ReturnsZero()
     {
         // ARRANGE
         var evaluator = new MaxTotalSpanEvaluator<int, int, IntegerFixedStepDomain>(50, _domain);
@@ -51,14 +51,32 @@ public sealed class MaxTotalSpanEvaluatorTests
         var segments = new[] { CreateSegment(0, 9) };
 
         // ACT
-        var result = evaluator.ShouldEvict(segments.Length, segments);
+        var result = evaluator.ComputeEvictionCount(segments.Length, segments);
 
         // ASSERT
-        Assert.False(result);
+        Assert.Equal(0, result);
     }
 
     [Fact]
-    public void ShouldEvict_WhenTotalSpanExceedsMax_ReturnsTrue()
+    public void ComputeEvictionCount_WithEmptyStorage_ReturnsZero()
+    {
+        // ARRANGE
+        var evaluator = new MaxTotalSpanEvaluator<int, int, IntegerFixedStepDomain>(1, _domain);
+        var segments = Array.Empty<CachedSegment<int, int>>();
+
+        // ACT
+        var result = evaluator.ComputeEvictionCount(segments.Length, segments);
+
+        // ASSERT
+        Assert.Equal(0, result);
+    }
+
+    #endregion
+
+    #region ComputeEvictionCount Tests — Eviction Triggered
+
+    [Fact]
+    public void ComputeEvictionCount_WhenTotalSpanExceedsMax_ReturnsPositive()
     {
         // ARRANGE
         var evaluator = new MaxTotalSpanEvaluator<int, int, IntegerFixedStepDomain>(5, _domain);
@@ -67,14 +85,14 @@ public sealed class MaxTotalSpanEvaluatorTests
         var segments = new[] { CreateSegment(0, 9) };
 
         // ACT
-        var result = evaluator.ShouldEvict(segments.Length, segments);
+        var result = evaluator.ComputeEvictionCount(segments.Length, segments);
 
         // ASSERT
-        Assert.True(result);
+        Assert.True(result > 0, $"Expected a positive eviction count, got {result}");
     }
 
     [Fact]
-    public void ShouldEvict_WithMultipleSegmentsTotalExceedsMax_ReturnsTrue()
+    public void ComputeEvictionCount_WithMultipleSegmentsTotalExceedsMax_ReturnsPositive()
     {
         // ARRANGE
         var evaluator = new MaxTotalSpanEvaluator<int, int, IntegerFixedStepDomain>(15, _domain);
@@ -83,60 +101,28 @@ public sealed class MaxTotalSpanEvaluatorTests
         var segments = new[] { CreateSegment(0, 9), CreateSegment(20, 29) };
 
         // ACT
-        var result = evaluator.ShouldEvict(segments.Length, segments);
+        var result = evaluator.ComputeEvictionCount(segments.Length, segments);
 
         // ASSERT
-        Assert.True(result);
+        Assert.True(result > 0, $"Expected a positive eviction count, got {result}");
     }
 
     [Fact]
-    public void ShouldEvict_WithEmptyStorage_ReturnsFalse()
-    {
-        // ARRANGE
-        var evaluator = new MaxTotalSpanEvaluator<int, int, IntegerFixedStepDomain>(1, _domain);
-        var segments = Array.Empty<CachedSegment<int, int>>();
-
-        // ACT
-        var result = evaluator.ShouldEvict(segments.Length, segments);
-
-        // ASSERT
-        Assert.False(result);
-    }
-
-    #endregion
-
-    #region ComputeRemovalCount Tests
-
-    [Fact]
-    public void ComputeRemovalCount_WhenNotOverLimit_ReturnsZero()
-    {
-        // ARRANGE
-        var evaluator = new MaxTotalSpanEvaluator<int, int, IntegerFixedStepDomain>(20, _domain);
-        var segments = new[] { CreateSegment(0, 9) }; // span 10
-
-        // ACT
-        var count = evaluator.ComputeRemovalCount(segments.Length, segments);
-
-        // ASSERT
-        Assert.Equal(0, count);
-    }
-
-    [Fact]
-    public void ComputeRemovalCount_WhenOneLargeSegmentExceedsMax_ReturnsOne()
+    public void ComputeEvictionCount_WhenOneLargeSegmentExceedsMax_ReturnsOne()
     {
         // ARRANGE
         var evaluator = new MaxTotalSpanEvaluator<int, int, IntegerFixedStepDomain>(5, _domain);
         var segments = new[] { CreateSegment(0, 9) }; // span 10 > 5 → excess 5 → remove 1
 
         // ACT
-        var count = evaluator.ComputeRemovalCount(segments.Length, segments);
+        var count = evaluator.ComputeEvictionCount(segments.Length, segments);
 
         // ASSERT
         Assert.Equal(1, count);
     }
 
     [Fact]
-    public void ComputeRemovalCount_WithMultipleSegments_ReturnsMinimumNeeded()
+    public void ComputeEvictionCount_WithMultipleSegments_ReturnsMinimumNeeded()
     {
         // ARRANGE – max 15, three segments of span 10 each = total 30, need to remove at least 2
         var evaluator = new MaxTotalSpanEvaluator<int, int, IntegerFixedStepDomain>(15, _domain);
@@ -148,7 +134,7 @@ public sealed class MaxTotalSpanEvaluatorTests
         };
 
         // ACT
-        var count = evaluator.ComputeRemovalCount(segments.Length, segments);
+        var count = evaluator.ComputeEvictionCount(segments.Length, segments);
 
         // ASSERT – removing 2 segments of span 10 each gives total = 10 ≤ 15
         Assert.True(count >= 1, $"Expected at least 1 removal, got {count}");

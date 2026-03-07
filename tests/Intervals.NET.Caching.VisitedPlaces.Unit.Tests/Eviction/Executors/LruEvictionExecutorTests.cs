@@ -74,9 +74,10 @@ public sealed class LruEvictionExecutorTests
 
         var allSegments = storage.GetAllSegments();
         var evaluator = new MaxSegmentCountEvaluator<int, int>(1);
+        var removalCount = evaluator.ComputeEvictionCount(allSegments.Count, allSegments);
 
         // ACT
-        var toRemove = _executor.SelectForEviction(allSegments, justStored: null, [evaluator]);
+        var toRemove = _executor.SelectForEviction(allSegments, justStoredSegments: [], removalCount);
         foreach (var s in toRemove) storage.Remove(s);
 
         // ASSERT
@@ -96,9 +97,10 @@ public sealed class LruEvictionExecutorTests
 
         var allSegments = storage.GetAllSegments();
         var evaluator = new MaxSegmentCountEvaluator<int, int>(1);
+        var removalCount = evaluator.ComputeEvictionCount(allSegments.Count, allSegments);
 
         // ACT
-        var toRemove = _executor.SelectForEviction(allSegments, justStored: justStored, [evaluator]);
+        var toRemove = _executor.SelectForEviction(allSegments, justStoredSegments: [justStored], removalCount);
 
         // ASSERT — nothing selected for eviction
         Assert.Empty(toRemove);
@@ -127,9 +129,10 @@ public sealed class LruEvictionExecutorTests
 
         // MaxCount=2, justStored=seg4 → should select 2 oldest (seg1, seg2)
         var evaluator = new MaxSegmentCountEvaluator<int, int>(2);
+        var removalCount = evaluator.ComputeEvictionCount(allSegments.Count, allSegments);
 
         // ACT
-        var toRemove = _executor.SelectForEviction(allSegments, justStored: seg4, [evaluator]);
+        var toRemove = _executor.SelectForEviction(allSegments, justStoredSegments: [seg4], removalCount);
         foreach (var s in toRemove) storage.Remove(s);
 
         // ASSERT
@@ -142,7 +145,7 @@ public sealed class LruEvictionExecutorTests
     }
 
     // Note: SelectForEviction is only called by BackgroundEventProcessor when at least one evaluator
-    // has fired (Invariant VPC.E.2a). Calling it with an empty firedEvaluators list is not a supported
+    // has fired (Invariant VPC.E.2a). Calling it with removalCount=0 is not a supported
     // scenario; no test is provided for this case.
 
     #endregion

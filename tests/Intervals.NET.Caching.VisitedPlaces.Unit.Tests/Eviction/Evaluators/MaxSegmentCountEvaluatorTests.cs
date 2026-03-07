@@ -47,122 +47,94 @@ public sealed class MaxSegmentCountEvaluatorTests
 
     #endregion
 
-    #region ShouldEvict Tests
+    #region ComputeEvictionCount Tests — No Eviction
 
     [Fact]
-    public void ShouldEvict_WhenCountBelowMax_ReturnsFalse()
+    public void ComputeEvictionCount_WhenCountBelowMax_ReturnsZero()
     {
         // ARRANGE
         var evaluator = new MaxSegmentCountEvaluator<int, int>(3);
         var segments = CreateSegments(2);
 
         // ACT
-        var result = evaluator.ShouldEvict(segments.Count, segments);
+        var result = evaluator.ComputeEvictionCount(segments.Count, segments);
 
         // ASSERT
-        Assert.False(result);
+        Assert.Equal(0, result);
     }
 
     [Fact]
-    public void ShouldEvict_WhenCountEqualsMax_ReturnsFalse()
+    public void ComputeEvictionCount_WhenCountEqualsMax_ReturnsZero()
     {
         // ARRANGE
         var evaluator = new MaxSegmentCountEvaluator<int, int>(3);
         var segments = CreateSegments(3);
 
         // ACT
-        var result = evaluator.ShouldEvict(segments.Count, segments);
+        var result = evaluator.ComputeEvictionCount(segments.Count, segments);
 
         // ASSERT
-        Assert.False(result);
+        Assert.Equal(0, result);
     }
 
     [Fact]
-    public void ShouldEvict_WhenCountExceedsMax_ReturnsTrue()
-    {
-        // ARRANGE
-        var evaluator = new MaxSegmentCountEvaluator<int, int>(3);
-        var segments = CreateSegments(4);
-
-        // ACT
-        var result = evaluator.ShouldEvict(segments.Count, segments);
-
-        // ASSERT
-        Assert.True(result);
-    }
-
-    [Fact]
-    public void ShouldEvict_WhenStorageEmpty_ReturnsFalse()
+    public void ComputeEvictionCount_WhenStorageEmpty_ReturnsZero()
     {
         // ARRANGE
         var evaluator = new MaxSegmentCountEvaluator<int, int>(1);
         var segments = CreateSegments(0);
 
         // ACT
-        var result = evaluator.ShouldEvict(segments.Count, segments);
+        var result = evaluator.ComputeEvictionCount(segments.Count, segments);
 
         // ASSERT
-        Assert.False(result);
+        Assert.Equal(0, result);
     }
 
     #endregion
 
-    #region ComputeRemovalCount Tests
+    #region ComputeEvictionCount Tests — Eviction Triggered
 
     [Fact]
-    public void ComputeRemovalCount_WhenCountAtMax_ReturnsZero()
-    {
-        // ARRANGE
-        var evaluator = new MaxSegmentCountEvaluator<int, int>(3);
-        var segments = CreateSegments(3);
-
-        // ACT
-        var count = evaluator.ComputeRemovalCount(segments.Count, segments);
-
-        // ASSERT
-        Assert.Equal(0, count);
-    }
-
-    [Fact]
-    public void ComputeRemovalCount_WhenCountExceedsByOne_ReturnsOne()
+    public void ComputeEvictionCount_WhenCountExceedsMax_ReturnsPositive()
     {
         // ARRANGE
         var evaluator = new MaxSegmentCountEvaluator<int, int>(3);
         var segments = CreateSegments(4);
 
         // ACT
-        var count = evaluator.ComputeRemovalCount(segments.Count, segments);
+        var result = evaluator.ComputeEvictionCount(segments.Count, segments);
+
+        // ASSERT
+        Assert.True(result > 0, $"Expected a positive eviction count, got {result}");
+    }
+
+    [Fact]
+    public void ComputeEvictionCount_WhenCountExceedsByOne_ReturnsOne()
+    {
+        // ARRANGE
+        var evaluator = new MaxSegmentCountEvaluator<int, int>(3);
+        var segments = CreateSegments(4);
+
+        // ACT
+        var count = evaluator.ComputeEvictionCount(segments.Count, segments);
 
         // ASSERT
         Assert.Equal(1, count);
     }
 
     [Fact]
-    public void ComputeRemovalCount_WhenCountExceedsByMany_ReturnsExcess()
+    public void ComputeEvictionCount_WhenCountExceedsByMany_ReturnsExcess()
     {
         // ARRANGE
         var evaluator = new MaxSegmentCountEvaluator<int, int>(3);
         var segments = CreateSegments(7);
 
         // ACT
-        var count = evaluator.ComputeRemovalCount(segments.Count, segments);
+        var count = evaluator.ComputeEvictionCount(segments.Count, segments);
 
         // ASSERT
         Assert.Equal(4, count);
-    }
-
-    [Fact]
-    public void ComputeRemovalCount_WhenStorageEmpty_ReturnsZero()
-    {
-        // ARRANGE
-        var evaluator = new MaxSegmentCountEvaluator<int, int>(3);
-        var segments = CreateSegments(0);
-
-        // ACT
-        var count = evaluator.ComputeRemovalCount(segments.Count, segments);
-
-        // ASSERT
-        Assert.Equal(0, count);
     }
 
     #endregion

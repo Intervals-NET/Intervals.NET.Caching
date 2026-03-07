@@ -416,8 +416,8 @@ public sealed class BackgroundEventProcessorTests
 
         public IReadOnlyList<CachedSegment<int, int>> SelectForEviction(
             IReadOnlyList<CachedSegment<int, int>> allSegments,
-            CachedSegment<int, int>? justStored,
-            IReadOnlyList<IEvictionEvaluator<int, int>> firedEvaluators) =>
+            IReadOnlyList<CachedSegment<int, int>> justStoredSegments,
+            int removalCount) =>
             throw new InvalidOperationException("Simulated eviction failure.");
     }
 

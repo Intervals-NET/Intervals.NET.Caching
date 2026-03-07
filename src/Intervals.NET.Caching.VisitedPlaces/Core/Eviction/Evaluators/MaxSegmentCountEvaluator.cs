@@ -44,10 +44,7 @@ internal sealed class MaxSegmentCountEvaluator<TRange, TData> : IEvictionEvaluat
     }
 
     /// <inheritdoc/>
-    public bool ShouldEvict(int count, IReadOnlyList<CachedSegment<TRange, TData>> allSegments) =>
-        count > MaxCount;
-
-    /// <inheritdoc/>
-    public int ComputeRemovalCount(int count, IReadOnlyList<CachedSegment<TRange, TData>> allSegments) =>
+    /// TODO: looks like the parameter list is not optimal. I guess we can pass just allSegments without precalculated count - everything else must be inside this method.
+    public int ComputeEvictionCount(int count, IReadOnlyList<CachedSegment<TRange, TData>> allSegments) =>
         Math.Max(0, count - MaxCount);
 }

@@ -109,8 +109,8 @@ internal sealed class BackgroundEventProcessor<TRange, TData, TDomain>
             _diagnostics.BackgroundStatisticsUpdated();
 
             // Step 2: Store freshly fetched data (null FetchedChunks means full cache hit — skip).
-            // TODO: just stored segment contains only the last stored segment within a single event proceesing, but the invariant mentioned that we have to prevent eviction of recently stored segment(S) cover all the stored segments within a single event processing.
-            CachedSegment<TRange, TData>? justStored = null;
+            // Track ALL segments stored in this event cycle for just-stored immunity (Invariant VPC.E.3).
+            var justStoredSegments = new List<CachedSegment<TRange, TData>>();
 
             if (backgroundEvent.FetchedChunks != null)
             {
@@ -130,35 +130,36 @@ internal sealed class BackgroundEventProcessor<TRange, TData, TDomain>
                     _storage.Add(segment);
                     _diagnostics.BackgroundSegmentStored();
 
-                    justStored = segment;
+                    justStoredSegments.Add(segment);
                 }
             }
 
             // Steps 3 & 4: Evaluate and execute eviction only when new data was stored.
-            if (justStored != null)
+            if (justStoredSegments.Count > 0)
             {
-                // Step 3: Evaluate — query all evaluators with current storage state.
-                _diagnostics.EvictionEvaluated(); // evaluated in past simple - means it is done already, but we can see that this method is called BEFORE the actual aviction evaluation
-
+                // Step 3: Evaluate — query all evaluators and take the max removal count.
                 var allSegments = _storage.GetAllSegments();
                 var count = _storage.Count;
 
-                var firedEvaluators = new List<IEvictionEvaluator<TRange, TData>>();
+                var removalCount = 0;
                 foreach (var evaluator in _evaluators)
                 {
-                    if (evaluator.ShouldEvict(count, allSegments))
+                    var evaluatorCount = evaluator.ComputeEvictionCount(count, allSegments);
+                    if (evaluatorCount > removalCount)
                     {
-                        firedEvaluators.Add(evaluator);
+                        removalCount = evaluatorCount;
                     }
                 }
 
+                _diagnostics.EvictionEvaluated();
+
                 // Step 4: Execute eviction if any evaluator fired (Invariant VPC.E.2a).
                 // The executor selects candidates; this processor removes them from storage.
-                if (firedEvaluators.Count > 0)
+                if (removalCount > 0)
                 {
                     _diagnostics.EvictionTriggered();
 
-                    var toRemove = _executor.SelectForEviction(allSegments, justStored, firedEvaluators);
+                    var toRemove = _executor.SelectForEviction(allSegments, justStoredSegments, removalCount);
                     foreach (var segment in toRemove)
                     {
                         _storage.Remove(segment);

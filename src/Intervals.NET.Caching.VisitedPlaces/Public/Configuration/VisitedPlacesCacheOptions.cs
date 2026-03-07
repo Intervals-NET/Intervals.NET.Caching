@@ -19,32 +19,42 @@ public sealed class VisitedPlacesCacheOptions : IEquatable<VisitedPlacesCacheOpt
     public StorageStrategy StorageStrategy { get; }
 
     /// <summary>
-    /// The bounded capacity of the internal background event channel.
-    /// Controls how many pending background events may queue before the user path blocks.
+    /// The bounded capacity of the internal background event channel, or <see langword="null"/>
+    /// to use unbounded task-chaining scheduling instead.
     /// </summary>
     /// <remarks>
-    /// Must be &gt;= 1. Larger values reduce backpressure on the user path at the cost of
-    /// higher memory usage during sustained bursts.
+    /// <para>
+    /// When <see langword="null"/> (the default), a <c>TaskBasedWorkScheduler</c> is used:
+    /// unbounded, no backpressure, minimal memory overhead — suitable for most scenarios.
+    /// </para>
+    /// <para>
+    /// When set to a positive integer, a <c>ChannelBasedWorkScheduler</c> with that capacity
+    /// is used: bounded, applies backpressure to the user path when the queue is full.
+    /// Must be &gt;= 1 when non-null.
+    /// </para>
     /// </remarks>
-    public int EventChannelCapacity { get; }
+    public int? EventChannelCapacity { get; }
 
     /// <summary>
     /// Initializes a new <see cref="VisitedPlacesCacheOptions"/> with the specified values.
     /// </summary>
     /// <param name="storageStrategy">The storage strategy to use.</param>
-    /// <param name="eventChannelCapacity">The background event channel capacity. Must be &gt;= 1.</param>
+    /// <param name="eventChannelCapacity">
+    /// The background event channel capacity, or <see langword="null"/> (default) to use
+    /// unbounded task-chaining scheduling. Must be &gt;= 1 when non-null.
+    /// </param>
     /// <exception cref="ArgumentOutOfRangeException">
-    /// Thrown when <paramref name="eventChannelCapacity"/> is less than 1.
+    /// Thrown when <paramref name="eventChannelCapacity"/> is non-null and less than 1.
     /// </exception>
     public VisitedPlacesCacheOptions(
         StorageStrategy storageStrategy = StorageStrategy.SnapshotAppendBuffer,
-        int eventChannelCapacity = 128)
+        int? eventChannelCapacity = null)
     {
-        if (eventChannelCapacity < 1)
+        if (eventChannelCapacity is < 1)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(eventChannelCapacity),
-                "EventChannelCapacity must be greater than or equal to 1.");
+                "EventChannelCapacity must be greater than or equal to 1 when specified.");
         }
 
         StorageStrategy = storageStrategy;

@@ -93,8 +93,6 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
                 "Cannot handle request on a disposed handler.");
         }
 
-        _diagnostics.UserRequestServed(); // todo this event must be at the very end accordingly to the name - served, means all the work in user path is done
-
         // Step 1: Read intersecting segments (read-only, Invariant VPC.A.10).
         var hittingSegments = _storage.FindIntersecting(requestedRange);
 
@@ -121,10 +119,11 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
             // Full Miss: no cached data at all for this range.
             cacheInteraction = CacheInteraction.FullMiss;
             _diagnostics.UserRequestFullCacheMiss();
-            _diagnostics.DataSourceFetchGap();
 
             var chunk = await _dataSource.FetchAsync(requestedRange, cancellationToken)
                 .ConfigureAwait(false);
+
+            _diagnostics.DataSourceFetchGap();
 
             fetchedChunks = [chunk];
             actualRange = chunk.Range;
@@ -141,36 +140,31 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
             // Fetch all gaps from IDataSource.
             var chunks = await _dataSource.FetchAsync(gaps, cancellationToken)
                 .ConfigureAwait(false);
-            _diagnostics.DataSourceFetchGap(); // todo: looks like this diagnostic is not so precise.
 
             fetchedChunks = [..chunks];
+
+            // Fire one diagnostic event per gap fetched.
+            for (var i = 0; i < gaps.Count; i++)
+            {
+                _diagnostics.DataSourceFetchGap();
+            }
 
             // Assemble result from cached segments + fetched chunks.
             (resultData, actualRange) = AssembleMixed(requestedRange, hittingSegments, fetchedChunks, _domain);
         }
 
-        // Step 6: Publish BackgroundEvent (fire-and-forget).
-        // NOTE: The scheduler (ChannelBasedWorkScheduler) increments the activity counter
-        // inside PublishWorkItemAsync before enqueuing — we must NOT increment it here too.
+        // Step 6: Publish BackgroundEvent and await the enqueue (preserves activity counter correctness).
+        // Awaiting PublishWorkItemAsync only waits for the channel enqueue — not background processing —
+        // so fire-and-forget semantics are preserved. The background loop handles processing asynchronously.
         var backgroundEvent = new BackgroundEvent<TRange, TData>(
             requestedRange,
             hittingSegments,
             fetchedChunks);
 
-        // Fire-and-forget: we do not await the scheduler. The background loop handles it.
-        // The scheduler's PublishWorkItemAsync is ValueTask-returning; we discard the result
-        // intentionally. Any scheduling failure is handled inside the scheduler infrastructure.
-        // TODO: we have to await this call - see SWC implementation for example. This doesn't break fire and forget - this allows to make it work properly.
-        _ = _scheduler.PublishWorkItemAsync(backgroundEvent, cancellationToken)
-            .AsTask()
-            .ContinueWith(
-                static t =>
-                {
-                    // Swallow scheduling exceptions to avoid unobserved task exceptions.
-                    // The scheduler's WorkFailed diagnostic will have already fired.
-                    _ = t.Exception;
-                },
-                TaskContinuationOptions.OnlyOnFaulted);
+        await _scheduler.PublishWorkItemAsync(backgroundEvent, cancellationToken)
+            .ConfigureAwait(false);
+
+        _diagnostics.UserRequestServed();
 
         return new RangeResult<TRange, TData>(actualRange, resultData, cacheInteraction);
     }
@@ -190,63 +184,35 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
 
     /// <summary>
     /// Computes the gaps in <paramref name="requestedRange"/> not covered by
-    /// <paramref name="hittingSegments"/> (sorted ascending by range start).
+    /// <paramref name="hittingSegments"/>.
     /// </summary>
-    /// TODO try to refactor this method in a way to avoid temp list or array allocations - utilize IEnumerable where possible
     private static List<Range<TRange>> ComputeGaps(
         Range<TRange> requestedRange,
         IReadOnlyList<CachedSegment<TRange, TData>> hittingSegments)
     {
-        var gaps = new List<Range<TRange>>();
-
         if (hittingSegments.Count == 0)
         {
-            // Full miss — the whole requested range is a gap.
-            gaps.Add(requestedRange);
-            return gaps;
+            return [requestedRange];
         }
 
-        // Sort segments by start value for gap computation.
-        var sorted = hittingSegments
-            .OrderBy(s => s.Range.Start.Value)
-            .ToList();
+        // Use iterative .Except() from Intervals.NET.Extensions to compute uncovered sub-ranges.
+        IEnumerable<Range<TRange>> remaining = [requestedRange];
 
-        var cursor = requestedRange.Start.Value;
-        var requestEnd = requestedRange.End.Value;
-
-        // TODO reconsider the gap calculation logic - I guess we can utilize the Intervals.NET's extensions for Range<T> to get except ranges (.Except() method).
-        foreach (var seg in sorted)
+        foreach (var seg in hittingSegments)
         {
-            var segStart = seg.Range.Start.Value;
-            var segEnd = seg.Range.End.Value;
-
-            // If the segment starts after the cursor, there's a gap before it.
-            if (segStart.CompareTo(cursor) > 0)
+            var segRange = seg.Range;
+            remaining = remaining.SelectMany(r =>
             {
-                // Gap from cursor to segment start (exclusive).
-                gaps.Add(Factories.Range.Closed<TRange>(cursor, Predecessor(segStart)));
-            }
-
-            // Advance cursor past this segment.
-            if (segEnd.CompareTo(cursor) > 0)
-            {
-                cursor = Successor(segEnd);
-            }
-
-            // Short-circuit: if cursor is past request end, we're done.
-            if (cursor.CompareTo(requestEnd) > 0)
-            {
-                break;
-            }
+                var intersection = r.Intersect(segRange);
+                if (!intersection.HasValue)
+                {
+                    return (IEnumerable<Range<TRange>>)[r];
+                }
+                return r.Except(intersection.Value);
+            });
         }
 
-        // Trailing gap: if cursor hasn't reached request end yet.
-        if (cursor.CompareTo(requestEnd) <= 0)
-        {
-            gaps.Add(Factories.Range.Closed<TRange>(cursor, requestEnd));
-        }
-
-        return gaps;
+        return remaining.ToList();
     }
 
     /// <summary>
@@ -323,7 +289,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
 
             var chunkData = MaterialiseData(chunk.Data);
             // Slice the chunk data to the intersection within the chunk's range.
-            var offsetInChunk = (int)ComputeSpan(chunk.Range.Value.Start.Value, intersection.Value.Start.Value, chunk.Range.Value, domain);
+            var offsetInChunk = (int)ComputeSpan(chunk.Range.Value.Start.Value, intersection.Value.Start.Value, domain);
             var sliceLength = (int)intersection.Value.Span(domain).Value;
             var slicedChunkData = chunkData.Slice(offsetInChunk, Math.Min(sliceLength, chunkData.Length - offsetInChunk));
             pieces.Add((intersection.Value.Start.Value, slicedChunkData));
@@ -354,7 +320,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
         TDomain domain)
     {
         // Compute element offset from segment start to intersection start.
-        var offsetInSegment = (int)ComputeSpan(segment.Range.Start.Value, intersection.Start.Value, segment.Range, domain);
+        var offsetInSegment = (int)ComputeSpan(segment.Range.Start.Value, intersection.Start.Value, domain);
         // Compute the number of elements in the intersection.
         var sliceLength = (int)intersection.Span(domain).Value;
 
@@ -369,23 +335,18 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     }
 
     /// <summary>
-    /// Computes the number of discrete domain elements between <paramref name="from"/> and
-    /// <paramref name="to"/> (exclusive of <paramref name="to"/>), where both values are inclusive
-    /// boundaries within <paramref name="contextRange"/>.
+    /// Computes the number of discrete domain elements between <paramref name="from"/> (inclusive)
+    /// and <paramref name="to"/> (exclusive) using <see cref="IRangeDomain{T}.Distance"/>.
     /// Returns 0 when <paramref name="from"/> equals <paramref name="to"/>.
     /// </summary>
-    private static long ComputeSpan(TRange from, TRange to, Range<TRange> contextRange, TDomain domain)
+    private static long ComputeSpan(TRange from, TRange to, TDomain domain)
     {
         if (from.CompareTo(to) == 0)
         {
             return 0;
         }
 
-        // Build a half-open range [from, to) using the same inclusivity as contextRange.Start.
-        // Since our segments/intersections always use closed ranges (both ends inclusive),
-        // we can compute span([from, predecessor(to)]) = span of closed range from..to-1.
-        var subRange = Factories.Range.Closed<TRange>(from, Predecessor(to));
-        return subRange.Span(domain).Value;
+        return domain.Distance(from, to);
     }
 
     private static ReadOnlyMemory<TData> MaterialiseData(IEnumerable<TData> data)
@@ -415,33 +376,5 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
         }
 
         return result;
-    }
-
-    /// <summary>Returns the immediate predecessor of a range value.</summary>
-    /// <remarks>
-    /// This is a best-effort generic predecessor. For integer domains, uses the int predecessor.
-    /// For other types, returns the same value (gap boundary is inclusive).
-    /// </remarks>
-    /// TODO: this is very strange method - it must not exist at all.
-    private static TRange Predecessor(TRange value)
-    {
-        if (value is int i)
-        {
-            return (TRange)(object)(i - 1);
-        }
-
-        return value;
-    }
-
-    /// <summary>Returns the immediate successor of a range value.</summary>
-    /// /// TODO: this is very strange method - it must not exist at all.
-    private static TRange Successor(TRange value)
-    {
-        if (value is int i)
-        {
-            return (TRange)(object)(i + 1);
-        }
-
-        return value;
     }
 }

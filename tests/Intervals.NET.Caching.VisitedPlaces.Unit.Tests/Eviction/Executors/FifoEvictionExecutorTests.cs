@@ -51,9 +51,10 @@ public sealed class FifoEvictionExecutorTests
 
         var allSegments = storage.GetAllSegments();
         var evaluator = new MaxSegmentCountEvaluator<int, int>(2);
+        var removalCount = evaluator.ComputeEvictionCount(allSegments.Count, allSegments);
 
         // ACT
-        var toRemove = _executor.SelectForEviction(allSegments, justStored: null, [evaluator]);
+        var toRemove = _executor.SelectForEviction(allSegments, justStoredSegments: [], removalCount);
         foreach (var s in toRemove) storage.Remove(s);
 
         // ASSERT — oldest should be removed first
@@ -72,9 +73,10 @@ public sealed class FifoEvictionExecutorTests
 
         var allSegments = storage.GetAllSegments();
         var evaluator = new MaxSegmentCountEvaluator<int, int>(1);
+        var removalCount = evaluator.ComputeEvictionCount(allSegments.Count, allSegments);
 
         // ACT
-        var toRemove = _executor.SelectForEviction(allSegments, justStored: justStored, [evaluator]);
+        var toRemove = _executor.SelectForEviction(allSegments, justStoredSegments: [justStored], removalCount);
 
         // ASSERT — no eviction (VPC.E.3a)
         Assert.Empty(toRemove);
@@ -102,9 +104,10 @@ public sealed class FifoEvictionExecutorTests
 
         // MaxCount=1 → remove 3, but justStored is immune → removes seg1, seg2, seg3
         var evaluator = new MaxSegmentCountEvaluator<int, int>(1);
+        var removalCount = evaluator.ComputeEvictionCount(allSegments.Count, allSegments);
 
         // ACT
-        var toRemove = _executor.SelectForEviction(allSegments, justStored: justStored, [evaluator]);
+        var toRemove = _executor.SelectForEviction(allSegments, justStoredSegments: [justStored], removalCount);
         foreach (var s in toRemove) storage.Remove(s);
 
         // ASSERT
