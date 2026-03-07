@@ -12,7 +12,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Selectors;
 /// <typeparam name="TDomain">The range domain type used to compute segment spans.</typeparam>
 /// <remarks>
 /// <para><strong>Strategy:</strong> Orders candidates ascending by span
-/// (computed as <c>segment.Range.Span(domain)</c>) — the narrowest segment is first
+/// (stored in <see cref="SmallestFirstMetadata.Span"/>) — the narrowest segment is first
 /// (highest eviction priority).</para>
 /// <para><strong>Execution Context:</strong> Background Path (single writer thread)</para>
 /// <para>
@@ -20,14 +20,39 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Selectors;
 /// are retained over narrow ones. Best for workloads where wider segments are more valuable
 /// because they are more likely to be re-used.
 /// </para>
-/// <para><strong>Metadata:</strong> No metadata needed — ordering is derived entirely from
-/// <c>segment.Range.Span(domain)</c>. <see cref="CachedSegment{TRange,TData}.EvictionMetadata"/>
-/// is left <see langword="null"/> for segments managed by this selector.</para>
+/// <para><strong>Metadata:</strong> Uses <see cref="SmallestFirstMetadata"/> stored on
+/// <see cref="CachedSegment{TRange,TData}.EvictionMetadata"/>. The span is computed once at
+/// initialization from <c>segment.Range.Span(domain).Value</c> and cached — segments are
+/// immutable so the span never changes, and pre-computing it avoids redundant computation
+/// during every <see cref="OrderCandidates"/> call. <c>UpdateMetadata</c> is a no-op because
+/// span is unaffected by access patterns.</para>
 /// </remarks>
 internal sealed class SmallestFirstEvictionSelector<TRange, TData, TDomain> : IEvictionSelector<TRange, TData>
     where TRange : IComparable<TRange>
     where TDomain : IRangeDomain<TRange>
 {
+    /// <summary>
+    /// Selector-specific metadata for <see cref="SmallestFirstEvictionSelector{TRange,TData,TDomain}"/>.
+    /// Caches the pre-computed span of the segment's range.
+    /// </summary>
+    internal sealed class SmallestFirstMetadata : IEvictionMetadata
+    {
+        /// <summary>
+        /// The pre-computed span of the segment's range (in domain steps).
+        /// Immutable — segment ranges never change after creation.
+        /// </summary>
+        public long Span { get; }
+
+        /// <summary>
+        /// Initializes a new <see cref="SmallestFirstMetadata"/> with the given span.
+        /// </summary>
+        /// <param name="span">The pre-computed span of the segment's range.</param>
+        public SmallestFirstMetadata(long span)
+        {
+            Span = span;
+        }
+    }
+
     private readonly TDomain _domain;
 
     /// <summary>
@@ -49,11 +74,13 @@ internal sealed class SmallestFirstEvictionSelector<TRange, TData, TDomain> : IE
 
     /// <inheritdoc/>
     /// <remarks>
-    /// No-op — SmallestFirst requires no per-segment metadata.
+    /// Computes <c>segment.Range.Span(domain).Value</c> once and stores it as a
+    /// <see cref="SmallestFirstMetadata"/> instance on the segment. Because segment ranges
+    /// are immutable, this value never needs to be recomputed.
     /// </remarks>
     public void InitializeMetadata(CachedSegment<TRange, TData> segment, DateTime now)
     {
-        // SmallestFirst derives ordering from segment span — no metadata needed.
+        segment.EvictionMetadata = new SmallestFirstMetadata(segment.Range.Span(_domain).Value);
     }
 
     /// <inheritdoc/>
@@ -68,14 +95,18 @@ internal sealed class SmallestFirstEvictionSelector<TRange, TData, TDomain> : IE
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Sorts candidates ascending by <c>segment.Range.Span(domain)</c>.
+    /// Sorts candidates ascending by <see cref="SmallestFirstMetadata.Span"/>.
     /// The narrowest segment is first in the returned list.
+    /// If a segment has no <see cref="SmallestFirstMetadata"/> (e.g., metadata was never initialized),
+    /// the span is computed live from <c>segment.Range.Span(domain).Value</c> as a fallback.
     /// </remarks>
     public IReadOnlyList<CachedSegment<TRange, TData>> OrderCandidates(
         IReadOnlyList<CachedSegment<TRange, TData>> candidates)
     {
         return candidates
-            .OrderBy(s => s.Range.Span(_domain).Value) // todo: think about defining metadata for this type of selector in order to prevent calculating span for every segment inside this method. Segments are immutable, we can calculate span on metadata initialization and then just use it for this method. 
+            .OrderBy(s => s.EvictionMetadata is SmallestFirstMetadata meta
+                ? meta.Span
+                : s.Range.Span(_domain).Value)
             .ToList();
     }
 }
