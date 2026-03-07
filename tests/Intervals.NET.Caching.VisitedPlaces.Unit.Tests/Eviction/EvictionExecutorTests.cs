@@ -24,7 +24,7 @@ public sealed class EvictionExecutorTests
     {
         // ARRANGE — 4 segments, max 2 → need to remove 2
         var segments = CreateSegmentsWithAccess(4);
-        var pressure = new SegmentCountPressure<int, int>(currentCount: 4, maxCount: 2);
+        var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 4, maxCount: 2);
         var executor = new EvictionExecutor<int, int>(new LruEvictionSelector<int, int>());
 
         // ACT
@@ -40,7 +40,7 @@ public sealed class EvictionExecutorTests
     {
         // ARRANGE — 3 segments, max 2 → remove 1
         var segments = CreateSegmentsWithAccess(3);
-        var pressure = new SegmentCountPressure<int, int>(currentCount: 3, maxCount: 2);
+        var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 3, maxCount: 2);
         var executor = new EvictionExecutor<int, int>(new LruEvictionSelector<int, int>());
 
         // ACT
@@ -60,7 +60,7 @@ public sealed class EvictionExecutorTests
         var seg3 = CreateSegment(40, 49); // span 10
         var segments = new List<CachedSegment<int, int>> { seg1, seg2, seg3 };
 
-        var pressure = new TotalSpanPressure<int, int, IntegerFixedStepDomain>(
+        var pressure = new MaxTotalSpanPolicy<int, int, IntegerFixedStepDomain>.TotalSpanPressure(
             currentTotalSpan: 30, maxTotalSpan: 15, domain: _domain);
 
         // Use LRU selector — all have same access time, so order is stable
@@ -87,7 +87,7 @@ public sealed class EvictionExecutorTests
         var recent = CreateSegmentWithLastAccess(10, 15, baseTime);
         var segments = new List<CachedSegment<int, int>> { old, recent };
 
-        var pressure = new SegmentCountPressure<int, int>(currentCount: 2, maxCount: 1);
+        var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 2, maxCount: 1);
         var executor = new EvictionExecutor<int, int>(new LruEvictionSelector<int, int>());
 
         // ACT
@@ -107,7 +107,7 @@ public sealed class EvictionExecutorTests
         var newest = CreateSegmentWithCreatedAt(10, 15, baseTime);
         var segments = new List<CachedSegment<int, int>> { oldest, newest };
 
-        var pressure = new SegmentCountPressure<int, int>(currentCount: 2, maxCount: 1);
+        var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 2, maxCount: 1);
         var executor = new EvictionExecutor<int, int>(new FifoEvictionSelector<int, int>());
 
         // ACT
@@ -126,7 +126,7 @@ public sealed class EvictionExecutorTests
         var large = CreateSegment(20, 29);  // span 10
         var segments = new List<CachedSegment<int, int>> { small, large };
 
-        var pressure = new SegmentCountPressure<int, int>(currentCount: 2, maxCount: 1);
+        var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 2, maxCount: 1);
         var selector = new SmallestFirstEvictionSelector<int, int, IntegerFixedStepDomain>(_domain);
         var executor = new EvictionExecutor<int, int>(selector);
 
@@ -150,7 +150,7 @@ public sealed class EvictionExecutorTests
         var justStored = CreateSegmentWithLastAccess(10, 15, DateTime.UtcNow);
         var segments = new List<CachedSegment<int, int>> { old, justStored };
 
-        var pressure = new SegmentCountPressure<int, int>(currentCount: 2, maxCount: 1);
+        var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 2, maxCount: 1);
         var executor = new EvictionExecutor<int, int>(new LruEvictionSelector<int, int>());
 
         // ACT
@@ -169,7 +169,7 @@ public sealed class EvictionExecutorTests
         var seg = CreateSegment(0, 5);
         var segments = new List<CachedSegment<int, int>> { seg };
 
-        var pressure = new SegmentCountPressure<int, int>(currentCount: 2, maxCount: 1);
+        var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 2, maxCount: 1);
         var executor = new EvictionExecutor<int, int>(new LruEvictionSelector<int, int>());
 
         // ACT
@@ -190,7 +190,7 @@ public sealed class EvictionExecutorTests
         var just2 = CreateSegmentWithLastAccess(30, 35, baseTime);
         var segments = new List<CachedSegment<int, int>> { old1, old2, just1, just2 };
 
-        var pressure = new SegmentCountPressure<int, int>(currentCount: 4, maxCount: 2);
+        var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 4, maxCount: 2);
         var executor = new EvictionExecutor<int, int>(new LruEvictionSelector<int, int>());
 
         // ACT
@@ -213,7 +213,7 @@ public sealed class EvictionExecutorTests
         var large = CreateSegment(20, 29);  // span 10
         var segments = new List<CachedSegment<int, int>> { small, medium, large };
 
-        var pressure = new SegmentCountPressure<int, int>(currentCount: 3, maxCount: 2);
+        var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 3, maxCount: 2);
         var selector = new SmallestFirstEvictionSelector<int, int, IntegerFixedStepDomain>(_domain);
         var executor = new EvictionExecutor<int, int>(selector);
 
@@ -235,8 +235,8 @@ public sealed class EvictionExecutorTests
         // ARRANGE — count pressure (4>2) + another count pressure (4>3)
         // The stricter constraint (max 2) governs: need to remove 2
         var segments = CreateSegmentsWithAccess(4);
-        var p1 = new SegmentCountPressure<int, int>(currentCount: 4, maxCount: 2); // need 2 removals
-        var p2 = new SegmentCountPressure<int, int>(currentCount: 4, maxCount: 3); // need 1 removal
+        var p1 = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 4, maxCount: 2); // need 2 removals
+        var p2 = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 4, maxCount: 3); // need 1 removal
         var composite = new CompositePressure<int, int>([p1, p2]);
         var executor = new EvictionExecutor<int, int>(new LruEvictionSelector<int, int>());
 
@@ -262,7 +262,7 @@ public sealed class EvictionExecutorTests
         var segments = new List<CachedSegment<int, int>> { old1, old2, justStored };
 
         // Need to remove 3 (count=4, max=1) but only 2 eligible
-        var pressure = new SegmentCountPressure<int, int>(currentCount: 4, maxCount: 1);
+        var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 4, maxCount: 1);
         var executor = new EvictionExecutor<int, int>(new LruEvictionSelector<int, int>());
 
         // ACT
@@ -298,7 +298,7 @@ public sealed class EvictionExecutorTests
         // Total span = 3+6+10 = 19, max = 10 → need to reduce by > 9
         // LRU order: small(3) then medium(6) = total removed 9 → 19-9=10 <= 10 → satisfied after 2
         // Old greedy estimate (largest-first): large(10) alone covers 9 → estimate=1, but LRU removes small first!
-        var pressure = new TotalSpanPressure<int, int, IntegerFixedStepDomain>(
+        var pressure = new MaxTotalSpanPolicy<int, int, IntegerFixedStepDomain>.TotalSpanPressure(
             currentTotalSpan: 19, maxTotalSpan: 10, domain: _domain);
 
         var executor = new EvictionExecutor<int, int>(new LruEvictionSelector<int, int>());
@@ -322,7 +322,7 @@ public sealed class EvictionExecutorTests
     {
         // ARRANGE
         var segments = new List<CachedSegment<int, int>>();
-        var pressure = new SegmentCountPressure<int, int>(currentCount: 1, maxCount: 0);
+        var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 1, maxCount: 0);
         var executor = new EvictionExecutor<int, int>(new LruEvictionSelector<int, int>());
 
         // ACT

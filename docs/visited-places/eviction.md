@@ -53,7 +53,7 @@ Fires when the total number of segments in `CachedSegments` exceeds a configured
 
 ```
 Fires when: CachedSegments.Count > MaxCount
-Produces:   SegmentCountPressure (count-based, order-independent)
+Produces:   SegmentCountPressure (nested in MaxSegmentCountPolicy, count-based, order-independent)
 ```
 
 **Configuration parameter**: `maxCount: int` (must be >= 1)
@@ -68,7 +68,7 @@ Fires when the sum of all segment spans (total coverage width) exceeds a configu
 
 ```
 Fires when: sum(S.Range.Span(domain) for S in CachedSegments) > MaxTotalSpan
-Produces:   TotalSpanPressure (span-aware, order-dependent satisfaction)
+Produces:   TotalSpanPressure (nested in MaxTotalSpanPolicy, span-aware, order-dependent satisfaction)
 ```
 
 **Configuration parameter**: `maxTotalSpan: TRange` (domain-specific span unit)
@@ -103,12 +103,12 @@ A Pressure object tracks whether a constraint is still violated as the executor 
 
 ### Pressure Implementations
 
-| Type                   | Visibility | Produced by                 | `Reduce` behavior                              |
-|------------------------|------------|-----------------------------|------------------------------------------------|
-| `NoPressure`           | public     | All policies (no violation) | No-op (singleton, `IsExceeded` always `false`) |
-| `SegmentCountPressure` | internal   | `MaxSegmentCountPolicy`     | Decrements current count by 1                  |
-| `TotalSpanPressure`    | internal   | `MaxTotalSpanPolicy`        | Subtracts removed segment's span from total    |
-| `CompositePressure`    | internal   | Executor (aggregation)      | Calls `Reduce` on all child pressures          |
+| Type                                         | Visibility        | Produced by                 | `Reduce` behavior                              |
+|----------------------------------------------|-------------------|-----------------------------|------------------------------------------------|
+| `NoPressure`                                 | public            | All policies (no violation) | No-op (singleton, `IsExceeded` always `false`) |
+| `MaxSegmentCountPolicy.SegmentCountPressure` | internal (nested) | `MaxSegmentCountPolicy`     | Decrements current count by 1                  |
+| `MaxTotalSpanPolicy.TotalSpanPressure`       | internal (nested) | `MaxTotalSpanPolicy`        | Subtracts removed segment's span from total    |
+| `CompositePressure`                          | internal          | Executor (aggregation)      | Calls `Reduce` on all child pressures          |
 
 ### CompositePressure
 
@@ -228,11 +228,11 @@ Selectors that require no metadata (e.g., `SmallestFirstEvictionSelector`) leave
 
 ### Selector-Specific Metadata Types
 
-| Selector                       | Metadata Class  | Fields                    | Notes                                 |
-|--------------------------------|-----------------|---------------------------|---------------------------------------|
-| `LruEvictionSelector`          | `LruMetadata`   | `DateTime LastAccessedAt` | Updated on each `UsedSegments` entry  |
-| `FifoEvictionSelector`         | `FifoMetadata`  | `DateTime CreatedAt`      | Immutable after creation              |
-| `SmallestFirstEvictionSelector`| *(none)*        | —                         | Orders by `Range.Span(domain)`; no metadata needed |
+| Selector                        | Metadata Class | Fields                    | Notes                                              |
+|---------------------------------|----------------|---------------------------|----------------------------------------------------|
+| `LruEvictionSelector`           | `LruMetadata`  | `DateTime LastAccessedAt` | Updated on each `UsedSegments` entry               |
+| `FifoEvictionSelector`          | `FifoMetadata` | `DateTime CreatedAt`      | Immutable after creation                           |
+| `SmallestFirstEvictionSelector` | *(none)*       | —                         | Orders by `Range.Span(domain)`; no metadata needed |
 
 Metadata classes are nested `internal sealed` classes inside their respective selector classes.
 
@@ -344,18 +344,18 @@ A segment may be referenced in the User Path's current in-memory assembly (i.e.,
 
 ## Alignment with Invariants
 
-| Invariant                                          | Enforcement                                                                    |
-|----------------------------------------------------|--------------------------------------------------------------------------------|
-| VPC.E.1 — Pluggable policy                         | Policies are injected at construction; `IEvictionPolicy` is a public interface |
-| VPC.E.1a — ANY policy exceeded triggers eviction   | Background Path OR-combines all policy pressures                               |
-| VPC.E.2 — Constraint satisfaction loop             | Executor removes in selector order until all pressures satisfied               |
-| VPC.E.2a — Single loop per event                   | CompositePressure aggregates all exceeded pressures; one iteration             |
-| VPC.E.3 — Just-stored immunity                     | Executor filters out just-stored segments before passing to selector           |
-| VPC.E.3a — No-op when only immune candidate        | Executor receives empty candidate set after filtering; does nothing            |
-| VPC.E.4 — Metadata owned by Eviction Selector     | Selector owns `InitializeMetadata` / `UpdateMetadata`; `BackgroundEventProcessor` delegates  |
-| VPC.E.5 — Eviction only in Background Path         | User Path has no reference to policies, selectors, or executor                 |
-| VPC.E.6 — Consistency after eviction               | Evicted segments (and their metadata) are removed together; no dangling references |
-| VPC.B.3b — No eviction on stats-only events        | Steps 3-4 gated on `FetchedData != null`                                       |
+| Invariant                                        | Enforcement                                                                                 |
+|--------------------------------------------------|---------------------------------------------------------------------------------------------|
+| VPC.E.1 — Pluggable policy                       | Policies are injected at construction; `IEvictionPolicy` is a public interface              |
+| VPC.E.1a — ANY policy exceeded triggers eviction | Background Path OR-combines all policy pressures                                            |
+| VPC.E.2 — Constraint satisfaction loop           | Executor removes in selector order until all pressures satisfied                            |
+| VPC.E.2a — Single loop per event                 | CompositePressure aggregates all exceeded pressures; one iteration                          |
+| VPC.E.3 — Just-stored immunity                   | Executor filters out just-stored segments before passing to selector                        |
+| VPC.E.3a — No-op when only immune candidate      | Executor receives empty candidate set after filtering; does nothing                         |
+| VPC.E.4 — Metadata owned by Eviction Selector    | Selector owns `InitializeMetadata` / `UpdateMetadata`; `BackgroundEventProcessor` delegates |
+| VPC.E.5 — Eviction only in Background Path       | User Path has no reference to policies, selectors, or executor                              |
+| VPC.E.6 — Consistency after eviction             | Evicted segments (and their metadata) are removed together; no dangling references          |
+| VPC.B.3b — No eviction on stats-only events      | Steps 3-4 gated on `FetchedData != null`                                                    |
 
 ---
 

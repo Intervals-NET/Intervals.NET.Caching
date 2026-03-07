@@ -1,12 +1,12 @@
 using Intervals.NET.Domain.Default.Numeric;
 using Intervals.NET.Caching.VisitedPlaces.Core;
-using Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Pressure;
+using Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Policies;
 using Intervals.NET.Caching.VisitedPlaces.Tests.Infrastructure.Helpers;
 
 namespace Intervals.NET.Caching.VisitedPlaces.Unit.Tests.Eviction.Pressure;
 
 /// <summary>
-/// Unit tests for <see cref="TotalSpanPressure{TRange,TData,TDomain}"/>.
+/// Unit tests for <see cref="MaxTotalSpanPolicy{TRange,TData,TDomain}.TotalSpanPressure"/>.
 /// Validates IsExceeded semantics and Reduce behavior that subtracts actual segment span.
 /// </summary>
 public sealed class TotalSpanPressureTests
@@ -19,7 +19,7 @@ public sealed class TotalSpanPressureTests
     public void IsExceeded_WhenTotalSpanAboveMax_ReturnsTrue()
     {
         // ARRANGE
-        var pressure = new TotalSpanPressure<int, int, IntegerFixedStepDomain>(
+        var pressure = new MaxTotalSpanPolicy<int, int, IntegerFixedStepDomain>.TotalSpanPressure(
             currentTotalSpan: 20, maxTotalSpan: 15, domain: _domain);
 
         // ACT & ASSERT
@@ -30,7 +30,7 @@ public sealed class TotalSpanPressureTests
     public void IsExceeded_WhenTotalSpanEqualsMax_ReturnsFalse()
     {
         // ARRANGE
-        var pressure = new TotalSpanPressure<int, int, IntegerFixedStepDomain>(
+        var pressure = new MaxTotalSpanPolicy<int, int, IntegerFixedStepDomain>.TotalSpanPressure(
             currentTotalSpan: 15, maxTotalSpan: 15, domain: _domain);
 
         // ACT & ASSERT
@@ -41,7 +41,7 @@ public sealed class TotalSpanPressureTests
     public void IsExceeded_WhenTotalSpanBelowMax_ReturnsFalse()
     {
         // ARRANGE
-        var pressure = new TotalSpanPressure<int, int, IntegerFixedStepDomain>(
+        var pressure = new MaxTotalSpanPolicy<int, int, IntegerFixedStepDomain>.TotalSpanPressure(
             currentTotalSpan: 5, maxTotalSpan: 15, domain: _domain);
 
         // ACT & ASSERT
@@ -56,7 +56,7 @@ public sealed class TotalSpanPressureTests
     public void Reduce_SubtractsSegmentSpanFromTotal()
     {
         // ARRANGE — total=20, max=15 → exceeded
-        var pressure = new TotalSpanPressure<int, int, IntegerFixedStepDomain>(
+        var pressure = new MaxTotalSpanPolicy<int, int, IntegerFixedStepDomain>.TotalSpanPressure(
             currentTotalSpan: 20, maxTotalSpan: 15, domain: _domain);
 
         // Segment [0,9] = span 10
@@ -73,7 +73,7 @@ public sealed class TotalSpanPressureTests
     public void Reduce_IsSpanDependent_SmallSegmentReducesLess()
     {
         // ARRANGE — total=20, max=15 → excess 5
-        var pressure = new TotalSpanPressure<int, int, IntegerFixedStepDomain>(
+        var pressure = new MaxTotalSpanPolicy<int, int, IntegerFixedStepDomain>.TotalSpanPressure(
             currentTotalSpan: 20, maxTotalSpan: 15, domain: _domain);
 
         // Small segment [0,2] = span 3 → total=17 > 15 still exceeded
@@ -90,7 +90,7 @@ public sealed class TotalSpanPressureTests
     public void Reduce_MultipleCallsSubtractProgressively()
     {
         // ARRANGE — total=30, max=15 → need to reduce by > 15
-        var pressure = new TotalSpanPressure<int, int, IntegerFixedStepDomain>(
+        var pressure = new MaxTotalSpanPolicy<int, int, IntegerFixedStepDomain>.TotalSpanPressure(
             currentTotalSpan: 30, maxTotalSpan: 15, domain: _domain);
 
         var seg1 = CreateSegment(0, 9);   // span 10
@@ -108,7 +108,7 @@ public sealed class TotalSpanPressureTests
     public void Reduce_UnlikeCountPressure_DifferentSegmentsReduceDifferentAmounts()
     {
         // ARRANGE — total=25, max=15 → need to reduce by > 10
-        var pressure = new TotalSpanPressure<int, int, IntegerFixedStepDomain>(
+        var pressure = new MaxTotalSpanPolicy<int, int, IntegerFixedStepDomain>.TotalSpanPressure(
             currentTotalSpan: 25, maxTotalSpan: 15, domain: _domain);
 
         // Small segment [0,2] = span 3 → total=22 (still exceeded)

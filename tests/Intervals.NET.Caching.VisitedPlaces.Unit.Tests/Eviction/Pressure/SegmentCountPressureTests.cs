@@ -1,11 +1,11 @@
 using Intervals.NET.Caching.VisitedPlaces.Core;
-using Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Pressure;
+using Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Policies;
 using Intervals.NET.Caching.VisitedPlaces.Tests.Infrastructure.Helpers;
 
 namespace Intervals.NET.Caching.VisitedPlaces.Unit.Tests.Eviction.Pressure;
 
 /// <summary>
-/// Unit tests for <see cref="SegmentCountPressure{TRange,TData}"/>.
+/// Unit tests for <see cref="MaxSegmentCountPolicy{TRange,TData}.SegmentCountPressure"/>.
 /// Validates IsExceeded semantics and Reduce decrement behavior.
 /// </summary>
 public sealed class SegmentCountPressureTests
@@ -16,7 +16,7 @@ public sealed class SegmentCountPressureTests
     public void IsExceeded_WhenCurrentCountAboveMax_ReturnsTrue()
     {
         // ARRANGE
-        var pressure = new SegmentCountPressure<int, int>(currentCount: 5, maxCount: 3);
+        var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 5, maxCount: 3);
 
         // ACT & ASSERT
         Assert.True(pressure.IsExceeded);
@@ -26,7 +26,7 @@ public sealed class SegmentCountPressureTests
     public void IsExceeded_WhenCurrentCountEqualsMax_ReturnsFalse()
     {
         // ARRANGE
-        var pressure = new SegmentCountPressure<int, int>(currentCount: 3, maxCount: 3);
+        var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 3, maxCount: 3);
 
         // ACT & ASSERT
         Assert.False(pressure.IsExceeded);
@@ -36,7 +36,7 @@ public sealed class SegmentCountPressureTests
     public void IsExceeded_WhenCurrentCountBelowMax_ReturnsFalse()
     {
         // ARRANGE
-        var pressure = new SegmentCountPressure<int, int>(currentCount: 1, maxCount: 3);
+        var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 1, maxCount: 3);
 
         // ACT & ASSERT
         Assert.False(pressure.IsExceeded);
@@ -50,7 +50,7 @@ public sealed class SegmentCountPressureTests
     public void Reduce_DecrementsCurrentCount()
     {
         // ARRANGE — count=4, max=3 → exceeded
-        var pressure = new SegmentCountPressure<int, int>(currentCount: 4, maxCount: 3);
+        var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 4, maxCount: 3);
         var segment = CreateSegment(0, 5);
 
         // ACT
@@ -64,7 +64,7 @@ public sealed class SegmentCountPressureTests
     public void Reduce_MultipleCallsDecrementProgressively()
     {
         // ARRANGE — count=6, max=3 → need 3 reductions
-        var pressure = new SegmentCountPressure<int, int>(currentCount: 6, maxCount: 3);
+        var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 6, maxCount: 3);
         var segment = CreateSegment(0, 5);
 
         // ACT & ASSERT
@@ -82,7 +82,7 @@ public sealed class SegmentCountPressureTests
     public void Reduce_IsOrderIndependent_AnySegmentDecrementsSameAmount()
     {
         // ARRANGE
-        var pressure = new SegmentCountPressure<int, int>(currentCount: 5, maxCount: 3);
+        var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 5, maxCount: 3);
 
         // Different-sized segments should all decrement by exactly 1
         var small = CreateSegment(0, 1);   // span 2

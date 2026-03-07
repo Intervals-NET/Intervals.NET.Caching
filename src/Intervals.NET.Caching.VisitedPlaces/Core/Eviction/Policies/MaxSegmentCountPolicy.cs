@@ -10,7 +10,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Policies;
 /// <typeparam name="TData">The type of data being cached.</typeparam>
 /// <remarks>
 /// <para><strong>Firing Condition:</strong> <c>allSegments.Count &gt; MaxCount</c></para>
-/// <para><strong>Pressure Produced:</strong> <see cref="SegmentCountPressure{TRange,TData}"/>
+/// <para><strong>Pressure Produced:</strong> <see cref="SegmentCountPressure"/>
 /// with <c>currentCount = allSegments.Count</c> and <c>maxCount = MaxCount</c>.</para>
 /// <para>
 /// This is the simplest policy: it limits the total number of independently-cached segments
@@ -57,6 +57,42 @@ internal sealed class MaxSegmentCountPolicy<TRange, TData> : IEvictionPolicy<TRa
             return NoPressure<TRange, TData>.Instance;
         }
 
-        return new SegmentCountPressure<TRange, TData>(count, MaxCount);
+        return new SegmentCountPressure(count, MaxCount);
+    }
+
+    /// <summary>
+    /// An <see cref="IEvictionPressure{TRange,TData}"/> that tracks whether the segment count
+    /// exceeds a configured maximum. Each <see cref="Reduce"/> call decrements the tracked count.
+    /// </summary>
+    /// <remarks>
+    /// <para><strong>Constraint:</strong> <c>currentCount &gt; maxCount</c></para>
+    /// <para><strong>Reduce behavior:</strong> Decrements <c>currentCount</c> by 1 (count-based eviction
+    /// is order-independent — every segment removal equally satisfies the constraint).</para>
+    /// </remarks>
+    internal sealed class SegmentCountPressure : IEvictionPressure<TRange, TData>
+    {
+        private int _currentCount;
+        private readonly int _maxCount;
+
+        /// <summary>
+        /// Initializes a new <see cref="SegmentCountPressure"/>.
+        /// </summary>
+        /// <param name="currentCount">The current number of segments in storage.</param>
+        /// <param name="maxCount">The maximum allowed segment count.</param>
+        internal SegmentCountPressure(int currentCount, int maxCount)
+        {
+            _currentCount = currentCount;
+            _maxCount = maxCount;
+        }
+
+        /// <inheritdoc/>
+        public bool IsExceeded => _currentCount > _maxCount;
+
+        /// <inheritdoc/>
+        /// <remarks>Decrements the tracked segment count by 1.</remarks>
+        public void Reduce(CachedSegment<TRange, TData> removedSegment)
+        {
+            _currentCount--;
+        }
     }
 }

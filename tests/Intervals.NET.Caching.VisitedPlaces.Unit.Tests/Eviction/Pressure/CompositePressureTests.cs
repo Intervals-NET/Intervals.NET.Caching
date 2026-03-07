@@ -1,5 +1,6 @@
 using Intervals.NET.Caching.VisitedPlaces.Core;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
+using Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Policies;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Pressure;
 using Intervals.NET.Caching.VisitedPlaces.Tests.Infrastructure.Helpers;
 
@@ -17,8 +18,8 @@ public sealed class CompositePressureTests
     public void IsExceeded_WhenAllChildrenExceeded_ReturnsTrue()
     {
         // ARRANGE
-        var p1 = new SegmentCountPressure<int, int>(currentCount: 5, maxCount: 3); // exceeded
-        var p2 = new SegmentCountPressure<int, int>(currentCount: 4, maxCount: 2); // exceeded
+        var p1 = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 5, maxCount: 3); // exceeded
+        var p2 = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 4, maxCount: 2); // exceeded
         var composite = new CompositePressure<int, int>([p1, p2]);
 
         // ACT & ASSERT
@@ -29,8 +30,8 @@ public sealed class CompositePressureTests
     public void IsExceeded_WhenOneChildExceeded_ReturnsTrue()
     {
         // ARRANGE
-        var exceeded = new SegmentCountPressure<int, int>(currentCount: 5, maxCount: 3); // exceeded
-        var satisfied = new SegmentCountPressure<int, int>(currentCount: 2, maxCount: 3); // not exceeded
+        var exceeded = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 5, maxCount: 3); // exceeded
+        var satisfied = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 2, maxCount: 3); // not exceeded
         var composite = new CompositePressure<int, int>([exceeded, satisfied]);
 
         // ACT & ASSERT
@@ -41,8 +42,8 @@ public sealed class CompositePressureTests
     public void IsExceeded_WhenNoChildrenExceeded_ReturnsFalse()
     {
         // ARRANGE
-        var p1 = new SegmentCountPressure<int, int>(currentCount: 2, maxCount: 3); // not exceeded
-        var p2 = new SegmentCountPressure<int, int>(currentCount: 1, maxCount: 3); // not exceeded
+        var p1 = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 2, maxCount: 3); // not exceeded
+        var p2 = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 1, maxCount: 3); // not exceeded
         var composite = new CompositePressure<int, int>([p1, p2]);
 
         // ACT & ASSERT
@@ -57,8 +58,8 @@ public sealed class CompositePressureTests
     public void Reduce_ForwardsToAllChildren()
     {
         // ARRANGE — both exceeded: p1(4>3), p2(5>3)
-        var p1 = new SegmentCountPressure<int, int>(currentCount: 4, maxCount: 3); // 1 over
-        var p2 = new SegmentCountPressure<int, int>(currentCount: 5, maxCount: 3); // 2 over
+        var p1 = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 4, maxCount: 3); // 1 over
+        var p2 = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 5, maxCount: 3); // 2 over
         var composite = new CompositePressure<int, int>([p1, p2]);
         var segment = CreateSegment(0, 5);
 
@@ -75,8 +76,8 @@ public sealed class CompositePressureTests
     public void Reduce_UntilAllSatisfied_CompositeBecomesFalse()
     {
         // ARRANGE — p1(4>3), p2(5>3)
-        var p1 = new SegmentCountPressure<int, int>(currentCount: 4, maxCount: 3);
-        var p2 = new SegmentCountPressure<int, int>(currentCount: 5, maxCount: 3);
+        var p1 = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 4, maxCount: 3);
+        var p2 = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 5, maxCount: 3);
         var composite = new CompositePressure<int, int>([p1, p2]);
         var segment = CreateSegment(0, 5);
 
@@ -96,7 +97,7 @@ public sealed class CompositePressureTests
     public void Reduce_WithMixedPressureTypes_BothTrackedCorrectly()
     {
         // ARRANGE — count pressure + NoPressure (already satisfied)
-        var countPressure = new SegmentCountPressure<int, int>(currentCount: 4, maxCount: 3);
+        var countPressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 4, maxCount: 3);
         var noPressure = NoPressure<int, int>.Instance;
         var composite = new CompositePressure<int, int>([countPressure, noPressure]);
         var segment = CreateSegment(0, 5);

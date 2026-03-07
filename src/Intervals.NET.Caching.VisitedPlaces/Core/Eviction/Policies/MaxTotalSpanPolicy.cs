@@ -14,7 +14,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Policies;
 /// <remarks>
 /// <para><strong>Firing Condition:</strong>
 /// <c>sum(segment.Range.Span(domain) for segment in allSegments) &gt; MaxTotalSpan</c></para>
-/// <para><strong>Pressure Produced:</strong> <see cref="TotalSpanPressure{TRange,TData,TDomain}"/>
+/// <para><strong>Pressure Produced:</strong> <see cref="TotalSpanPressure"/>
 /// with the computed total span, the configured maximum, and the domain for per-segment span
 /// computation during <see cref="IEvictionPressure{TRange,TData}.Reduce"/>.</para>
 /// <para>
@@ -85,6 +85,50 @@ internal sealed class MaxTotalSpanPolicy<TRange, TData, TDomain> : IEvictionPoli
             return NoPressure<TRange, TData>.Instance;
         }
 
-        return new TotalSpanPressure<TRange, TData, TDomain>(totalSpan, MaxTotalSpan, _domain);
+        return new TotalSpanPressure(totalSpan, MaxTotalSpan, _domain);
+    }
+
+    /// <summary>
+    /// An <see cref="IEvictionPressure{TRange,TData}"/> that tracks whether the total span
+    /// (sum of all segment spans) exceeds a configured maximum. Each <see cref="Reduce"/> call
+    /// subtracts the removed segment's span from the tracked total.
+    /// </summary>
+    /// <remarks>
+    /// <para><strong>Constraint:</strong> <c>currentTotalSpan &gt; maxTotalSpan</c></para>
+    /// <para><strong>Reduce behavior:</strong> Subtracts the removed segment's span from <c>currentTotalSpan</c>.
+    /// This is the key improvement over the old <c>MaxTotalSpanEvaluator</c> which had to estimate
+    /// removal counts using a greedy algorithm that could mismatch the actual executor order.</para>
+    /// <para><strong>TDomain capture:</strong> The <typeparamref name="TDomain"/> is captured internally
+    /// so that the <see cref="IEvictionPressure{TRange,TData}"/> interface stays generic only on
+    /// <c>&lt;TRange, TData&gt;</c>.</para>
+    /// </remarks>
+    internal sealed class TotalSpanPressure : IEvictionPressure<TRange, TData>
+    {
+        private long _currentTotalSpan;
+        private readonly int _maxTotalSpan;
+        private readonly TDomain _domain;
+
+        /// <summary>
+        /// Initializes a new <see cref="TotalSpanPressure"/>.
+        /// </summary>
+        /// <param name="currentTotalSpan">The current total span across all segments.</param>
+        /// <param name="maxTotalSpan">The maximum allowed total span.</param>
+        /// <param name="domain">The range domain used to compute individual segment spans during <see cref="Reduce"/>.</param>
+        internal TotalSpanPressure(long currentTotalSpan, int maxTotalSpan, TDomain domain)
+        {
+            _currentTotalSpan = currentTotalSpan;
+            _maxTotalSpan = maxTotalSpan;
+            _domain = domain;
+        }
+
+        /// <inheritdoc/>
+        public bool IsExceeded => _currentTotalSpan > _maxTotalSpan;
+
+        /// <inheritdoc/>
+        /// <remarks>Subtracts the removed segment's span from the tracked total.</remarks>
+        public void Reduce(CachedSegment<TRange, TData> removedSegment)
+        {
+            _currentTotalSpan -= removedSegment.Range.Span(_domain).Value;
+        }
     }
 }
