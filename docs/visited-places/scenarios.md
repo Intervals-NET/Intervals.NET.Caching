@@ -21,8 +21,9 @@ Component maps describe "what exists"; scenarios describe "what happens". Scenar
 - **BackgroundEvent** — A message published by the User Path to the Background Path after every `GetDataAsync` call. Carries used segment references and any newly fetched data.
 - **IDataSource** — A range-based data source used to fetch data absent from the cache.
 - **EvictionPolicy** — Determines whether eviction should run (e.g., too many segments, too much total span). Multiple policies may be active; eviction triggers when ANY fires. Produces an `IEvictionPressure` object representing the violated constraint.
-- **EvictionSelector** — Defines, creates, and updates per-segment eviction metadata. Determines the order in which candidates are considered for removal (LRU, FIFO, smallest-first, etc.).
-- **EvictionExecutor** — Performs eviction via a constraint satisfaction loop: filters immune segments, orders candidates via the Eviction Selector, and removes them until all pressures are satisfied.
+- **EvictionSelector** — Defines, creates, and updates per-segment eviction metadata. Selects the single worst eviction candidate from a random sample of segments (O(SampleSize)) via `TrySelectCandidate`. Strategies: LRU, FIFO, smallest-first, etc.
+- **EvictionEngine** — Facade encapsulating the full eviction subsystem. Exposed to `BackgroundEventProcessor` as its sole eviction dependency. Orchestrates: selector metadata management (`UpdateMetadata`, `InitializeSegment`), policy evaluation, and the constraint satisfaction loop (`EvaluateAndExecute`). Fires eviction-specific diagnostics. Has no storage reference.
+- **EvictionExecutor** — Internal component of `EvictionEngine`. Executes the constraint satisfaction loop: builds the immune set from just-stored segments, repeatedly calls `selector.TrySelectCandidate(allSegments, immune, out candidate)` and calls `pressure.Reduce(candidate)` until all pressures are satisfied or no eligible candidates remain. Returns the removal list to the engine.
 
 ---
 
@@ -67,7 +68,7 @@ Scenarios are grouped by path:
 3. Subrange is read from `S.Data`
 4. Data is returned to the user — `RangeResult.CacheInteraction == FullHit`
 5. A `BackgroundEvent` is published: `{ UsedSegments: [S], FetchedData: null, RequestedRange }`
-6. Background Path calls `selector.UpdateMetadata([S], now)` — e.g., LRU selector updates `S.LruMetadata.LastAccessedAt`
+6. Background Path calls `engine.UpdateMetadata([S], now)` → `selector.UpdateMetadata(...)` — e.g., LRU selector updates `S.LruMetadata.LastAccessedAt`
 
 **Note**: No `IDataSource` call is made. No eviction is triggered on stats-only events (eviction is only evaluated after new data is stored).
 
@@ -86,7 +87,7 @@ Scenarios are grouped by path:
 4. Relevant subranges are read from each contributing segment and assembled in-memory
 5. Data is returned to the user — `RangeResult.CacheInteraction == FullHit`
 6. A `BackgroundEvent` is published: `{ UsedSegments: [S₁, S₂, ...], FetchedData: null, RequestedRange }`
-7. Background Path calls `selector.UpdateMetadata([S₁, S₂, ...], now)` for each contributing segment
+7. Background Path calls `engine.UpdateMetadata([S₁, S₂, ...], now)` → `selector.UpdateMetadata(...)` for each contributing segment
 
 **Note**: Multi-segment assembly is a core VPC capability. The assembled data is never stored as a merged segment (merging is not performed). Each source segment remains independent in `CachedSegments`.
 
@@ -136,10 +137,10 @@ Scenarios are grouped by path:
 
 **Core principle**: The Background Path is the sole writer of cache state. It processes `BackgroundEvent`s in strict FIFO order. No supersession — every event is processed. Each event triggers:
 
-1. **Metadata update** — update per-segment eviction metadata for all used segments by delegating to the configured Eviction Selector (`selector.UpdateMetadata`)
-2. **Storage** — store fetched data as new segment(s), if `FetchedData != null`; call `selector.InitializeMetadata(segment, now)` for each new segment
-3. **Eviction evaluation** — check all configured Eviction Policies, if new data was stored
-4. **Eviction execution** — if any policy produced an exceeded pressure, execute eviction via the constraint satisfaction loop (Eviction Executor + Selector)
+1. **Metadata update** — update per-segment eviction metadata for all used segments by calling `engine.UpdateMetadata(usedSegments, now)` (delegated to `selector.UpdateMetadata`)
+2. **Storage** — store fetched data as new segment(s), if `FetchedData != null`; call `engine.InitializeSegment(segment, now)` for each new segment (initializes selector metadata and notifies stateful policies)
+3. **Eviction evaluation + execution** — call `engine.EvaluateAndExecute(allSegments, justStoredSegments)` if new data was stored; returns list of segments to remove
+4. **Post-removal** — remove returned segments from storage (`storage.Remove`); call `engine.OnSegmentsRemoved(toRemove)` to notify stateful policies
 
 ---
 
@@ -150,7 +151,7 @@ Scenarios are grouped by path:
 
 **Sequence**:
 1. Background Path dequeues the event
-2. `selector.UpdateMetadata([S₁, ...], now)` — selector updates metadata for each used segment
+2. `engine.UpdateMetadata([S₁, ...], now)` → `selector.UpdateMetadata(...)` — selector updates metadata for each used segment
    - LRU: sets `LruMetadata.LastAccessedAt = now` on each
    - FIFO / SmallestFirst: no-op
 3. No storage step (no new data)
@@ -164,15 +165,15 @@ Scenarios are grouped by path:
 
 **Preconditions**:
 - Event has `FetchedData: <range data>` (may or may not have `UsedSegments`)
-- No Eviction Evaluator fires after storage
+- No Eviction Policy fires after storage
 
 **Sequence**:
 1. Background Path dequeues the event
-2. If `UsedSegments` is non-empty: `selector.UpdateMetadata(usedSegments, now)`
+2. If `UsedSegments` is non-empty: `engine.UpdateMetadata(usedSegments, now)` → `selector.UpdateMetadata(...)`
 3. Store `FetchedData` as a new `Segment` in `CachedSegments`
    - Segment is added in sorted order (or appended to the strategy's append buffer)
-   - `selector.InitializeMetadata(segment, now)` — e.g., `LruMetadata { LastAccessedAt = now }`, `FifoMetadata { CreatedAt = now }`, or no-op
-4. Check all Eviction Policies — none fire
+   - `engine.InitializeSegment(segment, now)` — e.g., `LruMetadata { LastAccessedAt = now }`, `FifoMetadata { CreatedAt = now }`, or no-op
+4. `engine.EvaluateAndExecute(allSegments, justStored)` — no policy constraint exceeded; returns empty list
 5. Processing complete; cache now has one additional segment
 
 **Note**: The just-stored segment always has **immunity** — it is never eligible for eviction in the same processing step in which it was stored (Invariant VPC.E.3).
@@ -183,17 +184,17 @@ Scenarios are grouped by path:
 
 **Preconditions**:
 - Event has `FetchedData: <range data>`
-- At least one Eviction Evaluator fires after storage (e.g., segment count exceeds limit)
+- At least one Eviction Policy fires after storage (e.g., segment count exceeds limit)
 
 **Sequence**:
 1. Background Path dequeues the event
-2. If `UsedSegments` is non-empty: `selector.UpdateMetadata(usedSegments, now)`
-3. Store `FetchedData` as a new `Segment` in `CachedSegments`; `selector.InitializeMetadata(segment, now)` attaches fresh metadata
-4. Check all Eviction Policies — at least one fires
-5. Eviction Executor is invoked:
-   - Evaluates all eligible segments (excluding just-stored segment — immunity rule)
-   - Passes eligible candidates to the Eviction Selector for ordering
-   - Removes selected segments from `CachedSegments` until all pressures are satisfied
+2. If `UsedSegments` is non-empty: `engine.UpdateMetadata(usedSegments, now)` → `selector.UpdateMetadata(...)`
+3. Store `FetchedData` as a new `Segment` in `CachedSegments`; `engine.InitializeSegment(segment, now)` attaches fresh metadata and notifies stateful policies
+4. `engine.EvaluateAndExecute(allSegments, justStored)` — at least one policy fires:
+   - Executor builds immune set from `justStoredSegments`
+   - Executor loops: `selector.TrySelectCandidate(allSegments, immune, out candidate)` → `pressure.Reduce(candidate)` until satisfied
+   - Engine returns `toRemove` list
+5. Processor removes evicted segments from storage; calls `engine.OnSegmentsRemoved(toRemove)`
 6. Cache returns to within-policy state
 
 **Note**: Multiple policies may fire simultaneously. The Eviction Executor runs once per event (not once per fired policy), using `CompositePressure` to satisfy all constraints simultaneously.
@@ -208,12 +209,12 @@ Scenarios are grouped by path:
 
 **Sequence**:
 1. Background Path dequeues the event
-2. Update statistics for used segments
+2. Update metadata for used segments: `engine.UpdateMetadata(usedSegments, now)`
 3. Store each gap range as a separate new `Segment` in `CachedSegments`
    - Each stored segment is added independently; no merging with existing segments
-   - `selector.InitializeMetadata(segment, now)` is called for each new segment
-4. Check all Eviction Evaluators (after all new segments are stored)
-5. If any evaluator fires: Eviction Executor selects and removes eligible segments
+   - `engine.InitializeSegment(segment, now)` is called for each new segment
+4. `engine.EvaluateAndExecute(allSegments, justStoredSegments)` (after all new segments are stored)
+5. If any policy fires: processor removes returned segments; calls `engine.OnSegmentsRemoved(toRemove)`
 
 **Note**: Gaps are stored as distinct segments. Segments are never merged, even when adjacent. Each independently-fetched sub-range occupies its own entry in `CachedSegments`. This preserves independent statistics per fetched unit.
 
@@ -245,11 +246,13 @@ Scenarios are grouped by path:
 
 **Sequence**:
 1. Background Path stores a new segment, bringing total count to 11
-2. `MaxSegmentCountPolicy` fires: `CachedSegments.Count (11) > maxCount (10)`
-3. Eviction Executor + LRU Selector:
-   - LRU Selector orders candidates ascending by `LruMetadata.LastAccessedAt`
-   - Executor removes the first candidate (least recently accessed) from `CachedSegments`
-4. Total segment count returns to 10
+2. `engine.EvaluateAndExecute`: `MaxSegmentCountPolicy` fires (`CachedSegments.Count (11) > maxCount (10)`)
+3. Eviction Engine + LRU Selector:
+   - Executor builds immune set (the just-stored segment)
+   - LRU Selector samples O(SampleSize) eligible segments; selects the one with the smallest `LruMetadata.LastAccessedAt`
+   - Executor calls `pressure.Reduce(candidate)`; `SegmentCountPressure.IsExceeded` becomes `false`
+4. Processor removes the selected segment from storage; `engine.OnSegmentsRemoved([candidate])`
+5. Total segment count returns to 10
 
 **Post-condition**: All remaining segments are valid cache entries with up-to-date metadata.
 
@@ -272,10 +275,11 @@ Scenarios are grouped by path:
 **Sequence**:
 1. `MaxSegmentCountPolicy` checks: `10 ≤ 10` → does NOT fire
 2. `MaxTotalSpanPolicy` checks: `1010 > 1000` → FIRES
-3. Eviction Executor + FIFO Selector:
-   - FIFO Selector orders candidates ascending by `FifoMetadata.CreatedAt`
-   - Executor removes the oldest segment; total span drops
-4. If total span still exceeds limit after first removal, Executor removes additional segments until all constraints are satisfied
+3. `engine.EvaluateAndExecute`: FIFO Selector invoked:
+   - Executor builds immune set (the just-stored segment)
+   - FIFO Selector samples O(SampleSize) eligible segments; selects the one with the smallest `FifoMetadata.CreatedAt`
+   - Executor calls `pressure.Reduce(candidate)` — total span drops
+4. If total span still exceeds limit, executor continues sampling until all constraints are satisfied
 
 ---
 
@@ -291,11 +295,11 @@ Scenarios are grouped by path:
 
 **Sequence**:
 1. Both policies fire
-2. Eviction Executor is invoked once with a `CompositePressure`
+2. `engine.EvaluateAndExecute` is invoked once with a `CompositePressure`
 3. Executor + SmallestFirst Selector must satisfy BOTH constraints simultaneously:
-   - SmallestFirst Selector orders candidates ascending by `Range.Span(domain)`
-   - Executor removes smallest segments first
-   - Continues removing until `Count ≤ 10` AND `total span ≤ 1000`
+   - Executor builds immune set (the just-stored segment)
+   - SmallestFirst Selector samples O(SampleSize) eligible segments; selects the one with the smallest `Range.Span(domain)`
+   - Executor calls `pressure.Reduce(candidate)`; loop continues until `Count ≤ 10` AND `total span ≤ 1000`
 4. Executor performs a single pass — not one pass per fired policy
 
 **Rationale**: Single-pass eviction is more efficient and avoids redundant iterations over `CachedSegments`.
@@ -310,9 +314,9 @@ Scenarios are grouped by path:
 
 **Sequence**:
 1. `S₅` is stored — count becomes 5, exceeding limit
-2. Eviction Executor is invoked; eligible candidates: `{S₁, S₂, S₃, S₄}` — `S₅` is excluded
-3. Executor selects the appropriate candidate from `{S₁, S₂, S₃, S₄}` per its strategy
-4. Selected candidate is removed; count returns to 4
+2. `engine.EvaluateAndExecute` is invoked; executor builds immune set: `{S₅}`
+3. Executor calls `selector.TrySelectCandidate(allSegments, {S₅}, out candidate)` — samples from `{S₁, S₂, S₃, S₄}`; selects appropriate candidate per strategy
+4. Selected candidate is removed from storage; count returns to 4
 
 **Rationale**: Without immunity, a newly-stored segment could be immediately evicted (e.g., by LRU since its `LruMetadata.LastAccessedAt` is `now` — but it is the most recently initialized, not most recently accessed by a user). The just-stored segment represents data just fetched from `IDataSource`; evicting it immediately would cause an infinite fetch loop.
 
@@ -324,9 +328,9 @@ Scenarios are grouped by path:
 **Trigger**: Count exceeds limit after storing `S₄`
 
 **Sequence**:
-1. `S₄` stored; `selector.InitializeMetadata(S₄, now)` attaches `FifoMetadata { CreatedAt = now }`; immunity applies to `S₄`
-2. FIFO Selector orders eligible candidates by `FifoMetadata.CreatedAt` ascending: `[S₁(t=1), S₃(t=2), S₂(t=3)]`
-3. Executor removes `S₁` (oldest `CreatedAt = t=1`); count returns to limit
+1. `S₄` stored; `engine.InitializeSegment(S₄, now)` attaches `FifoMetadata { CreatedAt = now }`; immunity applies to `S₄`
+2. `engine.EvaluateAndExecute`: executor builds immune set `{S₄}`; FIFO Selector samples eligible candidates `{S₁, S₂, S₃}` and selects the one with the smallest `CreatedAt` — `S₁(t=1)`
+3. Processor removes `S₁` from storage; count returns to limit
 
 ---
 
@@ -336,9 +340,9 @@ Scenarios are grouped by path:
 **Trigger**: Count exceeds limit after storing `S₄`
 
 **Sequence**:
-1. `S₄` stored; `selector.InitializeMetadata(S₄, now)` attaches `LruMetadata { LastAccessedAt = now }`; immunity applies to `S₄`
-2. LRU Selector orders eligible candidates by `LruMetadata.LastAccessedAt` ascending: `[S₂(t=1), S₁(t=5), S₃(t=8)]`
-3. Executor removes `S₂` (least recently used: `LastAccessedAt = t=1`); count returns to limit
+1. `S₄` stored; `engine.InitializeSegment(S₄, now)` attaches `LruMetadata { LastAccessedAt = now }`; immunity applies to `S₄`
+2. `engine.EvaluateAndExecute`: executor builds immune set `{S₄}`; LRU Selector samples eligible candidates `{S₁, S₂, S₃}` and selects the one with the smallest `LastAccessedAt` — `S₂(t=1)`
+3. Processor removes `S₂` from storage; count returns to limit
 
 ---
 
@@ -444,7 +448,7 @@ Use scenarios as a debugging checklist:
 2. What was returned (`FullHit`, `PartialHit`, or `FullMiss`)?
 3. What event was published? (`UsedSegments`, `FetchedData`, `RequestedRange`)
 4. Did the Background Path update statistics? Store new data? Trigger eviction?
-5. If eviction ran: which evaluator fired? Which strategy was applied? Which segment was removed?
+5. If eviction ran: which policy fired? Which selector strategy was applied? Which segment was sampled as the worst candidate?
 6. Was there a concurrent read? Did it see a consistent cache snapshot?
 
 ---
@@ -454,7 +458,7 @@ Use scenarios as a debugging checklist:
 - A cache can be non-optimal (stale metadata, suboptimal eviction candidates) between background events; eventual convergence is expected.
 - `WaitForIdleAsync` indicates the system was idle at some point, not that it remains idle.
 - In Scenario U3, multi-segment assembly requires that the union of segments covers `RequestedRange` with NO gaps. If even one gap exists, the scenario degrades to U4 (Partial Hit).
-- In Scenario B3, if the just-stored segment is the only segment (cache was empty before storage), eviction cannot proceed — the evaluator firing with only immune segments present is a no-op (the cache cannot evict its only segment; it will remain over-limit until the next storage event adds another eligible candidate).
+- In Scenario B3, if the just-stored segment is the only segment (cache was empty before storage), eviction cannot proceed — the policy fires but `TrySelectCandidate` returns `false` immediately (all segments are immune), so the eviction pass is a no-op (the cache cannot evict its only segment; it will remain over-limit until the next storage event adds another eligible candidate).
 - Segments are never merged, even if two adjacent segments together span a contiguous range. Merging would reset the eviction metadata of one of the segments and complicate eviction decisions.
 
 ---

@@ -151,10 +151,10 @@ Assert.Equal(expectedCount, cache.SegmentCount);
 
 **VPC.B.3** [Architectural] Each `BackgroundEvent` is processed in the following **fixed sequence**:
 
-1. Update metadata for all `UsedSegments` by delegating to the configured Eviction Selector (`selector.UpdateMetadata`)
-2. Store `FetchedData` as new segment(s), if present
-3. Evaluate all Eviction Policies, if new data was stored in step 2
-4. Execute eviction via constraint satisfaction loop, if any policy produced an exceeded pressure in step 3
+1. Update metadata for all `UsedSegments` by delegating to the `EvictionEngine` (`engine.UpdateMetadata` → `selector.UpdateMetadata`)
+2. Store `FetchedData` as new segment(s), if present; call `engine.InitializeSegment(segment, now)` after each store
+3. Evaluate all Eviction Policies and execute eviction if any policy is exceeded (`engine.EvaluateAndExecute`), only if new data was stored in step 2
+4. Remove evicted segments from storage (`storage.Remove` per segment); call `engine.OnSegmentsRemoved(toRemove)` after all removals
 
 **VPC.B.3a** [Architectural] **Metadata update always precedes storage** in the processing sequence.
 
@@ -271,9 +271,10 @@ Assert.Equal(expectedCount, cache.SegmentCount);
 
 **VPC.E.2** [Architectural] Eviction execution follows a **constraint satisfaction loop**:
 
-- The **Eviction Executor** removes segments in **selector order** until all pressures are satisfied (`IsExceeded = false`)
-- The **Eviction Selector** (`IEvictionSelector`) determines candidate ordering (LRU, FIFO, smallest-first, etc.) but does NOT decide how many to remove
-- Pressure objects update themselves via `Reduce(segment)` as each segment is removed, tracking actual constraint satisfaction
+- The **`EvictionEngine`** coordinates evaluation and execution: it calls `EvictionPolicyEvaluator.Evaluate` to obtain a pressure, then delegates to `EvictionExecutor.Execute` if exceeded.
+- The **Eviction Executor** runs the loop: repeatedly calls `IEvictionSelector.TrySelectCandidate(allSegments, immuneSegments, out candidate)` until `pressure.IsExceeded = false` or no eligible candidates remain.
+- The **Eviction Selector** (`IEvictionSelector`) determines candidate selection via random O(SampleSize) sampling — it does NOT sort candidates.
+- Pressure objects update themselves via `Reduce(segment)` as each segment is selected, tracking actual constraint satisfaction.
 
 **VPC.E.2a** [Architectural] The constraint satisfaction loop runs **at most once per background event** regardless of how many policies produced exceeded pressures.
 
@@ -286,7 +287,8 @@ Assert.Equal(expectedCount, cache.SegmentCount);
 
 **VPC.E.3** [Architectural] The **just-stored segment is immune** from eviction in the same background event processing step in which it was stored.
 
-- When the Eviction Executor is invoked after storage, the just-stored segment is excluded from the candidate set before candidates are passed to the selector
+- When `EvictionEngine.EvaluateAndExecute` is invoked, the `justStoredSegments` list is passed to `EvictionExecutor.Execute`, which seeds the immune `HashSet` from it before the selection loop begins
+- The selector skips immune segments inline during sampling (the immune set is passed as a parameter to `TrySelectCandidate`)
 - The immune segment is the exact segment added in step 2 of the current event's processing sequence
 
 **Rationale:** Without immunity, a newly-stored segment could be immediately evicted (e.g., by LRU, since its `LastAccessedAt` is the earliest among all segments). Immediate eviction of just-stored data would cause an infinite fetch-store-evict loop on every new access to an uncached range.
@@ -301,19 +303,19 @@ Assert.Equal(expectedCount, cache.SegmentCount);
 **VPC.E.4** [Architectural] Per-segment eviction metadata is **owned by the Eviction Selector**, not by a shared statistics record.
 
 - Each selector defines its own metadata type (nested `internal sealed class` implementing `IEvictionMetadata`) and stores it on `CachedSegment.EvictionMetadata`
-- The `BackgroundEventProcessor` delegates metadata management to the configured selector:
-  - Step 1: calls `selector.UpdateMetadata(usedSegments, now)` for each event cycle
-  - Step 2: calls `selector.InitializeMetadata(segment, now)` immediately after each segment is stored
+- The `EvictionEngine` delegates metadata management to the configured selector:
+  - Step 1: calls `engine.UpdateMetadata(usedSegments, now)` → `selector.UpdateMetadata` for each event cycle
+  - Step 2: calls `engine.InitializeSegment(segment, now)` → `selector.InitializeMetadata(segment, now)` immediately after each segment is stored
 - Selectors that require no metadata (e.g., `SmallestFirstEvictionSelector`) implement both methods as no-ops and leave `EvictionMetadata` null
 
 **VPC.E.4a** [Architectural] Per-segment metadata is initialized when the segment is stored:
 
-- `selector.InitializeMetadata(segment, now)` is called by the Background Event Processor immediately after `_storage.Add(segment)`
+- `engine.InitializeSegment(segment, now)` is called by `BackgroundEventProcessor` immediately after `_storage.Add(segment)`, which in turn calls `selector.InitializeMetadata(segment, now)`
 - Example: `LruMetadata { LastAccessedAt = now }`, `FifoMetadata { CreatedAt = now }`
 
 **VPC.E.4b** [Architectural] Per-segment metadata is updated when the segment appears in a `BackgroundEvent`'s `UsedSegments` list:
 
-- `selector.UpdateMetadata(usedSegments, now)` is called by the Background Event Processor at the start of each event cycle
+- `engine.UpdateMetadata(usedSegments, now)` is called by `BackgroundEventProcessor` at the start of each event cycle, which delegates to `selector.UpdateMetadata(usedSegments, now)`
 - Example: `LruMetadata.LastAccessedAt = now`; FIFO and SmallestFirst selectors perform no-op updates
 
 **VPC.E.5** [Architectural] Eviction evaluation and execution are performed **exclusively by the Background Path**, never by the User Path.
@@ -328,6 +330,11 @@ Assert.Equal(expectedCount, cache.SegmentCount);
 - No remaining segment references a removed segment
 
 **VPC.E.7** [Conceptual] After eviction, the cache may still be above-limit in edge cases (see VPC.E.3a). This is acceptable; the next storage event will trigger another eviction pass.
+
+**VPC.E.8** [Architectural] The eviction subsystem internals (`EvictionPolicyEvaluator`, `EvictionExecutor`, `IEvictionSelector`) are **encapsulated behind `EvictionEngine`**.
+
+- `BackgroundEventProcessor` depends only on `EvictionEngine` — it has no direct reference to the evaluator, executor, or selector
+- This boundary enforces single-responsibility: the processor owns storage mutations; the engine owns eviction coordination
 
 ---
 
@@ -366,7 +373,7 @@ VPC invariant groups:
 | VPC.B  | Background Path & Event Processing        | 8     |
 | VPC.C  | Segment Storage & Non-Contiguity          | 6     |
 | VPC.D  | Concurrency                               | 5     |
-| VPC.E  | Eviction                                  | 11    |
+| VPC.E  | Eviction                                  | 12    |
 | VPC.F  | Data Source & I/O                         | 4     |
 
 Shared invariants (S.H, S.J) are in `docs/shared/invariants.md`.

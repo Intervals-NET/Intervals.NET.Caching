@@ -17,36 +17,32 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Background;
 /// <para><strong>Execution Context:</strong> Background Storage Loop (single writer thread)</para>
 /// <para><strong>Critical Contract — Background Path is the SINGLE WRITER (Invariant VPC.A.10):</strong></para>
 /// <para>
-/// All mutations to <see cref="ISegmentStorage{TRange,TData}"/> are made exclusively here.
-/// The User Path never mutates storage.
+/// All mutations to <see cref="ISegmentStorage{TRange,TData}"/> (<c>Add</c> and <c>Remove</c>)
+/// are made exclusively here. Neither the User Path nor the
+/// <see cref="EvictionEngine{TRange,TData}"/> touches storage.
 /// </para>
 /// <para><strong>Four-step sequence per event (Invariant VPC.B.3):</strong></para>
 /// <list type="number">
 /// <item><description>
-///   Metadata update — the eviction selector updates its per-segment metadata for segments
-///   that were read on the User Path (e.g., LRU updates <c>LastAccessedAt</c>).
-///   Delegated entirely to <see cref="IEvictionSelector{TRange,TData}.UpdateMetadata"/>.
+///   Metadata update — <see cref="EvictionEngine{TRange,TData}.UpdateMetadata"/> updates
+///   selector metadata for segments that were read on the User Path (e.g., LRU timestamps).
 /// </description></item>
 /// <item><description>
 ///   Store data — each chunk in <see cref="BackgroundEvent{TRange,TData}.FetchedChunks"/> with
-///   a non-null Range is added to storage as a new <see cref="CachedSegment{TRange,TData}"/>.
-///   The selector's <see cref="IEvictionSelector{TRange,TData}.InitializeMetadata"/> is called
-///   immediately after each segment is stored, followed by
-///   <see cref="EvictionPolicyEvaluator{TRange,TData}.OnSegmentAdded"/> to update stateful
-///   policy state.
+///   a non-null Range is added to storage as a new <see cref="CachedSegment{TRange,TData}"/>,
+///   followed immediately by <see cref="EvictionEngine{TRange,TData}.InitializeSegment"/> to
+///   set up selector metadata and notify stateful policies.
 ///   Skipped when <c>FetchedChunks</c> is null (full cache hit).
 /// </description></item>
 /// <item><description>
-///   Evaluate eviction — <see cref="EvictionPolicyEvaluator{TRange,TData}.Evaluate"/> is called.
-///   It queries all policies and returns a combined pressure (or <see langword="null"/> when no
-///   constraint is violated). Only runs when step 2 stored at least one segment.
+///   Evaluate and execute eviction — <see cref="EvictionEngine{TRange,TData}.EvaluateAndExecute"/>
+///   queries all policies and, if any constraint is exceeded, runs the candidate-removal loop.
+///   Returns the list of segments to remove. Only runs when step 2 stored at least one segment.
 /// </description></item>
 /// <item><description>
-///   Execute eviction — <see cref="EvictionExecutor{TRange,TData}.Execute"/> is called
-///   with the combined pressure; it removes segments in selector order until all pressures
-///   are satisfied (Invariant VPC.E.2a). The processor then removes the returned segments
-///   from storage and notifies the evaluator via
-///   <see cref="EvictionPolicyEvaluator{TRange,TData}.OnSegmentRemoved"/> for each one.
+///   Remove evicted segments — the processor removes each returned segment from storage and
+///   calls <see cref="EvictionEngine{TRange,TData}.OnSegmentsRemoved"/> to notify stateful
+///   policies in bulk.
 /// </description></item>
 /// </list>
 /// <para><strong>Activity counter (Invariant S.H.1):</strong></para>
@@ -66,31 +62,25 @@ internal sealed class BackgroundEventProcessor<TRange, TData, TDomain>
     where TDomain : IRangeDomain<TRange>
 {
     private readonly ISegmentStorage<TRange, TData> _storage;
-    private readonly EvictionPolicyEvaluator<TRange, TData> _policyEvaluator;
-    private readonly IEvictionSelector<TRange, TData> _selector;
-    private readonly EvictionExecutor<TRange, TData> _executor;
+    private readonly EvictionEngine<TRange, TData> _evictionEngine;
     private readonly ICacheDiagnostics _diagnostics;
 
     /// <summary>
     /// Initializes a new <see cref="BackgroundEventProcessor{TRange,TData,TDomain}"/>.
     /// </summary>
     /// <param name="storage">The segment storage (single writer — only mutated here).</param>
-    /// <param name="policyEvaluator">
-    /// The eviction policy evaluator; encapsulates multi-policy evaluation, stateful policy
-    /// lifecycle notifications, and composite pressure construction.
+    /// <param name="evictionEngine">
+    /// The eviction engine facade; encapsulates selector metadata, policy evaluation,
+    /// execution, and eviction diagnostics.
     /// </param>
-    /// <param name="selector">Eviction selector; determines candidate ordering and owns per-segment metadata.</param>
     /// <param name="diagnostics">Diagnostics sink; must never throw.</param>
     public BackgroundEventProcessor(
         ISegmentStorage<TRange, TData> storage,
-        EvictionPolicyEvaluator<TRange, TData> policyEvaluator,
-        IEvictionSelector<TRange, TData> selector,
+        EvictionEngine<TRange, TData> evictionEngine,
         ICacheDiagnostics diagnostics)
     {
         _storage = storage;
-        _policyEvaluator = policyEvaluator;
-        _selector = selector;
-        _executor = new EvictionExecutor<TRange, TData>(selector);
+        _evictionEngine = evictionEngine;
         _diagnostics = diagnostics;
     }
 
@@ -118,8 +108,7 @@ internal sealed class BackgroundEventProcessor<TRange, TData, TDomain>
             var now = DateTime.UtcNow;
 
             // Step 1: Update selector metadata for segments read on the User Path.
-            // Delegated entirely to the selector — the processor has no knowledge of metadata structure.
-            _selector.UpdateMetadata(backgroundEvent.UsedSegments, now);
+            _evictionEngine.UpdateMetadata(backgroundEvent.UsedSegments, now);
             _diagnostics.BackgroundStatisticsUpdated();
 
             // Step 2: Store freshly fetched data (null FetchedChunks means full cache hit — skip).
@@ -139,8 +128,7 @@ internal sealed class BackgroundEventProcessor<TRange, TData, TDomain>
                     var segment = new CachedSegment<TRange, TData>(chunk.Range.Value, data);
 
                     _storage.Add(segment);
-                    _selector.InitializeMetadata(segment, now);
-                    _policyEvaluator.OnSegmentAdded(segment);
+                    _evictionEngine.InitializeSegment(segment, now);
                     _diagnostics.BackgroundSegmentStored();
 
                     justStoredSegments.Add(segment);
@@ -150,26 +138,19 @@ internal sealed class BackgroundEventProcessor<TRange, TData, TDomain>
             // Steps 3 & 4: Evaluate and execute eviction only when new data was stored.
             if (justStoredSegments.Count > 0)
             {
-                // Step 3: Evaluate — query all policies via the evaluator.
+                // Step 3+4: Evaluate policies and get candidates to remove (Invariant VPC.E.2a).
+                // Eviction diagnostics (EvictionEvaluated, EvictionTriggered, EvictionExecuted)
+                // are fired internally by the engine.
                 var allSegments = _storage.GetAllSegments();
-                var pressure = _policyEvaluator.Evaluate(allSegments);
+                var toRemove = _evictionEngine.EvaluateAndExecute(allSegments, justStoredSegments);
 
-                _diagnostics.EvictionEvaluated();
-
-                // Step 4: Execute eviction if any policy constraint is exceeded (Invariant VPC.E.2a).
-                if (pressure.IsExceeded)
+                // Step 4 (storage): Remove evicted segments; processor is the sole storage writer.
+                foreach (var segment in toRemove)
                 {
-                    _diagnostics.EvictionTriggered();
-
-                    var toRemove = _executor.Execute(pressure, allSegments, justStoredSegments);
-                    foreach (var segment in toRemove)
-                    {
-                        _storage.Remove(segment);
-                        _policyEvaluator.OnSegmentRemoved(segment);
-                    }
-
-                    _diagnostics.EvictionExecuted();
+                    _storage.Remove(segment);
                 }
+
+                _evictionEngine.OnSegmentsRemoved(toRemove);
             }
 
             _diagnostics.BackgroundEventProcessed();

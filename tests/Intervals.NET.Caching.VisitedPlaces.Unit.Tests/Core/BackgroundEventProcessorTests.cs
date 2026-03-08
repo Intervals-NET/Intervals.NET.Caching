@@ -303,12 +303,13 @@ public sealed class BackgroundEventProcessorTests
     {
         // ARRANGE — use a throwing selector to simulate a fault during eviction
         var throwingSelector = new ThrowingEvictionSelector();
-        var policyEvaluator = new EvictionPolicyEvaluator<int, int>(
-            [new MaxSegmentCountPolicy<int, int>(1)]);
+        var evictionEngine = new EvictionEngine<int, int>(
+            [new MaxSegmentCountPolicy<int, int>(1)],
+            throwingSelector,
+            _diagnostics);
         var processor = new BackgroundEventProcessor<int, int, IntegerFixedStepDomain>(
             _storage,
-            policyEvaluator,
-            throwingSelector,
+            evictionEngine,
             _diagnostics);
 
         // Pre-populate so eviction is triggered (count > 1 after storing)
@@ -335,12 +336,13 @@ public sealed class BackgroundEventProcessorTests
     {
         // ARRANGE — use a throwing storage to simulate a storage fault
         var throwingStorage = new ThrowingSegmentStorage();
-        var policyEvaluator = new EvictionPolicyEvaluator<int, int>(
-            [new MaxSegmentCountPolicy<int, int>(100)]);
+        var evictionEngine = new EvictionEngine<int, int>(
+            [new MaxSegmentCountPolicy<int, int>(100)],
+            new LruEvictionSelector<int, int>(),
+            _diagnostics);
         var processor = new BackgroundEventProcessor<int, int, IntegerFixedStepDomain>(
             throwingStorage,
-            policyEvaluator,
-            new LruEvictionSelector<int, int>(),
+            evictionEngine,
             _diagnostics);
 
         var chunk = CreateChunk(0, 9);
@@ -366,14 +368,14 @@ public sealed class BackgroundEventProcessorTests
     private BackgroundEventProcessor<int, int, IntegerFixedStepDomain> CreateProcessor(
         int maxSegmentCount)
     {
-        var policyEvaluator = new EvictionPolicyEvaluator<int, int>(
-            [new MaxSegmentCountPolicy<int, int>(maxSegmentCount)]);
-        IEvictionSelector<int, int> selector = new LruEvictionSelector<int, int>();
+        var evictionEngine = new EvictionEngine<int, int>(
+            [new MaxSegmentCountPolicy<int, int>(maxSegmentCount)],
+            new LruEvictionSelector<int, int>(),
+            _diagnostics);
 
         return new BackgroundEventProcessor<int, int, IntegerFixedStepDomain>(
             _storage,
-            policyEvaluator,
-            selector,
+            evictionEngine,
             _diagnostics);
     }
 

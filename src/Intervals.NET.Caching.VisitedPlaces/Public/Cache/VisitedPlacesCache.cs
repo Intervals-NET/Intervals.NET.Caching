@@ -97,14 +97,14 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
         // Create storage via the strategy options object (Factory Method pattern).
         var storage = options.StorageStrategy.Create();
 
-        // Policy evaluator: encapsulates stateful policy lifecycle and multi-policy evaluation.
-        var policyEvaluator = new EvictionPolicyEvaluator<TRange, TData>(policies);
+        // Eviction engine: encapsulates selector metadata, policy evaluation, execution,
+        // and eviction-specific diagnostics. Storage mutations remain in the processor.
+        var evictionEngine = new EvictionEngine<TRange, TData>(policies, selector, cacheDiagnostics);
 
         // Background event processor: single writer, executes the four-step Background Path.
         var processor = new BackgroundEventProcessor<TRange, TData, TDomain>(
             storage,
-            policyEvaluator,
-            selector,
+            evictionEngine,
             cacheDiagnostics);
 
         // Diagnostics adapter: maps IWorkSchedulerDiagnostics → ICacheDiagnostics.
