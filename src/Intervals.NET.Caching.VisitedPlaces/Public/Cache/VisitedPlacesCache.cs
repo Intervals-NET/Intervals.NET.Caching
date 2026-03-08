@@ -86,7 +86,7 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
         VisitedPlacesCacheOptions<TRange, TData> options,
         IReadOnlyList<IEvictionPolicy<TRange, TData>> policies,
         IEvictionSelector<TRange, TData> selector,
-        ICacheDiagnostics? cacheDiagnostics = null)
+        IVisitedPlacesCacheDiagnostics? cacheDiagnostics = null)
     {
         // Fall back to no-op diagnostics so internal actors never receive null.
         cacheDiagnostics ??= NoOpDiagnostics.Instance;
@@ -107,7 +107,7 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
             evictionEngine,
             cacheDiagnostics);
 
-        // Diagnostics adapter: maps IWorkSchedulerDiagnostics → ICacheDiagnostics.
+        // Diagnostics adapter: maps IWorkSchedulerDiagnostics → IVisitedPlacesCacheDiagnostics.
         var schedulerDiagnostics = new VisitedPlacesWorkSchedulerDiagnostics(cacheDiagnostics);
 
         // Scheduler: serializes background events without delay (debounce = zero).

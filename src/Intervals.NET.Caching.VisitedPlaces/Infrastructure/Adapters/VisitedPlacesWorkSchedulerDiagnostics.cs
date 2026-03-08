@@ -4,7 +4,7 @@ using Intervals.NET.Caching.VisitedPlaces.Public.Instrumentation;
 namespace Intervals.NET.Caching.VisitedPlaces.Infrastructure.Adapters;
 
 /// <summary>
-/// Bridges <see cref="ICacheDiagnostics"/> to <see cref="IWorkSchedulerDiagnostics"/> for use
+/// Bridges <see cref="IVisitedPlacesCacheDiagnostics"/> to <see cref="IWorkSchedulerDiagnostics"/> for use
 /// by <see cref="ChannelBasedWorkScheduler{TWorkItem}"/> in VisitedPlacesCache.
 /// </summary>
 /// <remarks>
@@ -12,7 +12,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Infrastructure.Adapters;
 /// <para>
 /// The generic work schedulers in <c>Intervals.NET.Caching</c> depend on the narrow
 /// <see cref="IWorkSchedulerDiagnostics"/> interface rather than the full
-/// <see cref="ICacheDiagnostics"/>. This adapter maps the three scheduler-lifecycle events
+/// <see cref="IVisitedPlacesCacheDiagnostics"/>. This adapter maps the three scheduler-lifecycle events
 /// (<c>WorkStarted</c>, <c>WorkCancelled</c>, <c>WorkFailed</c>) to their VPC counterparts.
 /// </para>
 /// <para><strong>Cancellation note:</strong></para>
@@ -23,19 +23,19 @@ namespace Intervals.NET.Caching.VisitedPlaces.Infrastructure.Adapters;
 /// </remarks>
 internal sealed class VisitedPlacesWorkSchedulerDiagnostics : IWorkSchedulerDiagnostics
 {
-    private readonly ICacheDiagnostics _inner;
+    private readonly IVisitedPlacesCacheDiagnostics _inner;
 
     /// <summary>
     /// Initializes a new instance of <see cref="VisitedPlacesWorkSchedulerDiagnostics"/>.
     /// </summary>
     /// <param name="inner">The underlying VPC diagnostics to delegate to.</param>
-    public VisitedPlacesWorkSchedulerDiagnostics(ICacheDiagnostics inner)
+    public VisitedPlacesWorkSchedulerDiagnostics(IVisitedPlacesCacheDiagnostics inner)
     {
         _inner = inner;
     }
 
     /// <inheritdoc/>
-    /// <remarks>Maps to <see cref="ICacheDiagnostics.NormalizationRequestReceived"/>.</remarks>
+    /// <remarks>Maps to <see cref="IVisitedPlacesCacheDiagnostics.NormalizationRequestReceived"/>.</remarks>
     public void WorkStarted() => _inner.NormalizationRequestReceived();
 
     /// <inheritdoc/>
@@ -46,6 +46,6 @@ internal sealed class VisitedPlacesWorkSchedulerDiagnostics : IWorkSchedulerDiag
     public void WorkCancelled() { }
 
     /// <inheritdoc/>
-    /// <remarks>Maps to <see cref="ICacheDiagnostics.NormalizationRequestProcessingFailed"/>.</remarks>
-    public void WorkFailed(Exception ex) => _inner.NormalizationRequestProcessingFailed(ex);
+    /// <remarks>Maps to <see cref="ICacheDiagnostics.BackgroundOperationFailed"/>.</remarks>
+    public void WorkFailed(Exception ex) => _inner.BackgroundOperationFailed(ex);
 }

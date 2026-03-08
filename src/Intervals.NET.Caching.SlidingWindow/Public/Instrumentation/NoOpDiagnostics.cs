@@ -1,14 +1,17 @@
+using Intervals.NET.Caching;
+
 namespace Intervals.NET.Caching.SlidingWindow.Public.Instrumentation;
 
 /// <summary>
-/// No-op implementation of ICacheDiagnostics for production use where performance is critical and diagnostics are not needed.
+/// No-op implementation of <see cref="ISlidingWindowCacheDiagnostics"/> for production use
+/// where performance is critical and diagnostics are not needed.
 /// </summary>
-public sealed class NoOpDiagnostics : ICacheDiagnostics
+public sealed class NoOpDiagnostics : NoOpCacheDiagnostics, ISlidingWindowCacheDiagnostics
 {
     /// <summary>
     /// A shared singleton instance. Use this to avoid unnecessary allocations.
     /// </summary>
-    public static readonly NoOpDiagnostics Instance = new();
+    public new static readonly NoOpDiagnostics Instance = new();
 
     /// <inheritdoc/>
     public void CacheExpanded()
@@ -72,34 +75,6 @@ public sealed class NoOpDiagnostics : ICacheDiagnostics
 
     /// <inheritdoc/>
     public void RebalanceScheduled()
-    {
-    }
-
-    /// <inheritdoc/>
-    public void RebalanceExecutionFailed(Exception ex)
-    {
-        // Intentional no-op: this implementation discards all diagnostics including failures.
-        // For production systems, use EventCounterCacheDiagnostics or a custom ICacheDiagnostics
-        // implementation that logs to your observability pipeline.
-    }
-
-    /// <inheritdoc/>
-    public void UserRequestFullCacheHit()
-    {
-    }
-
-    /// <inheritdoc/>
-    public void UserRequestFullCacheMiss()
-    {
-    }
-
-    /// <inheritdoc/>
-    public void UserRequestPartialCacheHit()
-    {
-    }
-
-    /// <inheritdoc/>
-    public void UserRequestServed()
     {
     }
 }

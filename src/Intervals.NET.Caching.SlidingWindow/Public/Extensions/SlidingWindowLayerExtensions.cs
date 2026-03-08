@@ -45,7 +45,7 @@ public static class SlidingWindowLayerExtensions
     public static LayeredRangeCacheBuilder<TRange, TData, TDomain> AddSlidingWindowLayer<TRange, TData, TDomain>(
         this LayeredRangeCacheBuilder<TRange, TData, TDomain> builder,
         SlidingWindowCacheOptions options,
-        ICacheDiagnostics? diagnostics = null)
+        ISlidingWindowCacheDiagnostics? diagnostics = null)
         where TRange : IComparable<TRange>
         where TDomain : IRangeDomain<TRange>
     {
@@ -78,7 +78,7 @@ public static class SlidingWindowLayerExtensions
     public static LayeredRangeCacheBuilder<TRange, TData, TDomain> AddSlidingWindowLayer<TRange, TData, TDomain>(
         this LayeredRangeCacheBuilder<TRange, TData, TDomain> builder,
         Action<SlidingWindowCacheOptionsBuilder> configure,
-        ICacheDiagnostics? diagnostics = null)
+        ISlidingWindowCacheDiagnostics? diagnostics = null)
         where TRange : IComparable<TRange>
         where TDomain : IRangeDomain<TRange>
     {

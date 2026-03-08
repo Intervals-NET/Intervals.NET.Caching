@@ -36,9 +36,9 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 /// <para><strong>Diagnostics split:</strong></para>
 /// <para>
 /// The engine fires eviction-specific diagnostics:
-/// <see cref="ICacheDiagnostics.EvictionEvaluated"/>,
-/// <see cref="ICacheDiagnostics.EvictionTriggered"/>,
-/// <see cref="ICacheDiagnostics.EvictionExecuted"/>.
+/// <see cref="IVisitedPlacesCacheDiagnostics.EvictionEvaluated"/>,
+    /// <see cref="IVisitedPlacesCacheDiagnostics.EvictionTriggered"/>,
+    /// <see cref="IVisitedPlacesCacheDiagnostics.EvictionExecuted"/>.
 /// The processor retains ownership of storage-level diagnostics
 /// (<c>BackgroundSegmentStored</c>, <c>BackgroundStatisticsUpdated</c>, etc.).
 /// </para>
@@ -59,7 +59,7 @@ internal sealed class EvictionEngine<TRange, TData>
     private readonly IEvictionSelector<TRange, TData> _selector;
     private readonly EvictionPolicyEvaluator<TRange, TData> _policyEvaluator;
     private readonly EvictionExecutor<TRange, TData> _executor;
-    private readonly ICacheDiagnostics _diagnostics;
+    private readonly IVisitedPlacesCacheDiagnostics _diagnostics;
 
     /// <summary>
     /// Initializes a new <see cref="EvictionEngine{TRange,TData}"/>.
@@ -84,7 +84,7 @@ internal sealed class EvictionEngine<TRange, TData>
     public EvictionEngine(
         IReadOnlyList<IEvictionPolicy<TRange, TData>> policies,
         IEvictionSelector<TRange, TData> selector,
-        ICacheDiagnostics diagnostics)
+        IVisitedPlacesCacheDiagnostics diagnostics)
     {
         ArgumentNullException.ThrowIfNull(policies);
 
@@ -134,9 +134,9 @@ internal sealed class EvictionEngine<TRange, TData>
     /// (Invariant VPC.E.3a).
     /// </returns>
     /// <remarks>
-    /// Fires <see cref="ICacheDiagnostics.EvictionEvaluated"/> unconditionally,
-    /// <see cref="ICacheDiagnostics.EvictionTriggered"/> when at least one policy fires, and
-    /// <see cref="ICacheDiagnostics.EvictionExecuted"/> after the removal loop completes.
+    /// Fires <see cref="IVisitedPlacesCacheDiagnostics.EvictionEvaluated"/> unconditionally,
+    /// <see cref="IVisitedPlacesCacheDiagnostics.EvictionTriggered"/> when at least one policy fires, and
+    /// <see cref="IVisitedPlacesCacheDiagnostics.EvictionExecuted"/> after the removal loop completes.
     /// </remarks>
     public IReadOnlyList<CachedSegment<TRange, TData>> EvaluateAndExecute(
         IReadOnlyList<CachedSegment<TRange, TData>> allSegments,

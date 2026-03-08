@@ -53,7 +53,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Background;
 /// </para>
 /// <para><strong>Exception handling:</strong></para>
 /// <para>
-/// Exceptions are caught, reported via <see cref="ICacheDiagnostics.NormalizationRequestProcessingFailed"/>,
+/// Exceptions are caught, reported via <see cref="ICacheDiagnostics.BackgroundOperationFailed"/>,
 /// and swallowed so that the background loop survives individual request failures.
 /// </para>
 /// </remarks>
@@ -63,7 +63,7 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
 {
     private readonly ISegmentStorage<TRange, TData> _storage;
     private readonly EvictionEngine<TRange, TData> _evictionEngine;
-    private readonly ICacheDiagnostics _diagnostics;
+    private readonly IVisitedPlacesCacheDiagnostics _diagnostics;
 
     /// <summary>
     /// Initializes a new <see cref="CacheNormalizationExecutor{TRange,TData,TDomain}"/>.
@@ -77,7 +77,7 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
     public CacheNormalizationExecutor(
         ISegmentStorage<TRange, TData> storage,
         EvictionEngine<TRange, TData> evictionEngine,
-        ICacheDiagnostics diagnostics)
+        IVisitedPlacesCacheDiagnostics diagnostics)
     {
         _storage = storage;
         _evictionEngine = evictionEngine;
@@ -155,7 +155,7 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
         }
         catch (Exception ex)
         {
-            _diagnostics.NormalizationRequestProcessingFailed(ex);
+            _diagnostics.BackgroundOperationFailed(ex);
             // Swallow: the background loop must survive individual request failures.
         }
 

@@ -235,7 +235,7 @@ public static class TestHelpers
     {
         var received = diagnostics.NormalizationRequestReceived;
         var processed = diagnostics.NormalizationRequestProcessed;
-        var failed = diagnostics.NormalizationRequestProcessingFailed;
+        var failed = diagnostics.BackgroundOperationFailed;
         Assert.Equal(received, processed + failed);
     }
 
@@ -244,6 +244,6 @@ public static class TestHelpers
     /// </summary>
     public static void AssertNoBackgroundFailures(EventCounterCacheDiagnostics diagnostics)
     {
-        Assert.Equal(0, diagnostics.NormalizationRequestProcessingFailed);
+        Assert.Equal(0, diagnostics.BackgroundOperationFailed);
     }
 }

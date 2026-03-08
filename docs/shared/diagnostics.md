@@ -12,6 +12,31 @@ When diagnostics are wired, each event is a simple method call. Implementations 
 
 ---
 
+## Interface Hierarchy
+
+The diagnostics system uses a two-level interface hierarchy:
+
+### Shared base: `ICacheDiagnostics` (in `Intervals.NET.Caching`)
+
+Contains events common to all cache implementations:
+
+| Method                                 | Description                                               |
+|----------------------------------------|-----------------------------------------------------------|
+| `UserRequestServed()`                  | A user request was successfully served                    |
+| `UserRequestFullCacheHit()`            | All requested data was found in cache                     |
+| `UserRequestPartialCacheHit()`         | Requested data was partially found in cache               |
+| `UserRequestFullCacheMiss()`           | No requested data was found in cache                      |
+| `BackgroundOperationFailed(Exception)` | A background operation failed with an unhandled exception |
+
+### Package-specific interfaces
+
+Each package defines its own interface that inherits from `ICacheDiagnostics`:
+
+- **`ISlidingWindowCacheDiagnostics`** (in `Intervals.NET.Caching.SlidingWindow`) — adds rebalance lifecycle events
+- **`IVisitedPlacesCacheDiagnostics`** (in `Intervals.NET.Caching.VisitedPlaces`) — adds normalization and eviction events
+
+---
+
 ## Two-Tier Pattern
 
 Every cache implementation exposes a diagnostics interface with two default implementations:
@@ -35,26 +60,26 @@ Thread-safe atomic counter implementation using `Interlocked.Increment`.
 
 ---
 
-## Critical: RebalanceExecutionFailed
+## Critical: BackgroundOperationFailed
 
-Every cache implementation has a `RebalanceExecutionFailed(Exception ex)` callback. This is the **only signal** for silent background failures.
+Every cache implementation exposes `BackgroundOperationFailed(Exception ex)` via the shared `ICacheDiagnostics` base interface. This is the **only signal** for silent background failures.
 
-Background rebalance operations run fire-and-forget. When they fail:
+Background operations run fire-and-forget. When they fail:
 1. The exception is caught
-2. `RebalanceExecutionFailed(ex)` is called
+2. `BackgroundOperationFailed(ex)` is called
 3. The exception is **swallowed** to prevent application crashes
-4. The cache continues serving user requests (but rebalancing stops)
+4. The cache continues serving user requests (but background operations stop)
 
 **Without handling this event, failures are completely silent.**
 
 Minimum production implementation:
 
 ```csharp
-public void RebalanceExecutionFailed(Exception ex)
+void ICacheDiagnostics.BackgroundOperationFailed(Exception ex)
 {
     _logger.LogError(ex,
-        "Cache rebalance execution failed. Cache will continue serving user requests " +
-        "but rebalancing has stopped. Investigate data source health and cache configuration.");
+        "Cache background operation failed. Cache will continue serving user requests " +
+        "but background processing has stopped. Investigate data source health and cache configuration.");
 }
 ```
 
@@ -62,16 +87,24 @@ public void RebalanceExecutionFailed(Exception ex)
 
 ## Custom Implementations
 
-Implement the diagnostics interface for custom observability:
+Implement the package-specific diagnostics interface for custom observability:
 
 ```csharp
-public class PrometheusMetricsDiagnostics : ICacheDiagnostics   // SWC example
+// SlidingWindow example
+public class PrometheusMetricsDiagnostics : ISlidingWindowCacheDiagnostics
 {
     private readonly Counter _requestsServed;
     private readonly Counter _cacheHits;
 
-    public void UserRequestServed() => _requestsServed.Inc();
-    public void UserRequestFullCacheHit() => _cacheHits.Inc();
+    void ICacheDiagnostics.UserRequestServed() => _requestsServed.Inc();
+    void ICacheDiagnostics.UserRequestFullCacheHit() => _cacheHits.Inc();
+
+    // Shared base method — always implement this in production
+    void ICacheDiagnostics.BackgroundOperationFailed(Exception ex) =>
+        _logger.LogError(ex, "Cache background operation failed.");
+
+    // SlidingWindow-specific methods
+    public void RebalanceExecutionCompleted() => _rebalances.Inc();
     // ...
 }
 ```
@@ -80,4 +113,4 @@ public class PrometheusMetricsDiagnostics : ICacheDiagnostics   // SWC example
 
 ## See Also
 
-- `docs/sliding-window/diagnostics.md` — full `ICacheDiagnostics` event reference (18 events, test patterns, layered cache diagnostics)
+- `docs/sliding-window/diagnostics.md` — full `ISlidingWindowCacheDiagnostics` event reference (18 events, test patterns, layered cache diagnostics)

@@ -83,7 +83,7 @@ public sealed class TaskBasedRebalanceExecutionControllerTests
         await chainedTask;
 
         // ASSERT
-        Assert.True(diagnostics.RebalanceExecutionFailed >= 1,
+        Assert.True(diagnostics.BackgroundOperationFailed >= 1,
             "Expected previous task failure to be recorded and current execution to continue.");
         Assert.True(diagnostics.RebalanceExecutionStarted >= 1);
     }

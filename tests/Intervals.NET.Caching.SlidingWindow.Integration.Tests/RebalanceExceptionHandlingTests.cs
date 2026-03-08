@@ -1,4 +1,5 @@
 using Intervals.NET.Domain.Default.Numeric;
+using Intervals.NET.Caching;
 using Intervals.NET.Caching.SlidingWindow.Tests.Infrastructure.DataSources;
 using Intervals.NET.Caching.SlidingWindow.Public.Cache;
 using Intervals.NET.Caching.SlidingWindow.Public.Configuration;
@@ -8,7 +9,7 @@ namespace Intervals.NET.Caching.SlidingWindow.Integration.Tests;
 
 /// <summary>
 /// Tests for validating proper exception handling in background rebalance operations.
-/// Demonstrates the critical importance of handling RebalanceExecutionFailed events.
+/// Demonstrates the critical importance of handling BackgroundOperationFailed events.
 /// </summary>
 public class RebalanceExceptionHandlingTests : IDisposable
 {
@@ -25,11 +26,11 @@ public class RebalanceExceptionHandlingTests : IDisposable
     }
 
     /// <summary>
-    /// Demonstrates that RebalanceExecutionFailed is properly recorded when data source throws during rebalance.
+    /// Demonstrates that BackgroundOperationFailed is properly recorded when data source throws during rebalance.
     /// This validates that exceptions in background operations are caught and reported.
     /// </summary>
     [Fact]
-    public async Task RebalanceExecutionFailed_IsRecorded_WhenDataSourceThrowsDuringRebalance()
+    public async Task BackgroundOperationFailed_IsRecorded_WhenDataSourceThrowsDuringRebalance()
     {
         // Arrange: Create a data source that throws on the second fetch (during rebalance)
         var callCount = 0;
@@ -75,7 +76,7 @@ public class RebalanceExceptionHandlingTests : IDisposable
         Assert.Equal(1, _diagnostics.UserRequestServed);
         Assert.Equal(1, _diagnostics.RebalanceIntentPublished);
         Assert.Equal(1, _diagnostics.RebalanceExecutionStarted);
-        Assert.Equal(1, _diagnostics.RebalanceExecutionFailed); // ⚠️ This is the critical event
+        Assert.Equal(1, _diagnostics.BackgroundOperationFailed); // ⚠️ This is the critical event
         Assert.Equal(0, _diagnostics.RebalanceExecutionCompleted); // Should not complete
     }
 
@@ -135,7 +136,7 @@ public class RebalanceExceptionHandlingTests : IDisposable
         Assert.Equal(11, data2.Data.Length);
 
         // Verify at least one rebalance failed
-        Assert.True(_diagnostics.RebalanceExecutionFailed >= 1,
+        Assert.True(_diagnostics.BackgroundOperationFailed >= 1,
             "Expected at least one rebalance failure but got none. " +
             "Without proper exception handling, this would have crashed the application.");
     }
@@ -241,7 +242,7 @@ public class RebalanceExceptionHandlingTests : IDisposable
         await cache.WaitForIdleAsync();
 
         // Assert
-        Assert.Equal(1, _diagnostics.RebalanceExecutionFailed);
+        Assert.Equal(1, _diagnostics.BackgroundOperationFailed);
         Assert.Equal(1, _diagnostics.RebalanceExecutionStarted);
         Assert.Equal(0, _diagnostics.RebalanceExecutionCompleted);
     }
@@ -293,7 +294,7 @@ public class RebalanceExceptionHandlingTests : IDisposable
         Assert.Equal(2, _diagnostics.UserRequestServed);
         Assert.True(_diagnostics.RebalanceIntentPublished >= 2,
             "Expected intents to continue publishing after a rebalance failure.");
-        Assert.True(_diagnostics.RebalanceExecutionFailed >= 1,
+        Assert.True(_diagnostics.BackgroundOperationFailed >= 1,
             "Expected at least one rebalance failure to be recorded.");
     }
 
@@ -303,7 +304,7 @@ public class RebalanceExceptionHandlingTests : IDisposable
     /// Production-ready diagnostics implementation that logs failures.
     /// This demonstrates the minimum requirement for production use.
     /// </summary>
-    private class LoggingCacheDiagnostics : ICacheDiagnostics
+    private class LoggingCacheDiagnostics : ISlidingWindowCacheDiagnostics
     {
         private readonly Action<Exception> _logError;
 
@@ -316,14 +317,14 @@ public class RebalanceExceptionHandlingTests : IDisposable
         {
         }
 
-        public void RebalanceExecutionFailed(Exception ex)
+        void ICacheDiagnostics.BackgroundOperationFailed(Exception ex)
         {
             // ⚠️ CRITICAL: This is the minimum requirement for production
             _logError(ex);
         }
 
         // All other methods can be no-op if you only care about failures
-        public void UserRequestServed()
+        void ICacheDiagnostics.UserRequestServed()
         {
         }
 
@@ -335,15 +336,15 @@ public class RebalanceExceptionHandlingTests : IDisposable
         {
         }
 
-        public void UserRequestFullCacheHit()
+        void ICacheDiagnostics.UserRequestFullCacheHit()
         {
         }
 
-        public void UserRequestPartialCacheHit()
+        void ICacheDiagnostics.UserRequestPartialCacheHit()
         {
         }
 
-        public void UserRequestFullCacheMiss()
+        void ICacheDiagnostics.UserRequestFullCacheMiss()
         {
         }
 

@@ -51,7 +51,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     private readonly CacheDataExtensionService<TRange, TData, TDomain> _cacheExtensionService;
     private readonly IntentController<TRange, TData, TDomain> _intentController;
     private readonly IDataSource<TRange, TData> _dataSource;
-    private readonly ICacheDiagnostics _cacheDiagnostics;
+    private readonly ISlidingWindowCacheDiagnostics _cacheDiagnostics;
 
     // Disposal state tracking (lock-free using Interlocked)
     // 0 = not disposed, 1 = disposed
@@ -69,7 +69,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
         CacheDataExtensionService<TRange, TData, TDomain> cacheExtensionService,
         IntentController<TRange, TData, TDomain> intentController,
         IDataSource<TRange, TData> dataSource,
-        ICacheDiagnostics cacheDiagnostics
+        ISlidingWindowCacheDiagnostics cacheDiagnostics
     )
     {
         _state = state;

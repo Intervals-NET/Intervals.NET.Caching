@@ -1,30 +1,20 @@
+using Intervals.NET.Caching;
+
 namespace Intervals.NET.Caching.VisitedPlaces.Public.Instrumentation;
 
 /// <summary>
-/// No-op implementation of <see cref="ICacheDiagnostics"/> that silently discards all events.
+/// No-op implementation of <see cref="IVisitedPlacesCacheDiagnostics"/> that silently discards all events.
 /// Used as the default when no diagnostics are configured.
 /// </summary>
 /// <remarks>
 /// Access the singleton via <see cref="Instance"/>. Do not construct additional instances.
 /// </remarks>
-public sealed class NoOpDiagnostics : ICacheDiagnostics
+public sealed class NoOpDiagnostics : NoOpCacheDiagnostics, IVisitedPlacesCacheDiagnostics
 {
     /// <summary>The singleton no-op diagnostics instance.</summary>
-    public static readonly ICacheDiagnostics Instance = new NoOpDiagnostics();
+    public static new readonly IVisitedPlacesCacheDiagnostics Instance = new NoOpDiagnostics();
 
     private NoOpDiagnostics() { }
-
-    /// <inheritdoc/>
-    public void UserRequestServed() { }
-
-    /// <inheritdoc/>
-    public void UserRequestFullCacheHit() { }
-
-    /// <inheritdoc/>
-    public void UserRequestPartialCacheHit() { }
-
-    /// <inheritdoc/>
-    public void UserRequestFullCacheMiss() { }
 
     /// <inheritdoc/>
     public void DataSourceFetchGap() { }
@@ -52,7 +42,4 @@ public sealed class NoOpDiagnostics : ICacheDiagnostics
 
     /// <inheritdoc/>
     public void EvictionSegmentRemoved() { }
-
-    /// <inheritdoc/>
-    public void NormalizationRequestProcessingFailed(Exception ex) { }
 }

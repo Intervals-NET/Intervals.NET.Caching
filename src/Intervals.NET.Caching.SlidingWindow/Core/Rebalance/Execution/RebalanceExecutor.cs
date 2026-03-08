@@ -28,12 +28,12 @@ internal sealed class RebalanceExecutor<TRange, TData, TDomain>
 {
     private readonly CacheState<TRange, TData, TDomain> _state;
     private readonly CacheDataExtensionService<TRange, TData, TDomain> _cacheExtensionService;
-    private readonly ICacheDiagnostics _cacheDiagnostics;
+    private readonly ISlidingWindowCacheDiagnostics _cacheDiagnostics;
 
     public RebalanceExecutor(
         CacheState<TRange, TData, TDomain> state,
         CacheDataExtensionService<TRange, TData, TDomain> cacheExtensionService,
-        ICacheDiagnostics cacheDiagnostics
+        ISlidingWindowCacheDiagnostics cacheDiagnostics
     )
     {
         _state = state;

@@ -29,7 +29,7 @@ public class NoOpDiagnosticsTests
             diagnostics.RebalanceSkippedCurrentNoRebalanceRange();
             diagnostics.RebalanceSkippedPendingNoRebalanceRange();
             diagnostics.RebalanceSkippedSameRange();
-            diagnostics.RebalanceExecutionFailed(testException);
+            diagnostics.BackgroundOperationFailed(testException);
             diagnostics.UserRequestFullCacheHit();
             diagnostics.UserRequestFullCacheMiss();
             diagnostics.UserRequestPartialCacheHit();

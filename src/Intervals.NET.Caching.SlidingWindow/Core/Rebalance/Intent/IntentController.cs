@@ -55,7 +55,7 @@ internal sealed class IntentController<TRange, TData, TDomain>
     private readonly RebalanceDecisionEngine<TRange, TDomain> _decisionEngine;
     private readonly IWorkScheduler<ExecutionRequest<TRange, TData, TDomain>> _scheduler;
     private readonly CacheState<TRange, TData, TDomain> _state;
-    private readonly ICacheDiagnostics _cacheDiagnostics;
+    private readonly ISlidingWindowCacheDiagnostics _cacheDiagnostics;
 
     // Shared intent field - user threads write via Interlocked.Exchange, processing loop reads
     private Intent<TRange, TData, TDomain>? _pendingIntent;
@@ -92,7 +92,7 @@ internal sealed class IntentController<TRange, TData, TDomain>
         CacheState<TRange, TData, TDomain> state,
         RebalanceDecisionEngine<TRange, TDomain> decisionEngine,
         IWorkScheduler<ExecutionRequest<TRange, TData, TDomain>> scheduler,
-        ICacheDiagnostics cacheDiagnostics,
+        ISlidingWindowCacheDiagnostics cacheDiagnostics,
         AsyncActivityCounter activityCounter
     )
     {
@@ -260,7 +260,7 @@ internal sealed class IntentController<TRange, TData, TDomain>
                 catch (Exception ex)
                 {
                     // Actor loop must never crash - log and continue processing
-                    _cacheDiagnostics.RebalanceExecutionFailed(ex);
+                    _cacheDiagnostics.BackgroundOperationFailed(ex);
                 }
                 finally
                 {
@@ -276,7 +276,7 @@ internal sealed class IntentController<TRange, TData, TDomain>
         catch (Exception ex)
         {
             // Fatal error in processing loop
-            _cacheDiagnostics.RebalanceExecutionFailed(ex);
+            _cacheDiagnostics.BackgroundOperationFailed(ex);
         }
     }
 
@@ -353,7 +353,7 @@ internal sealed class IntentController<TRange, TData, TDomain>
         catch (Exception ex)
         {
             // Log via diagnostics but don't throw
-            _cacheDiagnostics.RebalanceExecutionFailed(ex);
+            _cacheDiagnostics.BackgroundOperationFailed(ex);
         }
 
         // Dispose work scheduler (stops execution loop)

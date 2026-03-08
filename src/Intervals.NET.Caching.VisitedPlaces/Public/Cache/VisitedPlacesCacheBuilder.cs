@@ -150,7 +150,7 @@ public sealed class VisitedPlacesCacheBuilder<TRange, TData, TDomain>
     private readonly TDomain _domain;
     private VisitedPlacesCacheOptions<TRange, TData>? _options;
     private Action<VisitedPlacesCacheOptionsBuilder<TRange, TData>>? _configurePending;
-    private ICacheDiagnostics? _diagnostics;
+    private IVisitedPlacesCacheDiagnostics? _diagnostics;
     private IReadOnlyList<IEvictionPolicy<TRange, TData>>? _policies;
     private IEvictionSelector<TRange, TData>? _selector;
 
@@ -202,7 +202,7 @@ public sealed class VisitedPlacesCacheBuilder<TRange, TData, TDomain>
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="diagnostics"/> is <c>null</c>.
     /// </exception>
-    public VisitedPlacesCacheBuilder<TRange, TData, TDomain> WithDiagnostics(ICacheDiagnostics diagnostics)
+    public VisitedPlacesCacheBuilder<TRange, TData, TDomain> WithDiagnostics(IVisitedPlacesCacheDiagnostics diagnostics)
     {
         _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
         return this;

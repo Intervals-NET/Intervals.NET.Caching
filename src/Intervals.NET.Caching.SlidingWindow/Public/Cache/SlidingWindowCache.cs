@@ -76,7 +76,7 @@ public sealed class SlidingWindowCache<TRange, TData, TDomain>
         IDataSource<TRange, TData> dataSource,
         TDomain domain,
         SlidingWindowCacheOptions options,
-        ICacheDiagnostics? cacheDiagnostics = null
+        ISlidingWindowCacheDiagnostics? cacheDiagnostics = null
     )
     {
         // Initialize diagnostics (use NoOpDiagnostics if null to avoid null checks in actors)
@@ -144,7 +144,7 @@ public sealed class SlidingWindowCache<TRange, TData, TDomain>
         RebalanceExecutor<TRange, TData, TDomain> executor,
         RuntimeCacheOptionsHolder optionsHolder,
         int? rebalanceQueueCapacity,
-        ICacheDiagnostics cacheDiagnostics,
+        ISlidingWindowCacheDiagnostics cacheDiagnostics,
         AsyncActivityCounter activityCounter
     )
     {

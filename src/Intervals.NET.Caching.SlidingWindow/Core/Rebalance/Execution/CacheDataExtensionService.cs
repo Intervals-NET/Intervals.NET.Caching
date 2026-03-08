@@ -26,7 +26,7 @@ internal sealed class CacheDataExtensionService<TRange, TData, TDomain>
 {
     private readonly IDataSource<TRange, TData> _dataSource;
     private readonly TDomain _domain;
-    private readonly ICacheDiagnostics _cacheDiagnostics;
+    private readonly ISlidingWindowCacheDiagnostics _cacheDiagnostics;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CacheDataExtensionService{TRange,TData,TDomain}"/> class.
@@ -43,7 +43,7 @@ internal sealed class CacheDataExtensionService<TRange, TData, TDomain>
     public CacheDataExtensionService(
         IDataSource<TRange, TData> dataSource,
         TDomain domain,
-        ICacheDiagnostics cacheDiagnostics
+        ISlidingWindowCacheDiagnostics cacheDiagnostics
     )
     {
         _dataSource = dataSource;

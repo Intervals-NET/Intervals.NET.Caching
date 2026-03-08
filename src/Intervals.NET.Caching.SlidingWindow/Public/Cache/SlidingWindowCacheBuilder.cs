@@ -156,7 +156,7 @@ public sealed class SlidingWindowCacheBuilder<TRange, TData, TDomain>
     private readonly TDomain _domain;
     private SlidingWindowCacheOptions? _options;
     private Action<SlidingWindowCacheOptionsBuilder>? _configurePending;
-    private ICacheDiagnostics? _diagnostics;
+    private ISlidingWindowCacheDiagnostics? _diagnostics;
 
     internal SlidingWindowCacheBuilder(IDataSource<TRange, TData> dataSource, TDomain domain)
     {
@@ -206,7 +206,7 @@ public sealed class SlidingWindowCacheBuilder<TRange, TData, TDomain>
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="diagnostics"/> is <c>null</c>.
     /// </exception>
-    public SlidingWindowCacheBuilder<TRange, TData, TDomain> WithDiagnostics(ICacheDiagnostics diagnostics)
+    public SlidingWindowCacheBuilder<TRange, TData, TDomain> WithDiagnostics(ISlidingWindowCacheDiagnostics diagnostics)
     {
         _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
         return this;

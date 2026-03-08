@@ -39,7 +39,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     private readonly ISegmentStorage<TRange, TData> _storage;
     private readonly IDataSource<TRange, TData> _dataSource;
     private readonly IWorkScheduler<CacheNormalizationRequest<TRange, TData>> _scheduler;
-    private readonly ICacheDiagnostics _diagnostics;
+    private readonly IVisitedPlacesCacheDiagnostics _diagnostics;
     private readonly TDomain _domain;
 
     // Disposal state: 0 = active, 1 = disposed
@@ -52,7 +52,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
         ISegmentStorage<TRange, TData> storage,
         IDataSource<TRange, TData> dataSource,
         IWorkScheduler<CacheNormalizationRequest<TRange, TData>> scheduler,
-        ICacheDiagnostics diagnostics,
+        IVisitedPlacesCacheDiagnostics diagnostics,
         TDomain domain)
     {
         _storage = storage;

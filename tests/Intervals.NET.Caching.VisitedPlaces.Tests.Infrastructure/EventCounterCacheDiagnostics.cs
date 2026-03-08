@@ -1,3 +1,4 @@
+using Intervals.NET.Caching;
 using Intervals.NET.Caching.VisitedPlaces.Public.Instrumentation;
 
 namespace Intervals.NET.Caching.VisitedPlaces.Tests.Infrastructure;
@@ -11,7 +12,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Tests.Infrastructure;
 /// All counters are updated via <see cref="Interlocked.Increment"/> and read via
 /// <see cref="Volatile.Read"/> to guarantee safe access from concurrent test threads.
 /// </remarks>
-public sealed class EventCounterCacheDiagnostics : ICacheDiagnostics
+public sealed class EventCounterCacheDiagnostics : IVisitedPlacesCacheDiagnostics
 {
     // ============================================================
     // BACKING FIELDS
@@ -30,7 +31,7 @@ public sealed class EventCounterCacheDiagnostics : ICacheDiagnostics
     private int _evictionTriggered;
     private int _evictionExecuted;
     private int _evictionSegmentRemoved;
-    private int _normalizationRequestProcessingFailed;
+    private int _backgroundOperationFailed;
 
     // ============================================================
     // USER PATH COUNTERS
@@ -91,8 +92,8 @@ public sealed class EventCounterCacheDiagnostics : ICacheDiagnostics
     // ERROR COUNTERS
     // ============================================================
 
-    /// <summary>Number of normalization requests that failed with an unhandled exception.</summary>
-    public int NormalizationRequestProcessingFailed => Volatile.Read(ref _normalizationRequestProcessingFailed);
+    /// <summary>Number of background operations that failed with an unhandled exception.</summary>
+    public int BackgroundOperationFailed => Volatile.Read(ref _backgroundOperationFailed);
 
     // ============================================================
     // RESET
@@ -117,11 +118,11 @@ public sealed class EventCounterCacheDiagnostics : ICacheDiagnostics
         Interlocked.Exchange(ref _evictionTriggered, 0);
         Interlocked.Exchange(ref _evictionExecuted, 0);
         Interlocked.Exchange(ref _evictionSegmentRemoved, 0);
-        Interlocked.Exchange(ref _normalizationRequestProcessingFailed, 0);
+        Interlocked.Exchange(ref _backgroundOperationFailed, 0);
     }
 
     // ============================================================
-    // ICacheDiagnostics IMPLEMENTATION (explicit to avoid name clash with counter properties)
+    // IVisitedPlacesCacheDiagnostics IMPLEMENTATION (explicit to avoid name clash with counter properties)
     // ============================================================
 
     /// <inheritdoc/>
@@ -137,33 +138,33 @@ public sealed class EventCounterCacheDiagnostics : ICacheDiagnostics
     void ICacheDiagnostics.UserRequestFullCacheMiss() => Interlocked.Increment(ref _userRequestFullCacheMiss);
 
     /// <inheritdoc/>
-    void ICacheDiagnostics.DataSourceFetchGap() => Interlocked.Increment(ref _dataSourceFetchGap);
+    void ICacheDiagnostics.BackgroundOperationFailed(Exception ex) =>
+        Interlocked.Increment(ref _backgroundOperationFailed);
 
     /// <inheritdoc/>
-    void ICacheDiagnostics.NormalizationRequestReceived() => Interlocked.Increment(ref _normalizationRequestReceived);
+    void IVisitedPlacesCacheDiagnostics.DataSourceFetchGap() => Interlocked.Increment(ref _dataSourceFetchGap);
 
     /// <inheritdoc/>
-    void ICacheDiagnostics.NormalizationRequestProcessed() => Interlocked.Increment(ref _normalizationRequestProcessed);
+    void IVisitedPlacesCacheDiagnostics.NormalizationRequestReceived() => Interlocked.Increment(ref _normalizationRequestReceived);
 
     /// <inheritdoc/>
-    void ICacheDiagnostics.BackgroundStatisticsUpdated() => Interlocked.Increment(ref _backgroundStatisticsUpdated);
+    void IVisitedPlacesCacheDiagnostics.NormalizationRequestProcessed() => Interlocked.Increment(ref _normalizationRequestProcessed);
 
     /// <inheritdoc/>
-    void ICacheDiagnostics.BackgroundSegmentStored() => Interlocked.Increment(ref _backgroundSegmentStored);
+    void IVisitedPlacesCacheDiagnostics.BackgroundStatisticsUpdated() => Interlocked.Increment(ref _backgroundStatisticsUpdated);
 
     /// <inheritdoc/>
-    void ICacheDiagnostics.EvictionEvaluated() => Interlocked.Increment(ref _evictionEvaluated);
+    void IVisitedPlacesCacheDiagnostics.BackgroundSegmentStored() => Interlocked.Increment(ref _backgroundSegmentStored);
 
     /// <inheritdoc/>
-    void ICacheDiagnostics.EvictionTriggered() => Interlocked.Increment(ref _evictionTriggered);
+    void IVisitedPlacesCacheDiagnostics.EvictionEvaluated() => Interlocked.Increment(ref _evictionEvaluated);
 
     /// <inheritdoc/>
-    void ICacheDiagnostics.EvictionExecuted() => Interlocked.Increment(ref _evictionExecuted);
+    void IVisitedPlacesCacheDiagnostics.EvictionTriggered() => Interlocked.Increment(ref _evictionTriggered);
 
     /// <inheritdoc/>
-    void ICacheDiagnostics.EvictionSegmentRemoved() => Interlocked.Increment(ref _evictionSegmentRemoved);
+    void IVisitedPlacesCacheDiagnostics.EvictionExecuted() => Interlocked.Increment(ref _evictionExecuted);
 
     /// <inheritdoc/>
-    void ICacheDiagnostics.NormalizationRequestProcessingFailed(Exception ex) =>
-        Interlocked.Increment(ref _normalizationRequestProcessingFailed);
+    void IVisitedPlacesCacheDiagnostics.EvictionSegmentRemoved() => Interlocked.Increment(ref _evictionSegmentRemoved);
 }

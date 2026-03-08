@@ -327,7 +327,7 @@ public sealed class CacheNormalizationExecutorTests
 
         // ASSERT — no exception propagated; failed diagnostic incremented
         Assert.Null(ex);
-        Assert.Equal(1, _diagnostics.NormalizationRequestProcessingFailed);
+        Assert.Equal(1, _diagnostics.BackgroundOperationFailed);
         Assert.Equal(0, _diagnostics.NormalizationRequestProcessed);
     }
 
@@ -357,7 +357,7 @@ public sealed class CacheNormalizationExecutorTests
 
         // ASSERT
         Assert.Null(ex);
-        Assert.Equal(1, _diagnostics.NormalizationRequestProcessingFailed);
+        Assert.Equal(1, _diagnostics.BackgroundOperationFailed);
         Assert.Equal(0, _diagnostics.NormalizationRequestProcessed);
     }
 

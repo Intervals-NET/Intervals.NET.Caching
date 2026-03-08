@@ -330,7 +330,7 @@ public static class TestHelpers
         var started = cacheDiagnostics.RebalanceExecutionStarted;
         var completed = cacheDiagnostics.RebalanceExecutionCompleted;
         var executionsCancelled = cacheDiagnostics.RebalanceExecutionCancelled;
-        var failed = cacheDiagnostics.RebalanceExecutionFailed;
+        var failed = cacheDiagnostics.BackgroundOperationFailed;
         Assert.Equal(started, completed + executionsCancelled + failed);
     }
 

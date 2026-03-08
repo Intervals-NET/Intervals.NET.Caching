@@ -64,7 +64,7 @@ public static class VisitedPlacesLayerExtensions
         IReadOnlyList<IEvictionPolicy<TRange, TData>> policies,
         IEvictionSelector<TRange, TData> selector,
         VisitedPlacesCacheOptions<TRange, TData>? options = null,
-        ICacheDiagnostics? diagnostics = null)
+        IVisitedPlacesCacheDiagnostics? diagnostics = null)
         where TRange : IComparable<TRange>
         where TDomain : IRangeDomain<TRange>
     {
@@ -119,7 +119,7 @@ public static class VisitedPlacesLayerExtensions
         IReadOnlyList<IEvictionPolicy<TRange, TData>> policies,
         IEvictionSelector<TRange, TData> selector,
         Action<VisitedPlacesCacheOptionsBuilder<TRange, TData>> configure,
-        ICacheDiagnostics? diagnostics = null)
+        IVisitedPlacesCacheDiagnostics? diagnostics = null)
         where TRange : IComparable<TRange>
         where TDomain : IRangeDomain<TRange>
     {
