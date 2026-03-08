@@ -134,6 +134,11 @@ internal abstract class SamplingEvictionSelector<TRange, TData> : IEvictionSelec
     /// <item><description>SmallestFirst: <c>candidate.Span &lt; current.Span</c></description></item>
     /// </list>
     /// </remarks>
+    /// TODO: Every implementation of this method will need to cast the metadata to its specific type (e.g., LruMetadata).
+    /// TODO: We have to not only check on null and type match, but also set the default value not only use it for calculations and then trash it.
+    /// TODO: some selectors are okay with trashing default values, but some are calculable, so we have to always fix not aligned segments' metadata.
+    /// TODO: For sure, this have to be done not inside this function, because it is pure, without side effects. This method must accept only correct metadata.
+    /// TODO: the main issue is here - how to set the same metadata default value for all the sampled segments if we call one by one and we can NOT pass the default value as a param? Or we can? But if we pass the default value on the selector creation - it must be readonly and immutable, so this will not work for DateTime-based metadata.
     protected abstract bool IsWorse(
         CachedSegment<TRange, TData> candidate,
         CachedSegment<TRange, TData> current);

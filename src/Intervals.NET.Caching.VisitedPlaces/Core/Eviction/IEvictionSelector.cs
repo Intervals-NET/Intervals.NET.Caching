@@ -88,6 +88,7 @@ public interface IEvictionSelector<TRange, TData>
     /// Selectors that require no metadata (e.g., <c>SmallestFirstEvictionSelector</c>)
     /// implement this as a no-op and leave <see cref="CachedSegment{TRange,TData}.EvictionMetadata"/> null.
     /// </remarks>
+    /// TODO: get rid of the now parameter to make the interface is really common, even for those selectors, that do not use datetime in metadata.
     void InitializeMetadata(CachedSegment<TRange, TData> segment, DateTime now);
 
     /// <summary>
