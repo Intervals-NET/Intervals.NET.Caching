@@ -27,15 +27,15 @@ namespace Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 internal sealed class SnapshotAppendBufferStorage<TRange, TData> : ISegmentStorage<TRange, TData>
     where TRange : IComparable<TRange>
 {
-    // todo: this value must be set in configuration, not hardcoded.
-    private const int AppendBufferSize = 8;
+    private readonly int _appendBufferSize;
 
     // Sorted snapshot — published atomically via Volatile.Write on normalization.
     // User Path reads via Volatile.Read.
     private CachedSegment<TRange, TData>[] _snapshot = [];
 
     // Small fixed-size append buffer for recently-added segments (Background Path only).
-    private readonly CachedSegment<TRange, TData>[] _appendBuffer = new CachedSegment<TRange, TData>[AppendBufferSize];
+    // Size is determined by the appendBufferSize constructor parameter.
+    private readonly CachedSegment<TRange, TData>[] _appendBuffer;
     private int _appendCount;
 
     // Soft-delete set: segments logically removed but not yet physically purged.
@@ -46,6 +46,30 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : ISegmentStora
 
     // Total count of live (non-deleted) segments.
     private int _count;
+
+    /// <summary>
+    /// Initializes a new <see cref="SnapshotAppendBufferStorage{TRange,TData}"/> with the
+    /// specified append buffer size.
+    /// </summary>
+    /// <param name="appendBufferSize">
+    /// Number of segments the append buffer can hold before normalization is triggered.
+    /// Must be &gt;= 1. Default: 8.
+    /// </param>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="appendBufferSize"/> is less than 1.
+    /// </exception>
+    internal SnapshotAppendBufferStorage(int appendBufferSize = 8)
+    {
+        if (appendBufferSize < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(appendBufferSize),
+                "AppendBufferSize must be greater than or equal to 1.");
+        }
+
+        _appendBufferSize = appendBufferSize;
+        _appendBuffer = new CachedSegment<TRange, TData>[appendBufferSize];
+    }
 
     /// <inheritdoc/>
     public int Count => _count;
@@ -122,7 +146,7 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : ISegmentStora
         _appendCount++;
         _count++;
 
-        if (_appendCount == AppendBufferSize)
+        if (_appendCount == _appendBufferSize)
         {
             Normalize();
         }
@@ -204,7 +228,7 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : ISegmentStora
         _softDeleted.Clear();
         _appendCount = 0;
         // Clear stale references in append buffer
-        Array.Clear(_appendBuffer, 0, AppendBufferSize);
+        Array.Clear(_appendBuffer, 0, _appendBufferSize);
 
         // Atomically publish the new snapshot (release fence — User Path reads with acquire fence)
         Volatile.Write(ref _snapshot, merged);

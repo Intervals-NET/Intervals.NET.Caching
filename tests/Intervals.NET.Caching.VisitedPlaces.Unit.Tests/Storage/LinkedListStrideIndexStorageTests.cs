@@ -13,7 +13,7 @@ public sealed class LinkedListStrideIndexStorageTests
     #region Constructor Tests
 
     [Fact]
-    public void Constructor_WithDefaultStride_DoesNotThrow()
+    public void Constructor_WithDefaultParameters_DoesNotThrow()
     {
         // ACT
         var exception = Record.Exception(() => new LinkedListStrideIndexStorage<int, int>());
@@ -23,10 +23,11 @@ public sealed class LinkedListStrideIndexStorageTests
     }
 
     [Fact]
-    public void Constructor_WithValidStride_DoesNotThrow()
+    public void Constructor_WithValidAppendBufferSizeAndStride_DoesNotThrow()
     {
         // ACT
-        var exception = Record.Exception(() => new LinkedListStrideIndexStorage<int, int>(stride: 4));
+        var exception = Record.Exception(
+            () => new LinkedListStrideIndexStorage<int, int>(appendBufferSize: 4, stride: 4));
 
         // ASSERT
         Assert.Null(exception);
@@ -36,10 +37,26 @@ public sealed class LinkedListStrideIndexStorageTests
     [InlineData(0)]
     [InlineData(-1)]
     [InlineData(-100)]
+    public void Constructor_WithInvalidAppendBufferSize_ThrowsArgumentOutOfRangeException(int appendBufferSize)
+    {
+        // ACT
+        var exception = Record.Exception(
+            () => new LinkedListStrideIndexStorage<int, int>(appendBufferSize, stride: 16));
+
+        // ASSERT
+        Assert.NotNull(exception);
+        Assert.IsType<ArgumentOutOfRangeException>(exception);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(-100)]
     public void Constructor_WithInvalidStride_ThrowsArgumentOutOfRangeException(int stride)
     {
         // ACT
-        var exception = Record.Exception(() => new LinkedListStrideIndexStorage<int, int>(stride));
+        var exception = Record.Exception(
+            () => new LinkedListStrideIndexStorage<int, int>(appendBufferSize: 8, stride));
 
         // ASSERT
         Assert.NotNull(exception);
@@ -170,8 +187,8 @@ public sealed class LinkedListStrideIndexStorageTests
     [Fact]
     public void GetAllSegments_AfterAddingMoreThanStrideAppendBufferSize_ContainsAll()
     {
-        // ARRANGE — StrideAppendBufferSize is 8; add 10 to trigger normalization
-        var storage = new LinkedListStrideIndexStorage<int, int>(stride: 4);
+        // ARRANGE — default AppendBufferSize is 8; add 10 to trigger normalization
+        var storage = new LinkedListStrideIndexStorage<int, int>(appendBufferSize: 8, stride: 4);
         var segments = new List<CachedSegment<int, int>>();
 
         for (var i = 0; i < 10; i++)
@@ -266,8 +283,8 @@ public sealed class LinkedListStrideIndexStorageTests
     [Fact]
     public void FindIntersecting_AfterNormalization_StillFindsSegments()
     {
-        // ARRANGE — add >8 segments to trigger normalization (StrideAppendBufferSize=8)
-        var storage = new LinkedListStrideIndexStorage<int, int>(stride: 4);
+        // ARRANGE — add >8 segments to trigger normalization (default AppendBufferSize=8)
+        var storage = new LinkedListStrideIndexStorage<int, int>(appendBufferSize: 8, stride: 4);
         for (var i = 0; i < 9; i++)
         {
             AddSegment(storage, i * 10, i * 10 + 5);
@@ -299,7 +316,7 @@ public sealed class LinkedListStrideIndexStorageTests
     public void FindIntersecting_WithManySegments_ReturnsAllIntersecting()
     {
         // ARRANGE — use small stride to exercise stride index; add 20 segments
-        var storage = new LinkedListStrideIndexStorage<int, int>(stride: 4);
+        var storage = new LinkedListStrideIndexStorage<int, int>(appendBufferSize: 8, stride: 4);
         var addedSegments = new List<CachedSegment<int, int>>();
 
         for (var i = 0; i < 20; i++)
@@ -320,7 +337,7 @@ public sealed class LinkedListStrideIndexStorageTests
     [Fact]
     public void FindIntersecting_QueriedBeforeNormalization_FindsSegmentsInAppendBuffer()
     {
-        // ARRANGE — add fewer than 8 (StrideAppendBufferSize) segments so no normalization occurs
+        // ARRANGE — add fewer than 8 (default AppendBufferSize) segments so no normalization occurs
         var storage = new LinkedListStrideIndexStorage<int, int>();
         var seg = AddSegment(storage, 10, 20);
 
@@ -379,7 +396,7 @@ public sealed class LinkedListStrideIndexStorageTests
     public void NormalizationTriggered_ManyAddsWithRemoves_CountRemainConsistent()
     {
         // ARRANGE — interleave adds and removes to exercise normalization across multiple cycles
-        var storage = new LinkedListStrideIndexStorage<int, int>(stride: 4);
+        var storage = new LinkedListStrideIndexStorage<int, int>(appendBufferSize: 8, stride: 4);
         var added = new List<CachedSegment<int, int>>();
 
         for (var i = 0; i < 20; i++)

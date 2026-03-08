@@ -37,7 +37,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Public;
 /// <code>
 /// await using var cache = VisitedPlacesCacheBuilder
 ///     .For(dataSource, domain)
-///     .WithOptions(o => o.WithStorageStrategy(StorageStrategy.SnapshotAppendBuffer))
+///     .WithOptions(o => o.WithStorageStrategy(new SnapshotAppendBufferStorageOptions&lt;int, MyData&gt;()))
 ///     .WithEviction(
 ///         policies: [new MaxSegmentCountPolicy&lt;int, MyData&gt;(maxCount: 100)],
 ///         selector: new LruEvictionSelector&lt;int, MyData&gt;())

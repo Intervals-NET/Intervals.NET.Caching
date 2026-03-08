@@ -26,6 +26,8 @@
     <ItemGroup>
         <InternalsVisibleTo Include="Intervals.NET.Caching.VisitedPlaces.Tests.Infrastructure" />
         <InternalsVisibleTo Include="Intervals.NET.Caching.VisitedPlaces.Unit.Tests" />
+        <InternalsVisibleTo Include="Intervals.NET.Caching.VisitedPlaces.Integration.Tests" />
+        <InternalsVisibleTo Include="Intervals.NET.Caching.VisitedPlaces.Invariants.Tests" />
     </ItemGroup>
 
     <ItemGroup>

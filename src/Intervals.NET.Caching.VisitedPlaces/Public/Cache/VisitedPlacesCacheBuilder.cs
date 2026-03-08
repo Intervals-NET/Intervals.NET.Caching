@@ -32,7 +32,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Public.Cache;
 /// <para><strong>Single-Cache Example:</strong></para>
 /// <code>
 /// await using var cache = VisitedPlacesCacheBuilder.For(dataSource, domain)
-///     .WithOptions(o => o.WithStorageStrategy(StorageStrategy.SnapshotAppendBuffer))
+///     .WithOptions(o => o.WithStorageStrategy(new SnapshotAppendBufferStorageOptions&lt;int, MyData&gt;()))
 ///     .WithEviction(
 ///         policies: [new MaxSegmentCountPolicy(maxCount: 50)],
 ///         selector: new LruEvictionSelector&lt;int, MyData&gt;())
@@ -134,13 +134,13 @@ public static class VisitedPlacesCacheBuilder
 /// </para>
 /// <para><strong>Required configuration:</strong></para>
 /// <list type="bullet">
-/// <item><description><see cref="WithOptions(VisitedPlacesCacheOptions)"/> or <see cref="WithOptions(Action{VisitedPlacesCacheOptionsBuilder})"/> — required</description></item>
+/// <item><description><see cref="WithOptions(VisitedPlacesCacheOptions{TRange,TData})"/> or <see cref="WithOptions(Action{VisitedPlacesCacheOptionsBuilder{TRange,TData}})"/> — required</description></item>
 /// <item><description><see cref="WithEviction"/> — required</description></item>
 /// </list>
 /// <para><strong>Example:</strong></para>
 /// <code>
 /// await using var cache = VisitedPlacesCacheBuilder.For(dataSource, domain)
-///     .WithOptions(o => o.WithStorageStrategy(StorageStrategy.SnapshotAppendBuffer))
+///     .WithOptions(o => o.WithStorageStrategy(new SnapshotAppendBufferStorageOptions&lt;int, MyData&gt;()))
 ///     .WithEviction(
 ///         policies: [new MaxSegmentCountPolicy(maxCount: 50)],
 ///         selector: new LruEvictionSelector&lt;int, MyData&gt;())
@@ -154,8 +154,8 @@ public sealed class VisitedPlacesCacheBuilder<TRange, TData, TDomain>
 {
     private readonly IDataSource<TRange, TData> _dataSource;
     private readonly TDomain _domain;
-    private VisitedPlacesCacheOptions? _options;
-    private Action<VisitedPlacesCacheOptionsBuilder>? _configurePending;
+    private VisitedPlacesCacheOptions<TRange, TData>? _options;
+    private Action<VisitedPlacesCacheOptionsBuilder<TRange, TData>>? _configurePending;
     private ICacheDiagnostics? _diagnostics;
     private IReadOnlyList<IEvictionPolicy<TRange, TData>>? _policies;
     private IEvictionSelector<TRange, TData>? _selector;
@@ -167,14 +167,14 @@ public sealed class VisitedPlacesCacheBuilder<TRange, TData, TDomain>
     }
 
     /// <summary>
-    /// Configures the cache with a pre-built <see cref="VisitedPlacesCacheOptions"/> instance.
+    /// Configures the cache with a pre-built <see cref="VisitedPlacesCacheOptions{TRange,TData}"/> instance.
     /// </summary>
     /// <param name="options">The options to use.</param>
     /// <returns>This builder instance, for fluent chaining.</returns>
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="options"/> is <c>null</c>.
     /// </exception>
-    public VisitedPlacesCacheBuilder<TRange, TData, TDomain> WithOptions(VisitedPlacesCacheOptions options)
+    public VisitedPlacesCacheBuilder<TRange, TData, TDomain> WithOptions(VisitedPlacesCacheOptions<TRange, TData> options)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _configurePending = null;
@@ -182,17 +182,17 @@ public sealed class VisitedPlacesCacheBuilder<TRange, TData, TDomain>
     }
 
     /// <summary>
-    /// Configures the cache options inline using a fluent <see cref="VisitedPlacesCacheOptionsBuilder"/>.
+    /// Configures the cache options inline using a fluent <see cref="VisitedPlacesCacheOptionsBuilder{TRange,TData}"/>.
     /// </summary>
     /// <param name="configure">
-    /// A delegate that receives a <see cref="VisitedPlacesCacheOptionsBuilder"/> and applies the desired settings.
+    /// A delegate that receives a <see cref="VisitedPlacesCacheOptionsBuilder{TRange,TData}"/> and applies the desired settings.
     /// </param>
     /// <returns>This builder instance, for fluent chaining.</returns>
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="configure"/> is <c>null</c>.
     /// </exception>
     public VisitedPlacesCacheBuilder<TRange, TData, TDomain> WithOptions(
-        Action<VisitedPlacesCacheOptionsBuilder> configure)
+        Action<VisitedPlacesCacheOptionsBuilder<TRange, TData>> configure)
     {
         _options = null;
         _configurePending = configure ?? throw new ArgumentNullException(nameof(configure));
@@ -262,8 +262,8 @@ public sealed class VisitedPlacesCacheBuilder<TRange, TData, TDomain>
     /// Dispose the returned instance (via <c>await using</c>) to release background resources.
     /// </returns>
     /// <exception cref="InvalidOperationException">
-    /// Thrown when <see cref="WithOptions(VisitedPlacesCacheOptions)"/> or
-    /// <see cref="WithOptions(Action{VisitedPlacesCacheOptionsBuilder})"/> has not been called,
+    /// Thrown when <see cref="WithOptions(VisitedPlacesCacheOptions{TRange,TData})"/> or
+    /// <see cref="WithOptions(Action{VisitedPlacesCacheOptionsBuilder{TRange,TData}})"/> has not been called,
     /// or when <see cref="WithEviction"/> has not been called.
     /// </exception>
     public IVisitedPlacesCache<TRange, TData, TDomain> Build()
@@ -272,7 +272,7 @@ public sealed class VisitedPlacesCacheBuilder<TRange, TData, TDomain>
 
         if (resolvedOptions is null && _configurePending is not null)
         {
-            var optionsBuilder = new VisitedPlacesCacheOptionsBuilder();
+            var optionsBuilder = new VisitedPlacesCacheOptionsBuilder<TRange, TData>();
             _configurePending(optionsBuilder);
             resolvedOptions = optionsBuilder.Build();
         }

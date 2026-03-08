@@ -16,7 +16,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Public.Extensions;
 /// <code>
 /// await using var cache = VisitedPlacesCacheBuilder.Layered(dataSource, domain)
 ///     .AddVisitedPlacesLayer(
-///         options: new VisitedPlacesCacheOptions(),
+///         options: new VisitedPlacesCacheOptions&lt;int, MyData&gt;(),
 ///         policies: [new MaxSegmentCountPolicy(maxCount: 100)],
 ///         selector: new LruEvictionSelector&lt;int, MyData&gt;())
 ///     .Build();
@@ -31,7 +31,7 @@ public static class VisitedPlacesLayerExtensions
 {
     /// <summary>
     /// Adds a <see cref="VisitedPlacesCache{TRange,TData,TDomain}"/> layer configured with
-    /// a pre-built <see cref="VisitedPlacesCacheOptions"/> instance.
+    /// a pre-built <see cref="VisitedPlacesCacheOptions{TRange,TData}"/> instance.
     /// </summary>
     /// <typeparam name="TRange">The type representing range boundaries. Must implement <see cref="IComparable{T}"/>.</typeparam>
     /// <typeparam name="TData">The type of data being cached.</typeparam>
@@ -63,7 +63,7 @@ public static class VisitedPlacesLayerExtensions
         this LayeredRangeCacheBuilder<TRange, TData, TDomain> builder,
         IReadOnlyList<IEvictionPolicy<TRange, TData>> policies,
         IEvictionSelector<TRange, TData> selector,
-        VisitedPlacesCacheOptions? options = null,
+        VisitedPlacesCacheOptions<TRange, TData>? options = null,
         ICacheDiagnostics? diagnostics = null)
         where TRange : IComparable<TRange>
         where TDomain : IRangeDomain<TRange>
@@ -86,7 +86,7 @@ public static class VisitedPlacesLayerExtensions
         }
 
         var domain = builder.Domain;
-        var resolvedOptions = options ?? new VisitedPlacesCacheOptions();
+        var resolvedOptions = options ?? new VisitedPlacesCacheOptions<TRange, TData>();
         return builder.AddLayer(dataSource =>
             new VisitedPlacesCache<TRange, TData, TDomain>(
                 dataSource, domain, resolvedOptions, policies, selector, diagnostics));
@@ -94,7 +94,7 @@ public static class VisitedPlacesLayerExtensions
 
     /// <summary>
     /// Adds a <see cref="VisitedPlacesCache{TRange,TData,TDomain}"/> layer configured inline
-    /// using a fluent <see cref="VisitedPlacesCacheOptionsBuilder"/>.
+    /// using a fluent <see cref="VisitedPlacesCacheOptionsBuilder{TRange,TData}"/>.
     /// </summary>
     /// <typeparam name="TRange">The type representing range boundaries. Must implement <see cref="IComparable{T}"/>.</typeparam>
     /// <typeparam name="TData">The type of data being cached.</typeparam>
@@ -107,7 +107,7 @@ public static class VisitedPlacesLayerExtensions
     /// The eviction selector. Must be non-null.
     /// </param>
     /// <param name="configure">
-    /// A delegate that receives a <see cref="VisitedPlacesCacheOptionsBuilder"/> and applies
+    /// A delegate that receives a <see cref="VisitedPlacesCacheOptionsBuilder{TRange,TData}"/> and applies
     /// the desired settings for this layer. When <c>null</c>, default options are used.
     /// </param>
     /// <param name="diagnostics">
@@ -124,7 +124,7 @@ public static class VisitedPlacesLayerExtensions
         this LayeredRangeCacheBuilder<TRange, TData, TDomain> builder,
         IReadOnlyList<IEvictionPolicy<TRange, TData>> policies,
         IEvictionSelector<TRange, TData> selector,
-        Action<VisitedPlacesCacheOptionsBuilder> configure,
+        Action<VisitedPlacesCacheOptionsBuilder<TRange, TData>> configure,
         ICacheDiagnostics? diagnostics = null)
         where TRange : IComparable<TRange>
         where TDomain : IRangeDomain<TRange>
@@ -154,7 +154,7 @@ public static class VisitedPlacesLayerExtensions
         var domain = builder.Domain;
         return builder.AddLayer(dataSource =>
         {
-            var optionsBuilder = new VisitedPlacesCacheOptionsBuilder();
+            var optionsBuilder = new VisitedPlacesCacheOptionsBuilder<TRange, TData>();
             configure(optionsBuilder);
             var options = optionsBuilder.Build();
             return new VisitedPlacesCache<TRange, TData, TDomain>(

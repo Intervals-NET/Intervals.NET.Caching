@@ -6,10 +6,48 @@ namespace Intervals.NET.Caching.VisitedPlaces.Unit.Tests.Storage;
 
 /// <summary>
 /// Unit tests for <see cref="SnapshotAppendBufferStorage{TRange,TData}"/>.
-/// Covers Add, Remove, Count, FindIntersecting, GetAllSegments.
+/// Covers Constructor, Add, Remove, Count, FindIntersecting, GetAllSegments.
 /// </summary>
 public sealed class SnapshotAppendBufferStorageTests
 {
+    #region Constructor Tests
+
+    [Fact]
+    public void Constructor_WithDefaultAppendBufferSize_DoesNotThrow()
+    {
+        // ACT
+        var exception = Record.Exception(() => new SnapshotAppendBufferStorage<int, int>());
+
+        // ASSERT
+        Assert.Null(exception);
+    }
+
+    [Fact]
+    public void Constructor_WithValidAppendBufferSize_DoesNotThrow()
+    {
+        // ACT
+        var exception = Record.Exception(() => new SnapshotAppendBufferStorage<int, int>(appendBufferSize: 4));
+
+        // ASSERT
+        Assert.Null(exception);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(-100)]
+    public void Constructor_WithInvalidAppendBufferSize_ThrowsArgumentOutOfRangeException(int appendBufferSize)
+    {
+        // ACT
+        var exception = Record.Exception(() => new SnapshotAppendBufferStorage<int, int>(appendBufferSize));
+
+        // ASSERT
+        Assert.NotNull(exception);
+        Assert.IsType<ArgumentOutOfRangeException>(exception);
+    }
+
+    #endregion
+
     #region Count Tests
 
     [Fact]
@@ -97,7 +135,7 @@ public sealed class SnapshotAppendBufferStorageTests
     [Fact]
     public void GetAllSegments_AfterAddingMoreThanAppendBufferSize_ContainsAll()
     {
-        // ARRANGE — AppendBufferSize is 8; add 10 to trigger normalization
+        // ARRANGE — default AppendBufferSize is 8; add 10 to trigger normalization
         var storage = new SnapshotAppendBufferStorage<int, int>();
         var segments = new List<CachedSegment<int, int>>();
 

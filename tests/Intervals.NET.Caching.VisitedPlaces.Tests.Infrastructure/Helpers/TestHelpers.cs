@@ -37,8 +37,8 @@ public static class TestHelpers
     /// <summary>
     /// Creates default cache options suitable for most tests.
     /// </summary>
-    public static VisitedPlacesCacheOptions CreateDefaultOptions(
-        StorageStrategy storageStrategy = StorageStrategy.SnapshotAppendBuffer,
+    public static VisitedPlacesCacheOptions<int, int> CreateDefaultOptions(
+        StorageStrategyOptions<int, int>? storageStrategy = null,
         int eventChannelCapacity = 128) =>
         new(storageStrategy, eventChannelCapacity);
 
@@ -56,7 +56,7 @@ public static class TestHelpers
         CreateCacheWithMock(
             IntegerFixedStepDomain domain,
             EventCounterCacheDiagnostics diagnostics,
-            VisitedPlacesCacheOptions? options = null,
+            VisitedPlacesCacheOptions<int, int>? options = null,
             int maxSegmentCount = 100,
             TimeSpan? fetchDelay = null)
     {
@@ -71,7 +71,7 @@ public static class TestHelpers
     public static VisitedPlacesCache<int, int, IntegerFixedStepDomain> CreateCache(
         IDataSource<int, int> dataSource,
         IntegerFixedStepDomain domain,
-        VisitedPlacesCacheOptions options,
+        VisitedPlacesCacheOptions<int, int> options,
         EventCounterCacheDiagnostics diagnostics,
         int maxSegmentCount = 100)
     {
@@ -89,7 +89,7 @@ public static class TestHelpers
     public static VisitedPlacesCache<int, int, IntegerFixedStepDomain> CreateCacheWithSimpleSource(
         IntegerFixedStepDomain domain,
         EventCounterCacheDiagnostics diagnostics,
-        VisitedPlacesCacheOptions? options = null,
+        VisitedPlacesCacheOptions<int, int>? options = null,
         int maxSegmentCount = 100)
     {
         var dataSource = new SimpleTestDataSource();

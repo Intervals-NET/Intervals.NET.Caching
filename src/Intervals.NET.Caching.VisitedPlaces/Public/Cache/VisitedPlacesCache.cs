@@ -7,7 +7,6 @@ using Intervals.NET.Caching.VisitedPlaces.Core.Background;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 using Intervals.NET.Caching.VisitedPlaces.Core.UserPath;
 using Intervals.NET.Caching.VisitedPlaces.Infrastructure.Adapters;
-using Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 using Intervals.NET.Caching.VisitedPlaces.Public.Configuration;
 using Intervals.NET.Caching.VisitedPlaces.Public.Instrumentation;
 
@@ -80,7 +79,7 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
     public VisitedPlacesCache(
         IDataSource<TRange, TData> dataSource,
         TDomain domain,
-        VisitedPlacesCacheOptions options,
+        VisitedPlacesCacheOptions<TRange, TData> options,
         IReadOnlyList<IEvictionPolicy<TRange, TData>> policies, // todo: I guess this can be set not as a separate cache parameter in ctor, but as a one of the configg values in options.
         IEvictionSelector<TRange, TData> selector, // todo: I guess this can be set not as a separate cache parameter in ctor, but as a one of the configg values in options.
         ICacheDiagnostics? cacheDiagnostics = null)
@@ -91,8 +90,8 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
         // Shared activity counter: incremented by scheduler on enqueue, decremented after execution.
         _activityCounter = new AsyncActivityCounter();
 
-        // Create storage based on configured strategy.
-        var storage = CreateStorage(options.StorageStrategy);
+        // Create storage via the strategy options object (Factory Method pattern).
+        var storage = options.StorageStrategy.Create();
 
         // Background event processor: single writer, executes the four-step Background Path.
         var processor = new BackgroundEventProcessor<TRange, TData, TDomain>(
@@ -231,20 +230,4 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
         }
         // previousState == 2: already disposed — return immediately (idempotent).
     }
-
-    /// <summary>
-    /// Creates the segment storage implementation for the specified strategy.
-    /// </summary>
-    private static ISegmentStorage<TRange, TData> CreateStorage(StorageStrategy strategy) =>
-        strategy switch
-        {
-            StorageStrategy.SnapshotAppendBuffer =>
-                new SnapshotAppendBufferStorage<TRange, TData>(),
-            StorageStrategy.LinkedListStrideIndex =>
-                new LinkedListStrideIndexStorage<TRange, TData>(),
-            _ => throw new ArgumentOutOfRangeException(
-                nameof(strategy),
-                strategy,
-                "Unknown storage strategy.")
-        };
 }

@@ -30,9 +30,10 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
     where TRange : IComparable<TRange>
 {
     private const int DefaultStride = 16;
-    private const int StrideAppendBufferSize = 8;
+    private const int DefaultAppendBufferSize = 8;
 
     private readonly int _stride;
+    private readonly int _strideAppendBufferSize;
 
     // Sorted linked list — mutated on Background Path only.
     private readonly LinkedList<CachedSegment<TRange, TData>> _list = [];
@@ -47,8 +48,7 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
         _nodeMap = new(ReferenceEqualityComparer.Instance);
 
     // Stride append buffer: newly-added segments not yet reflected in the stride index.
-    private readonly CachedSegment<TRange, TData>[] _strideAppendBuffer =
-        new CachedSegment<TRange, TData>[StrideAppendBufferSize];
+    private readonly CachedSegment<TRange, TData>[] _strideAppendBuffer;
     private int _strideAppendCount;
 
     // Soft-delete set: segments logically removed but not yet physically unlinked from _list.
@@ -59,20 +59,35 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
     private int _count;
 
     /// <summary>
-    /// Initializes a new <see cref="LinkedListStrideIndexStorage{TRange,TData}"/> with an
-    /// optional stride value.
+    /// Initializes a new <see cref="LinkedListStrideIndexStorage{TRange,TData}"/> with optional
+    /// append buffer size and stride values.
     /// </summary>
+    /// <param name="appendBufferSize">
+    /// Number of segments accumulated in the stride append buffer before stride index
+    /// normalization is triggered. Must be &gt;= 1. Default: 8.
+    /// </param>
     /// <param name="stride">
     /// Distance between stride anchors (default 16). Must be &gt;= 1.
     /// </param>
-    public LinkedListStrideIndexStorage(int stride = DefaultStride)
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="appendBufferSize"/> or <paramref name="stride"/> is less than 1.
+    /// </exception>
+    public LinkedListStrideIndexStorage(int appendBufferSize = DefaultAppendBufferSize, int stride = DefaultStride)
     {
+        if (appendBufferSize < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(appendBufferSize),
+                "AppendBufferSize must be greater than or equal to 1.");
+        }
+
         if (stride < 1)
         {
             throw new ArgumentOutOfRangeException(nameof(stride),
                 "Stride must be greater than or equal to 1.");
         }
 
+        _strideAppendBufferSize = appendBufferSize;
+        _strideAppendBuffer = new CachedSegment<TRange, TData>[appendBufferSize];
         _stride = stride;
     }
 
@@ -177,7 +192,7 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
         _strideAppendCount++;
         _count++;
 
-        if (_strideAppendCount == StrideAppendBufferSize)
+        if (_strideAppendCount == _strideAppendBufferSize)
         {
             NormalizeStrideIndex();
         }
@@ -342,7 +357,7 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
         }
 
         // Reset stride append buffer.
-        Array.Clear(_strideAppendBuffer, 0, StrideAppendBufferSize);
+        Array.Clear(_strideAppendBuffer, 0, _strideAppendBufferSize);
         _strideAppendCount = 0;
 
         // Atomically publish new stride index (release fence — User Path reads with acquire fence).

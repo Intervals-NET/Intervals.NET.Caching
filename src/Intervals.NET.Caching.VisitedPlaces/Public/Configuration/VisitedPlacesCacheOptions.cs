@@ -4,19 +4,28 @@ namespace Intervals.NET.Caching.VisitedPlaces.Public.Configuration;
 /// Immutable configuration options for <see cref="Cache.VisitedPlacesCache{TRange,TData,TDomain}"/>.
 /// All properties are validated in the constructor and are immutable after construction.
 /// </summary>
+/// <typeparam name="TRange">The type representing range boundaries.</typeparam>
+/// <typeparam name="TData">The type of data being cached.</typeparam>
 /// <remarks>
 /// <para><strong>All options are construction-time only.</strong> There are no runtime-updatable
 /// options on the visited places cache. Construct a new cache instance to change configuration.</para>
+/// <para><strong>Storage strategy</strong> is specified by passing a typed options object
+/// (e.g., <see cref="SnapshotAppendBufferStorageOptions{TRange,TData}"/> or
+/// <see cref="LinkedListStrideIndexStorageOptions{TRange,TData}"/>) via
+/// <see cref="StorageStrategy"/>. The options object carries both the tuning parameters and
+/// the responsibility for constructing the storage implementation.</para>
 /// <para><strong>Eviction configuration</strong> is supplied separately via
 /// <see cref="Cache.VisitedPlacesCacheBuilder{TRange,TData,TDomain}.WithEviction"/>, not here.
 /// This keeps storage strategy and eviction concerns cleanly separated.</para>
 /// </remarks>
-public sealed class VisitedPlacesCacheOptions : IEquatable<VisitedPlacesCacheOptions>
+public sealed class VisitedPlacesCacheOptions<TRange, TData> : IEquatable<VisitedPlacesCacheOptions<TRange, TData>>
+    where TRange : IComparable<TRange>
 {
     /// <summary>
     /// The storage strategy used for the internal segment collection.
+    /// Defaults to <see cref="SnapshotAppendBufferStorageOptions{TRange,TData}.Default"/>.
     /// </summary>
-    public StorageStrategy StorageStrategy { get; }
+    public StorageStrategyOptions<TRange, TData> StorageStrategy { get; }
 
     /// <summary>
     /// The bounded capacity of the internal background event channel, or <see langword="null"/>
@@ -36,9 +45,12 @@ public sealed class VisitedPlacesCacheOptions : IEquatable<VisitedPlacesCacheOpt
     public int? EventChannelCapacity { get; }
 
     /// <summary>
-    /// Initializes a new <see cref="VisitedPlacesCacheOptions"/> with the specified values.
+    /// Initializes a new <see cref="VisitedPlacesCacheOptions{TRange,TData}"/> with the specified values.
     /// </summary>
-    /// <param name="storageStrategy">The storage strategy to use.</param>
+    /// <param name="storageStrategy">
+    /// The storage strategy options object. When <see langword="null"/>, defaults to
+    /// <see cref="SnapshotAppendBufferStorageOptions{TRange,TData}.Default"/>.
+    /// </param>
     /// <param name="eventChannelCapacity">
     /// The background event channel capacity, or <see langword="null"/> (default) to use
     /// unbounded task-chaining scheduling. Must be &gt;= 1 when non-null.
@@ -47,7 +59,7 @@ public sealed class VisitedPlacesCacheOptions : IEquatable<VisitedPlacesCacheOpt
     /// Thrown when <paramref name="eventChannelCapacity"/> is non-null and less than 1.
     /// </exception>
     public VisitedPlacesCacheOptions(
-        StorageStrategy storageStrategy = StorageStrategy.SnapshotAppendBuffer,
+        StorageStrategyOptions<TRange, TData>? storageStrategy = null,
         int? eventChannelCapacity = null)
     {
         if (eventChannelCapacity is < 1)
@@ -57,12 +69,12 @@ public sealed class VisitedPlacesCacheOptions : IEquatable<VisitedPlacesCacheOpt
                 "EventChannelCapacity must be greater than or equal to 1 when specified.");
         }
 
-        StorageStrategy = storageStrategy;
+        StorageStrategy = storageStrategy ?? SnapshotAppendBufferStorageOptions<TRange, TData>.Default;
         EventChannelCapacity = eventChannelCapacity;
     }
 
     /// <inheritdoc/>
-    public bool Equals(VisitedPlacesCacheOptions? other)
+    public bool Equals(VisitedPlacesCacheOptions<TRange, TData>? other)
     {
         if (other is null)
         {
@@ -74,21 +86,26 @@ public sealed class VisitedPlacesCacheOptions : IEquatable<VisitedPlacesCacheOpt
             return true;
         }
 
-        return StorageStrategy == other.StorageStrategy
+        return StorageStrategy.Equals(other.StorageStrategy)
                && EventChannelCapacity == other.EventChannelCapacity;
     }
 
     /// <inheritdoc/>
-    public override bool Equals(object? obj) => obj is VisitedPlacesCacheOptions other && Equals(other);
+    public override bool Equals(object? obj) =>
+        obj is VisitedPlacesCacheOptions<TRange, TData> other && Equals(other);
 
     /// <inheritdoc/>
     public override int GetHashCode() => HashCode.Combine(StorageStrategy, EventChannelCapacity);
 
     /// <summary>Returns <c>true</c> if the two instances are equal.</summary>
-    public static bool operator ==(VisitedPlacesCacheOptions? left, VisitedPlacesCacheOptions? right) =>
-        left is null ? right is null : left.Equals(right);
+    public static bool operator ==(
+        VisitedPlacesCacheOptions<TRange, TData>? left,
+        VisitedPlacesCacheOptions<TRange, TData>? right) =>
+        left?.Equals(right) ?? right is null;
 
     /// <summary>Returns <c>true</c> if the two instances are not equal.</summary>
-    public static bool operator !=(VisitedPlacesCacheOptions? left, VisitedPlacesCacheOptions? right) =>
+    public static bool operator !=(
+        VisitedPlacesCacheOptions<TRange, TData>? left,
+        VisitedPlacesCacheOptions<TRange, TData>? right) =>
         !(left == right);
 }

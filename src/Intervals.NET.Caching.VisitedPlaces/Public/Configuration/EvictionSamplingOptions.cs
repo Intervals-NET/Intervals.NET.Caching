@@ -63,7 +63,7 @@ public sealed class EvictionSamplingOptions
     /// The default <see cref="EvictionSamplingOptions"/> instance using
     /// <see cref="DefaultSampleSize"/> (32).
     /// </summary>
-    public static EvictionSamplingOptions Default { get; } = new EvictionSamplingOptions();
+    public static EvictionSamplingOptions Default { get; } = new();
 
     /// <summary>
     /// Initializes a new <see cref="EvictionSamplingOptions"/>.

@@ -1,7 +1,6 @@
 using BenchmarkDotNet.Attributes;
 using Intervals.NET.Domain.Default.Numeric;
 using Intervals.NET.Domain.Extensions.Fixed;
-using Intervals.NET.Caching;
 using Intervals.NET.Caching.SlidingWindow.Benchmarks.Infrastructure;
 using Intervals.NET.Caching.SlidingWindow.Public.Cache;
 using Intervals.NET.Caching.SlidingWindow.Public.Configuration;

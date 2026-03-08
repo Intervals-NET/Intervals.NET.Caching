@@ -1,6 +1,5 @@
 using Intervals.NET.Domain.Default.Numeric;
 using Intervals.NET.Caching.VisitedPlaces.Core;
-using Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Policies;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Pressure;
 using Intervals.NET.Caching.VisitedPlaces.Tests.Infrastructure.Helpers;

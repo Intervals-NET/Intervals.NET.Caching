@@ -33,7 +33,7 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
     }
 
     private VisitedPlacesCache<int, int, IntegerFixedStepDomain> CreateCache(
-        StorageStrategy strategy = StorageStrategy.SnapshotAppendBuffer,
+        StorageStrategyOptions<int, int>? strategy = null,
         int maxSegmentCount = 100)
     {
         _cache = TestHelpers.CreateCache(
@@ -43,6 +43,15 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
             _diagnostics,
             maxSegmentCount);
         return _cache;
+    }
+
+    private static StorageStrategyOptions<int, int> CreateStrategyFromType(Type strategyType)
+    {
+        if (strategyType == typeof(SnapshotAppendBufferStorageOptions<int, int>))
+            return SnapshotAppendBufferStorageOptions<int, int>.Default;
+        if (strategyType == typeof(LinkedListStrideIndexStorageOptions<int, int>))
+            return LinkedListStrideIndexStorageOptions<int, int>.Default;
+        throw new ArgumentException($"Unknown strategy type: {strategyType}", nameof(strategyType));
     }
 
     // ============================================================
@@ -243,11 +252,12 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
     // ============================================================
 
     [Theory]
-    [InlineData(StorageStrategy.SnapshotAppendBuffer)]
-    [InlineData(StorageStrategy.LinkedListStrideIndex)]
-    public async Task BothStorageStrategies_FullCycle_DataCorrect(StorageStrategy strategy)
+    [InlineData(typeof(SnapshotAppendBufferStorageOptions<int, int>))]
+    [InlineData(typeof(LinkedListStrideIndexStorageOptions<int, int>))]
+    public async Task BothStorageStrategies_FullCycle_DataCorrect(Type strategyType)
     {
         // ARRANGE
+        var strategy = CreateStrategyFromType(strategyType);
         var cache = CreateCache(strategy);
         var range = TestHelpers.CreateRange(0, 9);
 
@@ -263,11 +273,12 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
     }
 
     [Theory]
-    [InlineData(StorageStrategy.SnapshotAppendBuffer)]
-    [InlineData(StorageStrategy.LinkedListStrideIndex)]
-    public async Task BothStorageStrategies_ManySegments_AllFoundCorrectly(StorageStrategy strategy)
+    [InlineData(typeof(SnapshotAppendBufferStorageOptions<int, int>))]
+    [InlineData(typeof(LinkedListStrideIndexStorageOptions<int, int>))]
+    public async Task BothStorageStrategies_ManySegments_AllFoundCorrectly(Type strategyType)
     {
         // ARRANGE
+        var strategy = CreateStrategyFromType(strategyType);
         var cache = CreateCache(strategy, maxSegmentCount: 100);
 
         // ACT — store 12 non-overlapping segments to force normalization in both strategies

@@ -8,8 +8,39 @@ This document describes the two MVP storage strategies available for `VisitedPla
 
 `VisitedPlacesCache` stores a collection of **non-contiguous, independently-sorted segments**. Two storage strategies are available, selectable at construction time:
 
-1. **Snapshot + Append Buffer** — default; optimized for smaller caches (<85KB total data)
-2. **LinkedList + Stride Index** — for larger caches where segment counts are high and traversal cost dominates
+1. **Snapshot + Append Buffer** (`SnapshotAppendBufferStorageOptions<TRange, TData>`) — default; optimized for smaller caches (<85KB total data)
+2. **LinkedList + Stride Index** (`LinkedListStrideIndexStorageOptions<TRange, TData>`) — for larger caches where segment counts are high and traversal cost dominates
+
+### Selecting a Strategy
+
+Pass a typed options object to `WithStorageStrategy(...)` when building the cache:
+
+```csharp
+// Default strategy (Snapshot + Append Buffer, buffer size 8)
+var options = new VisitedPlacesCacheOptions<int, MyData>();
+
+// Explicit Snapshot + Append Buffer with custom buffer size
+var options = new VisitedPlacesCacheOptions<int, MyData>(
+    new SnapshotAppendBufferStorageOptions<int, MyData>(appendBufferSize: 16));
+
+// LinkedList + Stride Index with default tuning
+var options = new VisitedPlacesCacheOptions<int, MyData>(
+    LinkedListStrideIndexStorageOptions<int, MyData>.Default);
+
+// LinkedList + Stride Index with custom tuning
+var options = new VisitedPlacesCacheOptions<int, MyData>(
+    new LinkedListStrideIndexStorageOptions<int, MyData>(appendBufferSize: 16, stride: 8));
+```
+
+Or inline via the builder:
+
+```csharp
+await using var cache = VisitedPlacesCacheBuilder.For(dataSource, domain)
+    .WithOptions(o => o.WithStorageStrategy(
+        new LinkedListStrideIndexStorageOptions<int, MyData>(appendBufferSize: 8, stride: 16)))
+    .WithEviction(policies: [...], selector: new LruEvictionSelector<int, MyData>())
+    .Build();
+```
 
 Both strategies expose the same internal interface:
 - **`FindIntersecting(RequestedRange)`** — returns all segments whose ranges intersect `RequestedRange` (User Path, read-only)
@@ -28,7 +59,7 @@ Both strategies are designed around VPC's two-thread model:
 
 **Soft delete** is used by both MVP strategies as an internal optimization: segments marked for eviction are logically removed immediately (invisible to reads) but physically removed during the next normalization pass. This allows the background thread to batch physical removal work rather than doing it inline during eviction.
 
-**Append buffer** is used by both MVP strategies: new segments are written to a small fixed-size buffer rather than immediately integrated into the main sorted structure. The main structure is rebuilt ("normalized") when the buffer becomes full. This amortizes the cost of maintaining sort order.
+**Append buffer** is used by both MVP strategies: new segments are written to a small fixed-size buffer rather than immediately integrated into the main sorted structure. The main structure is rebuilt ("normalized") when the buffer becomes full. This amortizes the cost of maintaining sort order. The buffer size is configurable via `AppendBufferSize` on each options object (default: 8).
 
 ---
 
@@ -40,12 +71,22 @@ Both strategies are designed around VPC's two-thread model:
 - Segment count typically low (< ~50 segments)
 - Read-to-write ratio is high (few evictions, many reads)
 
+### Tuning: `AppendBufferSize`
+
+Controls the number of segments accumulated in the append buffer before a normalization pass is triggered.
+
+| `AppendBufferSize` | Effect                                                                                                              |
+|--------------------|---------------------------------------------------------------------------------------------------------------------|
+| **Smaller**        | Normalizes more frequently — snapshot is more up-to-date, but CPU cost (merge) is paid more often per segment added |
+| **Larger**         | Normalizes less frequently — lower amortized CPU cost, but snapshot may lag newly added segments longer             |
+| **Default (8)**    | Appropriate for most workloads. Only tune under profiling.                                                          |
+
 ### Data Structure
 
 ```
 SnapshotAppendBufferStorage
 ├── _snapshot: Segment[]             (sorted by range start; read via Volatile.Read)
-├── _appendBuffer: Segment[N]        (fixed-size; new segments written here)
+├── _appendBuffer: Segment[N]        (fixed-size N = AppendBufferSize; new segments written here)
 ├── _appendCount: int                (count of valid entries in append buffer)
 └── _softDeleteMask: bool[*]         (marks deleted segments; cleared on normalization)
 ```
@@ -90,7 +131,7 @@ SnapshotAppendBufferStorage
 - `_snapshot` is replaced on every normalization (exact-size allocation)
 - Arrays < 85KB go to the Small Object Heap (generational GC, compactable)
 - Arrays ≥ 85KB go to the Large Object Heap — avoid with this strategy for large caches
-- Append buffer is fixed-size and reused across normalizations (no allocation per add)
+- Append buffer is fixed-size (`AppendBufferSize` entries) and reused across normalizations (no allocation per add)
 - Soft-delete mask is same size as snapshot, reallocated on normalization
 
 ### Alignment with Invariants
@@ -113,18 +154,36 @@ SnapshotAppendBufferStorage
 - Segment count is high (>50–100 segments)
 - Eviction frequency is high (stride index makes removal cheaper than full array rebuild)
 
+### Tuning: `AppendBufferSize` and `Stride`
+
+**`AppendBufferSize`** controls how many segments are accumulated before the stride index is rebuilt:
+
+| `AppendBufferSize` | Effect                                                                                                                                                                     |
+|--------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Smaller**        | Stride index rebuilt more frequently — index stays more up-to-date, but O(n) normalization cost is paid more often                                                         |
+| **Larger**         | Stride index rebuilt less often — lower amortized CPU cost; new segments are still in the linked list and always found by `FindIntersecting` regardless of index staleness |
+| **Default (8)**    | Appropriate for most workloads. Only tune under profiling.                                                                                                                 |
+
+**`Stride`** controls the density of the stride index:
+
+| `Stride`         | Effect                                                                                               |
+|------------------|------------------------------------------------------------------------------------------------------|
+| **Smaller**      | Denser index — faster lookup (shorter local list walk from anchor), more memory for the stride array |
+| **Larger**       | Sparser index — slower lookup (longer local list walk), less memory; diminishing returns beyond ~32  |
+| **Default (16)** | Balanced default. Tune based on typical segment count and read/write ratio.                          |
+
 ### Data Structure
 
 ```
 LinkedListStrideIndexStorage
 ├── _list: DoublyLinkedList<Segment>     (sorted by range start; single-writer)
 ├── _strideIndex: Segment[]              (array of every Nth node = "stride anchors")
-├── _strideAppendBuffer: Segment[M]      (new stride anchors, appended before normalization)
+├── _strideAppendBuffer: Segment[M]      (M = AppendBufferSize; new stride anchors before normalization)
 ├── _strideAppendCount: int
 └── _softDeleteMask: bool[*]             (marks deleted nodes across list + stride index)
 ```
 
-**Stride**: A configurable integer N (e.g., N=16) defining how often a stride anchor is placed. A stride anchor is a reference to the Nth, 2Nth, 3Nth... node in the sorted linked list.
+**Stride**: A configurable integer N (default N=16) defining how often a stride anchor is placed. A stride anchor is a reference to the Nth, 2Nth, 3Nth... node in the sorted linked list.
 
 ### Read Path (User Thread)
 
@@ -166,7 +225,7 @@ LinkedListStrideIndexStorage
 
 - `_list` nodes are individually allocated (generational GC; no LOH pressure regardless of total size)
 - `_strideIndex` is a small array (n/N entries) — minimal LOH risk
-- Stride append buffer is fixed-size and reused (no per-add allocation)
+- Stride append buffer is fixed-size (`AppendBufferSize` entries) and reused (no per-add allocation)
 - Avoids the "one giant array" pattern that causes LOH pressure in the Snapshot strategy
 
 ### RCU Semantics
@@ -217,7 +276,7 @@ Same as Strategy 1: User Path threads read via `Volatile.Read(_strideIndex)`. Th
 
 ### Default
 
-If unsure: start with **Snapshot + Append Buffer**. Profile and switch to **LinkedList + Stride Index** if:
+If unsure: start with **Snapshot + Append Buffer** (`SnapshotAppendBufferStorageOptions<TRange, TData>.Default`). Profile and switch to **LinkedList + Stride Index** if:
 - LOH collections appear in GC metrics
 - Segment count grows beyond ~100
 - Normalization cost becomes visible in profiling
@@ -234,7 +293,7 @@ From the User Path's perspective, a segment is either present (returned by `Find
 
 ### Append Buffer: Internal Optimization Only
 
-The append buffer is an internal optimization to defer sort-order maintenance. It is NOT an architectural concept shared across components. The distinction between "in the main structure" and "in the append buffer" is invisible outside the storage implementation.
+The append buffer is an internal optimization to defer sort-order maintenance. It is NOT an architectural concept shared across components. The distinction between "in the main structure" and "in the append buffer" is invisible outside the storage implementation. The `AppendBufferSize` tuning parameter on each options class controls this threshold.
 
 ### Non-Merging Invariant
 

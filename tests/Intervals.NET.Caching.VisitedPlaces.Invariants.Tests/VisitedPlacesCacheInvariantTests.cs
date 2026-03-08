@@ -39,8 +39,8 @@ public sealed class VisitedPlacesCacheInvariantTests : IAsyncDisposable
 
     public static IEnumerable<object[]> StorageStrategyTestData =>
     [
-        [StorageStrategy.SnapshotAppendBuffer],
-        [StorageStrategy.LinkedListStrideIndex]
+        [SnapshotAppendBufferStorageOptions<int, int>.Default],
+        [LinkedListStrideIndexStorageOptions<int, int>.Default]
     ];
 
     // ============================================================
@@ -55,7 +55,7 @@ public sealed class VisitedPlacesCacheInvariantTests : IAsyncDisposable
     }
 
     private VisitedPlacesCache<int, int, IntegerFixedStepDomain> CreateCache(
-        StorageStrategy strategy = StorageStrategy.SnapshotAppendBuffer,
+        StorageStrategyOptions<int, int>? strategy = null,
         int maxSegmentCount = 100) =>
         TrackCache(TestHelpers.CreateCacheWithSimpleSource(
             _domain, _diagnostics,
@@ -146,7 +146,7 @@ public sealed class VisitedPlacesCacheInvariantTests : IAsyncDisposable
     /// </summary>
     [Theory]
     [MemberData(nameof(StorageStrategyTestData))]
-    public async Task Invariant_VPC_A_9_UserAlwaysReceivesDataForRequestedRange(StorageStrategy strategy)
+    public async Task Invariant_VPC_A_9_UserAlwaysReceivesDataForRequestedRange(StorageStrategyOptions<int, int> strategy)
     {
         // ARRANGE
         var cache = CreateCache(strategy);
@@ -174,7 +174,7 @@ public sealed class VisitedPlacesCacheInvariantTests : IAsyncDisposable
     /// </summary>
     [Theory]
     [MemberData(nameof(StorageStrategyTestData))]
-    public async Task Invariant_VPC_A_9a_CacheInteractionClassifiedCorrectly(StorageStrategy strategy)
+    public async Task Invariant_VPC_A_9a_CacheInteractionClassifiedCorrectly(StorageStrategyOptions<int, int> strategy)
     {
         // ARRANGE
         var cache = CreateCache(strategy);
@@ -388,7 +388,7 @@ public sealed class VisitedPlacesCacheInvariantTests : IAsyncDisposable
     /// </summary>
     [Theory]
     [MemberData(nameof(StorageStrategyTestData))]
-    public async Task Invariant_VPC_S_H_BackgroundEventLifecycleConsistency(StorageStrategy strategy)
+    public async Task Invariant_VPC_S_H_BackgroundEventLifecycleConsistency(StorageStrategyOptions<int, int> strategy)
     {
         // ARRANGE
         var cache = CreateCache(strategy);
@@ -456,7 +456,7 @@ public sealed class VisitedPlacesCacheInvariantTests : IAsyncDisposable
     /// </summary>
     [Theory]
     [MemberData(nameof(StorageStrategyTestData))]
-    public async Task Invariant_VPC_BothStrategies_BehaviorallyEquivalent(StorageStrategy strategy)
+    public async Task Invariant_VPC_BothStrategies_BehaviorallyEquivalent(StorageStrategyOptions<int, int> strategy)
     {
         // ARRANGE
         var cache = CreateCache(strategy);
