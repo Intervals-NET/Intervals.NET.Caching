@@ -25,11 +25,11 @@ The **Eviction Engine** mediates all interactions between these components. `Cac
 ```
 CacheNormalizationExecutor
   │
-  ├─ engine.UpdateMetadata(usedSegments, now)
+  ├─ engine.UpdateMetadata(usedSegments)
   │    └─ selector.UpdateMetadata(...)
   │
   ├─ storage.Add(segment)                              ← processor is sole storage writer
-  ├─ engine.InitializeSegment(segment, now)
+  ├─ engine.InitializeSegment(segment)
   │    ├─ selector.InitializeMetadata(...)
   │    └─ evaluator.OnSegmentAdded(...)
   │
@@ -177,10 +177,19 @@ This avoids an O(N) allocation for an eligible-candidates list and keeps evictio
 
 Each selector defines its own metadata type (a nested `internal sealed class` implementing `IEvictionMetadata`) and stores it on `CachedSegment.EvictionMetadata`. The `EvictionEngine` delegates:
 
-- `engine.InitializeSegment(segment, now)` → `selector.InitializeMetadata(segment, now)` — immediately after each segment is stored
-- `engine.UpdateMetadata(usedSegments, now)` → `selector.UpdateMetadata(usedSegments, now)` — at the start of each event cycle for segments accessed by the User Path
+- `engine.InitializeSegment(segment)` → `selector.InitializeMetadata(segment)` — immediately after each segment is stored
+- `engine.UpdateMetadata(usedSegments)` → `selector.UpdateMetadata(usedSegments)` — at the start of each event cycle for segments accessed by the User Path
 
-Selectors that require no metadata (e.g., `SmallestFirstEvictionSelector`) implement both methods as no-ops and leave `EvictionMetadata` null.
+### `SamplingEvictionSelector` Base Class
+
+All built-in selectors extend `SamplingEvictionSelector<TRange, TData>` (an `internal abstract` class), which implements `TrySelectCandidate` and provides two extension points for derived classes:
+
+- **`EnsureMetadata(segment)`** — Called inside the sampling loop **before every `IsWorse` comparison**. If the segment's metadata is null or belongs to a different selector type, this method creates and attaches the correct metadata. Repaired metadata persists permanently on the segment; future sampling passes skip the repair.
+- **`IsWorse(candidate, current)`** — Pure comparison of two segments with guaranteed-valid metadata. Implementations can safely cast `segment.EvictionMetadata` without null checks or type-mismatch guards because `EnsureMetadata` has already run on both segments.
+
+**`TimeProvider` injection:** `SamplingEvictionSelector` accepts an optional `TimeProvider` (defaulting to `TimeProvider.System`). Time-aware selectors (LRU, FIFO) use `TimeProvider.GetUtcNow().UtcDateTime` internally; time-agnostic selectors (SmallestFirst) ignore it entirely.
+
+**Timestamp nuance during metadata repair:** When `EnsureMetadata` creates metadata for a segment that was stored before the current selector was configured (e.g., after a selector switch at runtime), each repaired segment receives a per-call timestamp from `TimeProvider`. These timestamps may differ by microseconds across segments in the same sampling pass. This is acceptable: among segments repaired in the same pass, selection order is determined by random sampling, not by these micro-differences. The tiny spread creates no meaningful bias in eviction decisions.
 
 ### Architectural Constraints
 
@@ -196,8 +205,9 @@ Selectors must NOT:
 **Selects the worst candidate (by `LruMetadata.LastAccessedAt`) from a random sample** — the least recently accessed segment in the sample is the candidate.
 
 - Metadata type: `LruEvictionSelector<TRange,TData>.LruMetadata` with field `DateTime LastAccessedAt`
-- `InitializeMetadata`: creates `LruMetadata(now)`
-- `UpdateMetadata`: sets `meta.LastAccessedAt = now` on each used segment
+- `InitializeMetadata`: creates `LruMetadata` with `LastAccessedAt = TimeProvider.GetUtcNow().UtcDateTime`
+- `UpdateMetadata`: sets `meta.LastAccessedAt = TimeProvider.GetUtcNow().UtcDateTime` on each used segment
+- `EnsureMetadata`: repairs missing or stale metadata using the current `TimeProvider` timestamp
 - `TrySelectCandidate`: samples O(SampleSize) segments (skipping immune), returns the one with the smallest `LastAccessedAt`
 - Optimizes for temporal locality: segments accessed recently are retained
 - Best for workloads where re-access probability correlates with recency
@@ -210,8 +220,9 @@ Selectors must NOT:
 **Selects the worst candidate (by `FifoMetadata.CreatedAt`) from a random sample** — the oldest segment in the sample is the candidate.
 
 - Metadata type: `FifoEvictionSelector<TRange,TData>.FifoMetadata` with field `DateTime CreatedAt`
-- `InitializeMetadata`: creates `FifoMetadata(now)` (immutable after creation)
+- `InitializeMetadata`: creates `FifoMetadata` with `CreatedAt = TimeProvider.GetUtcNow().UtcDateTime` (immutable after creation)
 - `UpdateMetadata`: no-op — FIFO ignores access patterns
+- `EnsureMetadata`: repairs missing or stale metadata using the current `TimeProvider` timestamp
 - `TrySelectCandidate`: samples O(SampleSize) segments (skipping immune), returns the one with the smallest `CreatedAt`
 - Treats the cache as a fixed-size sliding window over time
 - Does not reflect access patterns; simpler and more predictable than LRU
@@ -221,13 +232,14 @@ Selectors must NOT:
 
 **Selects the worst candidate (by span) from a random sample** — the narrowest segment in the sample is the candidate.
 
-- No metadata — candidate quality is derived entirely from `segment.Range.Span(domain)`
-- `InitializeMetadata`: no-op
-- `UpdateMetadata`: no-op
-- `TrySelectCandidate`: samples O(SampleSize) segments (skipping immune), returns the one with the smallest `Range.Span(domain)`
+- Metadata type: `SmallestFirstEvictionSelector<TRange,TData,TDomain>.SmallestFirstMetadata` with field `long Span`
+- `InitializeMetadata`: creates `SmallestFirstMetadata` with `Span = segment.Range.Span(domain).Value`
+- `UpdateMetadata`: no-op — span is immutable after creation
+- `EnsureMetadata`: repairs missing or stale metadata by recomputing `Span` from `segment.Range.Span(domain).Value`
+- `TrySelectCandidate`: samples O(SampleSize) segments (skipping immune), returns the one with the smallest `Span`
 - Optimizes for total domain coverage: retains large (wide) segments over small ones
 - Best for workloads where wide segments are more valuable
-- Captures `TDomain` internally for span computation
+- Captures `TDomain` internally for span computation; does not use `TimeProvider`
 
 #### Farthest-From-Access (planned)
 
@@ -286,8 +298,8 @@ The Eviction Engine (`EvictionEngine<TRange, TData>`) is the **single eviction f
 
 | Method                                                | Delegates to                                                                                                 | Called in                             |
 |-------------------------------------------------------|--------------------------------------------------------------------------------------------------------------|---------------------------------------|
-| `UpdateMetadata(usedSegments, now)`                   | `selector.UpdateMetadata`                                                                                    | Step 1                                |
-| `InitializeSegment(segment, now)`                     | `selector.InitializeMetadata` + `evaluator.OnSegmentAdded`                                                   | Step 2 (per segment)                  |
+| `UpdateMetadata(usedSegments)`                        | `selector.UpdateMetadata`                                                                                    | Step 1                                |
+| `InitializeSegment(segment)`                          | `selector.InitializeMetadata` + `evaluator.OnSegmentAdded`                                                   | Step 2 (per segment)                  |
 | `EvaluateAndExecute(allSegments, justStoredSegments)` | `evaluator.Evaluate` → if exceeded: `executor.Execute` → returns to-remove list + fires eviction diagnostics | Step 3+4                              |
 | `OnSegmentsRemoved(removedSegments)`                  | `evaluator.OnSegmentRemoved` per segment                                                                     | After processor's storage.Remove loop |
 
@@ -348,15 +360,15 @@ The evaluator separates stateful policies into a dedicated array at construction
 
 Per-segment eviction metadata is **owned by the Eviction Selector**, not by a shared statistics record. Each segment carries an `IEvictionMetadata? EvictionMetadata` reference. The selector that is currently configured defines, creates, updates, and interprets this metadata.
 
-Selectors that require no metadata (e.g., `SmallestFirstEvictionSelector`) leave `EvictionMetadata` null.
+All built-in selectors use metadata. Time-aware selectors (LRU, FIFO) capture timestamps via an injected `TimeProvider`; the segment-derived selector (SmallestFirst) computes a pre-cached `Span` value.
 
 ### Selector-Specific Metadata Types
 
-| Selector                        | Metadata Class | Fields                    | Notes                                                           |
-|---------------------------------|----------------|---------------------------|-----------------------------------------------------------------|
-| `LruEvictionSelector`           | `LruMetadata`  | `DateTime LastAccessedAt` | Updated on each `UsedSegments` entry                            |
-| `FifoEvictionSelector`          | `FifoMetadata` | `DateTime CreatedAt`      | Immutable after creation                                        |
-| `SmallestFirstEvictionSelector` | *(none)*       | —                         | Candidates selected by `Range.Span(domain)`; no metadata needed |
+| Selector                        | Metadata Class         | Fields                    | Notes                                                           |
+|---------------------------------|------------------------|---------------------------|-----------------------------------------------------------------|
+| `LruEvictionSelector`           | `LruMetadata`          | `DateTime LastAccessedAt` | Updated on each `UsedSegments` entry                            |
+| `FifoEvictionSelector`          | `FifoMetadata`         | `DateTime CreatedAt`      | Immutable after creation                                        |
+| `SmallestFirstEvictionSelector` | `SmallestFirstMetadata`| `long Span`               | Immutable after creation; computed from `Range.Span(domain)`    |
 
 Metadata classes are nested `internal sealed` classes inside their respective selector classes.
 
@@ -364,15 +376,15 @@ Metadata classes are nested `internal sealed` classes inside their respective se
 
 Metadata is managed exclusively by the configured selector via two methods called by the `EvictionEngine` (which in turn is called by `CacheNormalizationExecutor`):
 
-- `InitializeMetadata(segment, now)` — called immediately after each segment is stored (step 2); selector attaches its metadata to `segment.EvictionMetadata`
-- `UpdateMetadata(usedSegments, now)` — called at the start of each event cycle for segments accessed by the User Path (step 1); selector updates its metadata on each used segment
+- `InitializeMetadata(segment)` — called immediately after each segment is stored (step 2); selector attaches its metadata to `segment.EvictionMetadata`; time-aware selectors obtain the current timestamp from their injected `TimeProvider`
+- `UpdateMetadata(usedSegments)` — called at the start of each event cycle for segments accessed by the User Path (step 1); selector updates its metadata on each used segment
 
-If a selector encounters metadata from a previously-configured selector (runtime selector switching), it replaces it with its own using a lazy-initialization pattern:
+If a selector encounters metadata from a previously-configured selector (runtime selector switching), `EnsureMetadata` replaces it with the correct type during the next sampling pass:
 
 ```csharp
 if (segment.EvictionMetadata is not LruMetadata meta)
 {
-    meta = new LruMetadata(now);
+    meta = new LruMetadata(TimeProvider.GetUtcNow().UtcDateTime);
     segment.EvictionMetadata = meta;
 }
 ```
@@ -381,17 +393,22 @@ if (segment.EvictionMetadata is not LruMetadata meta)
 
 ```
 Segment stored (Background Path, step 2):
-  engine.InitializeSegment(segment, now)
-    → selector.InitializeMetadata(segment, now)
-      → e.g., LruMetadata { LastAccessedAt = now }
-      → e.g., FifoMetadata { CreatedAt = now }
-      → no-op for SmallestFirst
+  engine.InitializeSegment(segment)
+    → selector.InitializeMetadata(segment)
+      → e.g., LruMetadata { LastAccessedAt = TimeProvider.GetUtcNow().UtcDateTime }
+      → e.g., FifoMetadata { CreatedAt = TimeProvider.GetUtcNow().UtcDateTime }
+      → e.g., SmallestFirstMetadata { Span = segment.Range.Span(domain).Value }
 
 Segment used (CacheNormalizationRequest.UsedSegments, Background Path, step 1):
-  engine.UpdateMetadata(usedSegments, now)
-    → selector.UpdateMetadata(usedSegments, now)
-      → e.g., LruMetadata.LastAccessedAt = now
+  engine.UpdateMetadata(usedSegments)
+    → selector.UpdateMetadata(usedSegments)
+      → e.g., LruMetadata.LastAccessedAt = TimeProvider.GetUtcNow().UtcDateTime
       → no-op for Fifo, SmallestFirst
+
+Segment sampled during eviction (Background Path, step 3):
+  SamplingEvictionSelector.TrySelectCandidate — sampling loop
+    → EnsureMetadata(segment)  ← repairs null/stale metadata if needed (persists permanently)
+    → IsWorse(candidate, current)  ← pure comparison; metadata guaranteed valid
 
 Segment evicted (Background Path, step 4):
   segment removed from storage; metadata reference is GC'd with the segment
@@ -488,6 +505,7 @@ A segment may be referenced in the User Path's current in-memory assembly (i.e.,
 | VPC.E.4 — Metadata owned by Eviction Selector    | Selector owns `InitializeMetadata` / `UpdateMetadata`; `EvictionEngine` delegates                   |
 | VPC.E.4a — Metadata initialized at storage time  | `engine.InitializeSegment` called immediately after `storage.Add`                                   |
 | VPC.E.4b — Metadata updated on UsedSegments      | `engine.UpdateMetadata` called in Step 1 of each event cycle                                        |
+| VPC.E.4c — Metadata valid before every IsWorse   | `SamplingEvictionSelector` calls `EnsureMetadata` before each `IsWorse` comparison in sampling loop |
 | VPC.E.5 — Eviction only in Background Path       | User Path has no reference to engine, policies, selectors, or executor                              |
 | VPC.E.6 — Consistency after eviction             | Evicted segments (and their metadata) are removed together; no dangling references                  |
 | VPC.B.3b — No eviction on stats-only events      | Steps 3-4 gated on `justStoredSegments.Count > 0`                                                   |

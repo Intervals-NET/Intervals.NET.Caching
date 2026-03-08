@@ -27,6 +27,8 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Selectors;
 /// initialization from <c>segment.Range.Span(domain).Value</c> and cached — segments are
 /// immutable so the span never changes, and pre-computing it avoids redundant computation
 /// during every <see cref="IEvictionSelector{TRange,TData}.TrySelectCandidate"/> call.
+/// If a segment's metadata is missing or belongs to a different selector when first sampled,
+/// <see cref="EnsureMetadata"/> lazily computes and attaches the span from the segment itself.
 /// <c>UpdateMetadata</c> is a no-op because span is unaffected by access patterns.</para>
 /// <para><strong>Performance:</strong> O(SampleSize) per candidate selection; no sorting,
 /// no collection copying. SampleSize defaults to
@@ -89,21 +91,32 @@ internal sealed class SmallestFirstEvictionSelector<TRange, TData, TDomain>
     /// <remarks>
     /// <paramref name="candidate"/> is worse than <paramref name="current"/> when its span
     /// is smaller — narrower segments cover less domain and are evicted first.
-    /// Falls back to live span computation when <see cref="SmallestFirstMetadata"/> is absent.
+    /// Both segments are guaranteed to carry valid <see cref="SmallestFirstMetadata"/> when
+    /// this method is called (<see cref="EnsureMetadata"/> has already been invoked on both).
     /// </remarks>
     protected override bool IsWorse(
         CachedSegment<TRange, TData> candidate,
         CachedSegment<TRange, TData> current)
     {
-        var candidateSpan = candidate.EvictionMetadata is SmallestFirstMetadata cm
-            ? cm.Span
-            : candidate.Range.Span(_domain).Value;
-
-        var currentSpan = current.EvictionMetadata is SmallestFirstMetadata curm
-            ? curm.Span
-            : current.Range.Span(_domain).Value;
+        var candidateSpan = ((SmallestFirstMetadata)candidate.EvictionMetadata!).Span;
+        var currentSpan = ((SmallestFirstMetadata)current.EvictionMetadata!).Span;
 
         return candidateSpan < currentSpan;
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// If the segment does not carry a <see cref="SmallestFirstMetadata"/> instance, computes
+    /// the span from <c>segment.Range.Span(_domain).Value</c> and attaches it. Because segment
+    /// ranges are immutable, the computed value is always correct regardless of when the repair
+    /// occurs.
+    /// </remarks>
+    protected override void EnsureMetadata(CachedSegment<TRange, TData> segment)
+    {
+        if (segment.EvictionMetadata is not SmallestFirstMetadata)
+        {
+            segment.EvictionMetadata = new SmallestFirstMetadata(segment.Range.Span(_domain).Value);
+        }
     }
 
     /// <inheritdoc/>
@@ -112,7 +125,7 @@ internal sealed class SmallestFirstEvictionSelector<TRange, TData, TDomain>
     /// <see cref="SmallestFirstMetadata"/> instance on the segment. Because segment ranges
     /// are immutable, this value never needs to be recomputed.
     /// </remarks>
-    public override void InitializeMetadata(CachedSegment<TRange, TData> segment, DateTime now)
+    public override void InitializeMetadata(CachedSegment<TRange, TData> segment)
     {
         segment.EvictionMetadata = new SmallestFirstMetadata(segment.Range.Span(_domain).Value);
     }
@@ -122,9 +135,7 @@ internal sealed class SmallestFirstEvictionSelector<TRange, TData, TDomain>
     /// No-op — SmallestFirst ordering is based on span, which is immutable after segment creation.
     /// Access patterns do not affect eviction priority.
     /// </remarks>
-    public override void UpdateMetadata(
-        IReadOnlyList<CachedSegment<TRange, TData>> usedSegments,
-        DateTime now)
+    public override void UpdateMetadata(IReadOnlyList<CachedSegment<TRange, TData>> usedSegments)
     {
         // SmallestFirst derives ordering from segment span — no metadata to update.
     }

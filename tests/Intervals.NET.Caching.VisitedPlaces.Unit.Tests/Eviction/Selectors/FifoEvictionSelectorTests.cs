@@ -139,15 +139,17 @@ public sealed class FifoEvictionSelectorTests
     public void InitializeMetadata_SetsCreatedAt()
     {
         // ARRANGE
+        var now = new DateTimeOffset(2025, 6, 1, 12, 0, 0, TimeSpan.Zero);
+        var fakeTime = new FakeTimeProvider(now);
+        var selector = new FifoEvictionSelector<int, int>(timeProvider: fakeTime);
         var segment = CreateSegmentRaw(0, 5);
-        var now = DateTime.UtcNow;
 
         // ACT
-        _selector.InitializeMetadata(segment, now);
+        selector.InitializeMetadata(segment);
 
         // ASSERT
         var meta = Assert.IsType<FifoEvictionSelector<int, int>.FifoMetadata>(segment.EvictionMetadata);
-        Assert.Equal(now, meta.CreatedAt);
+        Assert.Equal(now.UtcDateTime, meta.CreatedAt);
     }
 
     [Fact]
@@ -156,10 +158,9 @@ public sealed class FifoEvictionSelectorTests
         // ARRANGE — FIFO metadata is immutable; UpdateMetadata should not change CreatedAt
         var originalTime = DateTime.UtcNow.AddHours(-1);
         var segment = CreateSegment(0, 5, originalTime);
-        var laterTime = DateTime.UtcNow;
 
         // ACT
-        _selector.UpdateMetadata([segment], laterTime);
+        _selector.UpdateMetadata([segment]);
 
         // ASSERT — CreatedAt unchanged (FIFO is immutable after initialization)
         var meta = Assert.IsType<FifoEvictionSelector<int, int>.FifoMetadata>(segment.EvictionMetadata);
@@ -183,6 +184,18 @@ public sealed class FifoEvictionSelectorTests
         return new CachedSegment<int, int>(
             range,
             new ReadOnlyMemory<int>(new int[end - start + 1]));
+    }
+
+    #endregion
+
+    #region Test Doubles
+
+    /// <summary>
+    /// A controllable <see cref="TimeProvider"/> for deterministic timestamp assertions.
+    /// </summary>
+    private sealed class FakeTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => utcNow;
     }
 
     #endregion

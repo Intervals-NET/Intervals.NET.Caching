@@ -44,7 +44,7 @@ public sealed class SmallestFirstEvictionSelectorTests
         var segment = CreateSegmentRaw(10, 19); // span = 10
 
         // ACT
-        selector.InitializeMetadata(segment, DateTime.UtcNow);
+        selector.InitializeMetadata(segment);
 
         // ASSERT
         var meta = Assert.IsType<SmallestFirstEvictionSelector<int, int, IntegerFixedStepDomain>.SmallestFirstMetadata>(
@@ -58,10 +58,10 @@ public sealed class SmallestFirstEvictionSelectorTests
         // ARRANGE
         var selector = new SmallestFirstEvictionSelector<int, int, IntegerFixedStepDomain>(_domain);
         var segment = CreateSegmentRaw(0, 4); // span = 5
-        selector.InitializeMetadata(segment, DateTime.UtcNow);
+        selector.InitializeMetadata(segment);
 
         // ACT — re-initialize (e.g., segment re-stored after selector swap)
-        selector.InitializeMetadata(segment, DateTime.UtcNow);
+        selector.InitializeMetadata(segment);
 
         // ASSERT — still correct metadata, not stale
         var meta = Assert.IsType<SmallestFirstEvictionSelector<int, int, IntegerFixedStepDomain>.SmallestFirstMetadata>(
@@ -155,17 +155,17 @@ public sealed class SmallestFirstEvictionSelectorTests
     }
 
     [Fact]
-    public void TrySelectCandidate_WithNoMetadata_FallsBackToLiveSpanComputation()
+    public void TrySelectCandidate_WithNoMetadata_EnsureMetadataLazilyComputesSpan()
     {
         // ARRANGE — segments without InitializeMetadata called (metadata = null)
         var selector = new SmallestFirstEvictionSelector<int, int, IntegerFixedStepDomain>(_domain);
         var small = CreateSegmentRaw(0, 2);    // span 3
         var large = CreateSegmentRaw(20, 29);  // span 10
 
-        // ACT — fallback path uses live Range.Span(domain) computation
+        // ACT — EnsureMetadata lazily computes and stores span before IsWorse comparison
         var result = selector.TrySelectCandidate([large, small], NoImmune, out var candidate);
 
-        // ASSERT — fallback still selects the smallest span
+        // ASSERT — lazily computed span still selects the smallest
         Assert.True(result);
         Assert.Same(small, candidate);
     }
@@ -218,7 +218,7 @@ public sealed class SmallestFirstEvictionSelectorTests
         int start, int end)
     {
         var segment = CreateSegmentRaw(start, end);
-        selector.InitializeMetadata(segment, DateTime.UtcNow);
+        selector.InitializeMetadata(segment);
         return segment;
     }
 

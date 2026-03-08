@@ -20,7 +20,13 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Selectors;
 /// </para>
 /// <para><strong>Metadata:</strong> Uses <see cref="FifoMetadata"/> stored on
 /// <see cref="CachedSegment{TRange,TData}.EvictionMetadata"/>. <c>CreatedAt</c> is set at
-/// initialization and never updated — FIFO ignores subsequent access patterns.</para>
+/// initialization and never updated — FIFO ignores subsequent access patterns. If a segment's
+/// metadata is missing or belongs to a different selector when first sampled,
+/// <see cref="EnsureMetadata"/> lazily attaches a new <see cref="FifoMetadata"/> using the
+/// current timestamp — the segment is treated as if it was just created.</para>
+/// <para><strong>Time source:</strong> All timestamps are obtained from the injected
+/// <see cref="TimeProvider"/> (defaults to <see cref="TimeProvider.System"/>), enabling
+/// deterministic testing.</para>
 /// <para><strong>Performance:</strong> O(SampleSize) per candidate selection; no sorting,
 /// no collection copying. SampleSize defaults to
 /// <see cref="EvictionSamplingOptions.DefaultSampleSize"/> (32).</para>
@@ -57,8 +63,14 @@ internal sealed class FifoEvictionSelector<TRange, TData> : SamplingEvictionSele
     /// Optional sampling configuration. When <see langword="null"/>,
     /// <see cref="EvictionSamplingOptions.Default"/> is used (SampleSize = 32).
     /// </param>
-    public FifoEvictionSelector(EvictionSamplingOptions? samplingOptions = null)
-        : base(samplingOptions)
+    /// <param name="timeProvider">
+    /// Optional time provider used to obtain the current UTC timestamp for metadata creation.
+    /// When <see langword="null"/>, <see cref="TimeProvider.System"/> is used.
+    /// </param>
+    public FifoEvictionSelector(
+        EvictionSamplingOptions? samplingOptions = null,
+        TimeProvider? timeProvider = null)
+        : base(samplingOptions, timeProvider)
     {
     }
 
@@ -66,33 +78,42 @@ internal sealed class FifoEvictionSelector<TRange, TData> : SamplingEvictionSele
     /// <remarks>
     /// <paramref name="candidate"/> is worse than <paramref name="current"/> when it was
     /// stored earlier — i.e., its <see cref="FifoMetadata.CreatedAt"/> is older.
-    /// Segments with no <see cref="FifoMetadata"/> (metadata null or wrong type) are treated
-    /// as having <see cref="DateTime.MinValue"/> creation time and are therefore always the
-    /// worst candidate.
+    /// Both segments are guaranteed to carry valid <see cref="FifoMetadata"/> when this method
+    /// is called (<see cref="EnsureMetadata"/> has already been invoked on both).
     /// </remarks>
     protected override bool IsWorse(
         CachedSegment<TRange, TData> candidate,
         CachedSegment<TRange, TData> current)
     {
-        var candidateTime = candidate.EvictionMetadata is FifoMetadata cm
-            ? cm.CreatedAt
-            : DateTime.MinValue;
-
-        var currentTime = current.EvictionMetadata is FifoMetadata curm
-            ? curm.CreatedAt
-            : DateTime.MinValue;
+        var candidateTime = ((FifoMetadata)candidate.EvictionMetadata!).CreatedAt;
+        var currentTime = ((FifoMetadata)current.EvictionMetadata!).CreatedAt;
 
         return candidateTime < currentTime;
     }
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Creates a <see cref="FifoMetadata"/> instance with <c>CreatedAt = now</c>
-    /// and attaches it to the segment.
+    /// If the segment does not carry a <see cref="FifoMetadata"/> instance, attaches a new one
+    /// with <c>CreatedAt</c> set to the current UTC time from <see cref="TimeProvider"/>.
+    /// This handles segments that were stored before this selector was active or whose metadata
+    /// was cleared.
     /// </remarks>
-    public override void InitializeMetadata(CachedSegment<TRange, TData> segment, DateTime now)
+    protected override void EnsureMetadata(CachedSegment<TRange, TData> segment)
     {
-        segment.EvictionMetadata = new FifoMetadata(now);
+        if (segment.EvictionMetadata is not FifoMetadata)
+        {
+            segment.EvictionMetadata = new FifoMetadata(TimeProvider.GetUtcNow().UtcDateTime);
+        }
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Creates a <see cref="FifoMetadata"/> instance with <c>CreatedAt</c> set to the
+    /// current UTC time from <see cref="TimeProvider"/> and attaches it to the segment.
+    /// </remarks>
+    public override void InitializeMetadata(CachedSegment<TRange, TData> segment)
+    {
+        segment.EvictionMetadata = new FifoMetadata(TimeProvider.GetUtcNow().UtcDateTime);
     }
 
     /// <inheritdoc/>
@@ -100,9 +121,7 @@ internal sealed class FifoEvictionSelector<TRange, TData> : SamplingEvictionSele
     /// No-op for FIFO. <see cref="FifoMetadata.CreatedAt"/> is immutable — access patterns
     /// do not affect FIFO ordering.
     /// </remarks>
-    public override void UpdateMetadata(
-        IReadOnlyList<CachedSegment<TRange, TData>> usedSegments,
-        DateTime now)
+    public override void UpdateMetadata(IReadOnlyList<CachedSegment<TRange, TData>> usedSegments)
     {
         // FIFO metadata is immutable after creation — nothing to update.
     }

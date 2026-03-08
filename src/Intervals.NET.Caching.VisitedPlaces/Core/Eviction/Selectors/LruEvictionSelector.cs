@@ -14,9 +14,14 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Selectors;
 /// is the worst eviction candidate.</para>
 /// <para><strong>Execution Context:</strong> Background Path (single writer thread)</para>
 /// <para><strong>Metadata:</strong> Uses <see cref="LruMetadata"/> stored on
-/// <see cref="CachedSegment{TRange,TData}.EvictionMetadata"/>. If a segment's metadata
-/// is missing or belongs to a different selector, it is lazily initialized with the segment's
-/// creation time as the initial <c>LastAccessedAt</c>.</para>
+/// <see cref="CachedSegment{TRange,TData}.EvictionMetadata"/>. Metadata is initialized at
+/// segment creation time via <see cref="InitializeMetadata"/>. If a segment's metadata is
+/// missing or belongs to a different selector when first sampled, <see cref="EnsureMetadata"/>
+/// lazily attaches a new <see cref="LruMetadata"/> using the current timestamp — the segment
+/// is treated as if it was just accessed.</para>
+/// <para><strong>Time source:</strong> All timestamps are obtained from the injected
+/// <see cref="TimeProvider"/> (defaults to <see cref="TimeProvider.System"/>), enabling
+/// deterministic testing.</para>
 /// <para><strong>Performance:</strong> O(SampleSize) per candidate selection; no sorting,
 /// no collection copying. SampleSize defaults to
 /// <see cref="EvictionSamplingOptions.DefaultSampleSize"/> (32).</para>
@@ -52,8 +57,14 @@ internal sealed class LruEvictionSelector<TRange, TData> : SamplingEvictionSelec
     /// Optional sampling configuration. When <see langword="null"/>,
     /// <see cref="EvictionSamplingOptions.Default"/> is used (SampleSize = 32).
     /// </param>
-    public LruEvictionSelector(EvictionSamplingOptions? samplingOptions = null)
-        : base(samplingOptions)
+    /// <param name="timeProvider">
+    /// Optional time provider used to obtain the current UTC timestamp for metadata creation
+    /// and updates. When <see langword="null"/>, <see cref="TimeProvider.System"/> is used.
+    /// </param>
+    public LruEvictionSelector(
+        EvictionSamplingOptions? samplingOptions = null,
+        TimeProvider? timeProvider = null)
+        : base(samplingOptions, timeProvider)
     {
     }
 
@@ -61,45 +72,55 @@ internal sealed class LruEvictionSelector<TRange, TData> : SamplingEvictionSelec
     /// <remarks>
     /// <paramref name="candidate"/> is worse than <paramref name="current"/> when it was
     /// accessed less recently — i.e., its <see cref="LruMetadata.LastAccessedAt"/> is older.
-    /// Segments with no <see cref="LruMetadata"/> (metadata null or wrong type) are treated
-    /// as having <see cref="DateTime.MinValue"/> access time and are therefore always the
-    /// worst candidate.
+    /// Both segments are guaranteed to carry valid <see cref="LruMetadata"/> when this method
+    /// is called (<see cref="EnsureMetadata"/> has already been invoked on both).
     /// </remarks>
     protected override bool IsWorse(
         CachedSegment<TRange, TData> candidate,
         CachedSegment<TRange, TData> current)
     {
-        var candidateTime = candidate.EvictionMetadata is LruMetadata cm
-            ? cm.LastAccessedAt
-            : DateTime.MinValue;
-
-        var currentTime = current.EvictionMetadata is LruMetadata curm
-            ? curm.LastAccessedAt
-            : DateTime.MinValue;
+        var candidateTime = ((LruMetadata)candidate.EvictionMetadata!).LastAccessedAt;
+        var currentTime = ((LruMetadata)current.EvictionMetadata!).LastAccessedAt;
 
         return candidateTime < currentTime;
     }
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Creates a <see cref="LruMetadata"/> instance with <c>LastAccessedAt = now</c>
-    /// and attaches it to the segment.
+    /// If the segment does not carry a <see cref="LruMetadata"/> instance, attaches a new one
+    /// with <c>LastAccessedAt</c> set to the current UTC time from <see cref="TimeProvider"/>.
+    /// This handles segments that were stored before this selector was active or whose metadata
+    /// was cleared.
     /// </remarks>
-    public override void InitializeMetadata(CachedSegment<TRange, TData> segment, DateTime now)
+    protected override void EnsureMetadata(CachedSegment<TRange, TData> segment)
     {
-        segment.EvictionMetadata = new LruMetadata(now);
+        if (segment.EvictionMetadata is not LruMetadata)
+        {
+            segment.EvictionMetadata = new LruMetadata(TimeProvider.GetUtcNow().UtcDateTime);
+        }
     }
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Sets <c>LastAccessedAt = now</c> on each used segment's <see cref="LruMetadata"/>.
-    /// If a segment's metadata is null or belongs to a different selector, it is replaced
-    /// with a new <see cref="LruMetadata"/> (lazy initialization).
+    /// Creates a <see cref="LruMetadata"/> instance with <c>LastAccessedAt</c> set to the
+    /// current UTC time from <see cref="TimeProvider"/> and attaches it to the segment.
     /// </remarks>
-    public override void UpdateMetadata(
-        IReadOnlyList<CachedSegment<TRange, TData>> usedSegments,
-        DateTime now)
+    public override void InitializeMetadata(CachedSegment<TRange, TData> segment)
     {
+        segment.EvictionMetadata = new LruMetadata(TimeProvider.GetUtcNow().UtcDateTime);
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Sets <c>LastAccessedAt</c> to the current UTC time from <see cref="TimeProvider"/>
+    /// on each used segment's <see cref="LruMetadata"/>.
+    /// If a segment's metadata is <see langword="null"/> or belongs to a different selector,
+    /// it is replaced with a new <see cref="LruMetadata"/> (lazy initialization).
+    /// </remarks>
+    public override void UpdateMetadata(IReadOnlyList<CachedSegment<TRange, TData>> usedSegments)
+    {
+        var now = TimeProvider.GetUtcNow().UtcDateTime;
+
         foreach (var segment in usedSegments)
         {
             if (segment.EvictionMetadata is not LruMetadata meta)

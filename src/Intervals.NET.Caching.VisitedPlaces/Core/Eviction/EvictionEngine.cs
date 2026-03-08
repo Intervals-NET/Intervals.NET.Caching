@@ -103,12 +103,9 @@ internal sealed class EvictionEngine<TRange, TData>
     /// Called by the processor in Step 1 of the Background Path sequence.
     /// </summary>
     /// <param name="usedSegments">The segments that were read during the User Path request.</param>
-    /// <param name="now">The current UTC timestamp at the time of the background event.</param>
-    public void UpdateMetadata(
-        IReadOnlyList<CachedSegment<TRange, TData>> usedSegments,
-        DateTime now)
+    public void UpdateMetadata(IReadOnlyList<CachedSegment<TRange, TData>> usedSegments)
     {
-        _selector.UpdateMetadata(usedSegments, now);
+        _selector.UpdateMetadata(usedSegments);
     }
 
     /// <summary>
@@ -116,10 +113,9 @@ internal sealed class EvictionEngine<TRange, TData>
     /// Called by the processor in Step 2 immediately after each segment is added to storage.
     /// </summary>
     /// <param name="segment">The segment that was just added to storage.</param>
-    /// <param name="now">The current UTC timestamp at the time of storage.</param>
-    public void InitializeSegment(CachedSegment<TRange, TData> segment, DateTime now)
+    public void InitializeSegment(CachedSegment<TRange, TData> segment)
     {
-        _selector.InitializeMetadata(segment, now);
+        _selector.InitializeMetadata(segment);
         _policyEvaluator.OnSegmentAdded(segment);
     }
 

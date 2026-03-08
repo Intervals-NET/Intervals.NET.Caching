@@ -152,7 +152,7 @@ Assert.Equal(expectedCount, cache.SegmentCount);
 **VPC.B.3** [Architectural] Each `CacheNormalizationRequest` is processed in the following **fixed sequence**:
 
 1. Update metadata for all `UsedSegments` by delegating to the `EvictionEngine` (`engine.UpdateMetadata` → `selector.UpdateMetadata`)
-2. Store `FetchedData` as new segment(s), if present; call `engine.InitializeSegment(segment, now)` after each store
+2. Store `FetchedData` as new segment(s), if present; call `engine.InitializeSegment(segment)` after each store
 3. Evaluate all Eviction Policies and execute eviction if any policy is exceeded (`engine.EvaluateAndExecute`), only if new data was stored in step 2
 4. Remove evicted segments from storage (`storage.Remove` per segment); call `engine.OnSegmentsRemoved(toRemove)` after all removals
 
@@ -304,19 +304,25 @@ Assert.Equal(expectedCount, cache.SegmentCount);
 
 - Each selector defines its own metadata type (nested `internal sealed class` implementing `IEvictionMetadata`) and stores it on `CachedSegment.EvictionMetadata`
 - The `EvictionEngine` delegates metadata management to the configured selector:
-  - Step 1: calls `engine.UpdateMetadata(usedSegments, now)` → `selector.UpdateMetadata` for each event cycle
-  - Step 2: calls `engine.InitializeSegment(segment, now)` → `selector.InitializeMetadata(segment, now)` immediately after each segment is stored
-- Selectors that require no metadata (e.g., `SmallestFirstEvictionSelector`) implement both methods as no-ops and leave `EvictionMetadata` null
+  - Step 1: calls `engine.UpdateMetadata(usedSegments)` → `selector.UpdateMetadata` for each event cycle
+  - Step 2: calls `engine.InitializeSegment(segment)` → `selector.InitializeMetadata(segment)` immediately after each segment is stored
+- Time-aware selectors (LRU, FIFO) obtain the current timestamp from an injected `TimeProvider`; time-agnostic selectors (SmallestFirst) compute metadata from the segment itself
 
 **VPC.E.4a** [Architectural] Per-segment metadata is initialized when the segment is stored:
 
-- `engine.InitializeSegment(segment, now)` is called by `CacheNormalizationExecutor` immediately after `_storage.Add(segment)`, which in turn calls `selector.InitializeMetadata(segment, now)`
-- Example: `LruMetadata { LastAccessedAt = now }`, `FifoMetadata { CreatedAt = now }`
+- `engine.InitializeSegment(segment)` is called by `CacheNormalizationExecutor` immediately after `_storage.Add(segment)`, which in turn calls `selector.InitializeMetadata(segment)`
+- Example: `LruMetadata { LastAccessedAt = TimeProvider.GetUtcNow().UtcDateTime }`, `FifoMetadata { CreatedAt = TimeProvider.GetUtcNow().UtcDateTime }`, `SmallestFirstMetadata { Span = segment.Range.Span(domain).Value }`
 
 **VPC.E.4b** [Architectural] Per-segment metadata is updated when the segment appears in a `CacheNormalizationRequest`'s `UsedSegments` list:
 
-- `engine.UpdateMetadata(usedSegments, now)` is called by `CacheNormalizationExecutor` at the start of each event cycle, which delegates to `selector.UpdateMetadata(usedSegments, now)`
-- Example: `LruMetadata.LastAccessedAt = now`; FIFO and SmallestFirst selectors perform no-op updates
+- `engine.UpdateMetadata(usedSegments)` is called by `CacheNormalizationExecutor` at the start of each event cycle, which delegates to `selector.UpdateMetadata(usedSegments)`
+- Example: `LruMetadata.LastAccessedAt = TimeProvider.GetUtcNow().UtcDateTime`; FIFO and SmallestFirst selectors perform no-op updates
+
+**VPC.E.4c** [Architectural] Before every `IsWorse` comparison in the sampling loop, `EnsureMetadata` is called on the sampled segment, **guaranteeing valid selector-specific metadata** for all comparisons:
+
+- `SamplingEvictionSelector.TrySelectCandidate` calls `EnsureMetadata(segment)` before passing any segment to `IsWorse`
+- If metadata is null or belongs to a different selector type (e.g., after a runtime selector switch), `EnsureMetadata` creates and attaches the correct metadata — this repair persists permanently on the segment
+- `IsWorse` is always pure: it can safely cast `segment.EvictionMetadata` without null checks or type-mismatch guards
 
 **VPC.E.5** [Architectural] Eviction evaluation and execution are performed **exclusively by the Background Path**, never by the User Path.
 
@@ -373,7 +379,7 @@ VPC invariant groups:
 | VPC.B  | Background Path & Event Processing        | 8     |
 | VPC.C  | Segment Storage & Non-Contiguity          | 6     |
 | VPC.D  | Concurrency                               | 5     |
-| VPC.E  | Eviction                                  | 12    |
+| VPC.E  | Eviction                                  | 13    |
 | VPC.F  | Data Source & I/O                         | 4     |
 
 Shared invariants (S.H, S.J) are in `docs/shared/invariants.md`.

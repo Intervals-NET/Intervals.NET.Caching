@@ -139,45 +139,55 @@ public sealed class LruEvictionSelectorTests
     public void InitializeMetadata_SetsLastAccessedAt()
     {
         // ARRANGE
+        var now = new DateTimeOffset(2025, 6, 1, 12, 0, 0, TimeSpan.Zero);
+        var fakeTime = new FakeTimeProvider(now);
+        var selector = new LruEvictionSelector<int, int>(timeProvider: fakeTime);
         var segment = CreateSegmentRaw(0, 5);
-        var now = DateTime.UtcNow;
 
         // ACT
-        _selector.InitializeMetadata(segment, now);
+        selector.InitializeMetadata(segment);
 
         // ASSERT
         var meta = Assert.IsType<LruEvictionSelector<int, int>.LruMetadata>(segment.EvictionMetadata);
-        Assert.Equal(now, meta.LastAccessedAt);
+        Assert.Equal(now.UtcDateTime, meta.LastAccessedAt);
     }
 
     [Fact]
     public void UpdateMetadata_RefreshesLastAccessedAt()
     {
         // ARRANGE
-        var segment = CreateSegmentWithLastAccess(0, 5, DateTime.UtcNow.AddHours(-1));
-        var newTime = DateTime.UtcNow;
+        var initialTime = new DateTimeOffset(2025, 6, 1, 10, 0, 0, TimeSpan.Zero);
+        var updatedTime = new DateTimeOffset(2025, 6, 1, 12, 0, 0, TimeSpan.Zero);
+        var fakeTime = new FakeTimeProvider(initialTime);
+        var selector = new LruEvictionSelector<int, int>(timeProvider: fakeTime);
 
-        // ACT
-        _selector.UpdateMetadata([segment], newTime);
+        var segment = CreateSegmentRaw(0, 5);
+        selector.InitializeMetadata(segment); // sets LastAccessedAt = initialTime
+
+        // ACT — advance fake clock then update
+        fakeTime.SetUtcNow(updatedTime);
+        selector.UpdateMetadata([segment]);
 
         // ASSERT
         var meta = Assert.IsType<LruEvictionSelector<int, int>.LruMetadata>(segment.EvictionMetadata);
-        Assert.Equal(newTime, meta.LastAccessedAt);
+        Assert.Equal(updatedTime.UtcDateTime, meta.LastAccessedAt);
     }
 
     [Fact]
     public void UpdateMetadata_WithNullMetadata_LazilyInitializesMetadata()
     {
         // ARRANGE — segment has no metadata yet
+        var now = new DateTimeOffset(2025, 6, 1, 12, 0, 0, TimeSpan.Zero);
+        var fakeTime = new FakeTimeProvider(now);
+        var selector = new LruEvictionSelector<int, int>(timeProvider: fakeTime);
         var segment = CreateSegmentRaw(0, 5);
-        var now = DateTime.UtcNow;
 
         // ACT
-        _selector.UpdateMetadata([segment], now);
+        selector.UpdateMetadata([segment]);
 
         // ASSERT — metadata lazily created
         var meta = Assert.IsType<LruEvictionSelector<int, int>.LruMetadata>(segment.EvictionMetadata);
-        Assert.Equal(now, meta.LastAccessedAt);
+        Assert.Equal(now.UtcDateTime, meta.LastAccessedAt);
     }
 
     #endregion
@@ -197,6 +207,22 @@ public sealed class LruEvictionSelectorTests
         return new CachedSegment<int, int>(
             range,
             new ReadOnlyMemory<int>(new int[end - start + 1]));
+    }
+
+    #endregion
+
+    #region Test Doubles
+
+    /// <summary>
+    /// A controllable <see cref="TimeProvider"/> for deterministic timestamp assertions.
+    /// </summary>
+    private sealed class FakeTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        private DateTimeOffset _utcNow = utcNow;
+
+        public void SetUtcNow(DateTimeOffset value) => _utcNow = value;
+
+        public override DateTimeOffset GetUtcNow() => _utcNow;
     }
 
     #endregion

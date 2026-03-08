@@ -19,7 +19,8 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 /// <item><description>
 ///   Iterate up to <c>SampleSize</c> times: pick a random index from the segment list.
 ///   If the segment at that index is immune, skip it and continue.
-///   Otherwise compare it to the current worst candidate using <see cref="IsWorse"/>.
+///   Otherwise call <see cref="EnsureMetadata"/> to guarantee valid metadata, then compare
+///   it to the current worst candidate using <see cref="IsWorse"/>.
 /// </description></item>
 /// <item><description>
 ///   After the loop, return the worst candidate found (if any non-immune segment was reached).
@@ -30,6 +31,14 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 /// The algorithm samples with replacement (the same index may be picked twice). For the
 /// expected sample sizes (16–64) this is acceptable: the probability of collision is low
 /// and avoiding it would require a <c>HashSet</c> allocation per selection call.
+/// </para>
+/// <para><strong>Metadata guarantee:</strong></para>
+/// <para>
+/// Before <see cref="IsWorse"/> is called on any segment, <see cref="EnsureMetadata"/> is
+/// invoked to attach or repair selector-specific metadata. This guarantees that
+/// <see cref="IsWorse"/> always receives segments with valid metadata and never needs to
+/// apply fallback defaults or perform null/type checks.
+/// Repaired metadata persists on the segment — future sampling passes skip the repair.
 /// </para>
 /// <para><strong>Execution Context:</strong> Background Path (single writer thread)</para>
 /// <para><strong>Thread safety:</strong>
@@ -48,17 +57,30 @@ internal abstract class SamplingEvictionSelector<TRange, TData> : IEvictionSelec
     protected int SampleSize { get; }
 
     /// <summary>
+    /// Provides the current UTC time for time-aware selectors (e.g., LRU, FIFO).
+    /// Time-agnostic selectors (e.g., SmallestFirst) may ignore this.
+    /// </summary>
+    protected TimeProvider TimeProvider { get; }
+
+    /// <summary>
     /// Initializes a new <see cref="SamplingEvictionSelector{TRange,TData}"/>.
     /// </summary>
     /// <param name="samplingOptions">
     /// Optional sampling configuration. When <see langword="null"/>,
     /// <see cref="EvictionSamplingOptions.Default"/> is used (SampleSize = 32).
     /// </param>
-    protected SamplingEvictionSelector(EvictionSamplingOptions? samplingOptions = null)
+    /// <param name="timeProvider">
+    /// Optional time provider. When <see langword="null"/>,
+    /// <see cref="TimeProvider.System"/> is used.
+    /// </param>
+    protected SamplingEvictionSelector(
+        EvictionSamplingOptions? samplingOptions = null,
+        TimeProvider? timeProvider = null)
     {
         var options = samplingOptions ?? EvictionSamplingOptions.Default;
         SampleSize = options.SampleSize;
         _random = new Random();
+        TimeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <inheritdoc/>
@@ -66,6 +88,8 @@ internal abstract class SamplingEvictionSelector<TRange, TData> : IEvictionSelec
     /// Randomly samples up to <see cref="SampleSize"/> segments from <paramref name="segments"/>,
     /// skipping any that are in <paramref name="immuneSegments"/>, and returns the worst
     /// candidate according to <see cref="IsWorse"/>.
+    /// Before each comparison, <see cref="EnsureMetadata"/> is called to guarantee the segment
+    /// carries valid selector-specific metadata.
     /// Returns <see langword="false"/> when no eligible candidate is found (all segments are
     /// immune, or the pool is empty).
     /// </remarks>
@@ -98,9 +122,20 @@ internal abstract class SamplingEvictionSelector<TRange, TData> : IEvictionSelec
                 continue;
             }
 
-            if (worst is null || IsWorse(segment, worst))
+            // Guarantee valid metadata before comparison so IsWorse can stay pure.
+            EnsureMetadata(segment);
+
+            if (worst is null)
             {
                 worst = segment;
+            }
+            else
+            {
+                // EnsureMetadata has already been called on worst when it was first selected.
+                if (IsWorse(segment, worst))
+                {
+                    worst = segment;
+                }
             }
         }
 
@@ -116,6 +151,31 @@ internal abstract class SamplingEvictionSelector<TRange, TData> : IEvictionSelec
     }
 
     /// <summary>
+    /// Ensures the segment carries valid selector-specific metadata before it is passed to
+    /// <see cref="IsWorse"/>. If the segment's metadata is <see langword="null"/> or belongs
+    /// to a different selector type, this method creates and attaches the correct metadata.
+    /// </summary>
+    /// <param name="segment">The segment to validate and, if necessary, repair.</param>
+    /// <remarks>
+    /// <para>
+    /// This method is called inside the sampling loop in
+    /// <see cref="TrySelectCandidate"/> before any call to <see cref="IsWorse"/>,
+    /// guaranteeing that <see cref="IsWorse"/> always receives segments with correct metadata.
+    /// </para>
+    /// <para>
+    /// Repaired metadata persists on the segment — subsequent sampling passes will find the
+    /// metadata already in place and skip the repair.
+    /// </para>
+    /// <para>
+    /// Derived selectors implement the repair using whatever context they need:
+    /// time-aware selectors (LRU, FIFO) call <see cref="TimeProvider"/> to obtain the current
+    /// timestamp; segment-derived selectors (SmallestFirst) compute the value from the segment
+    /// itself (e.g., <c>segment.Range.Span(domain).Value</c>).
+    /// </para>
+    /// </remarks>
+    protected abstract void EnsureMetadata(CachedSegment<TRange, TData> segment);
+
+    /// <summary>
     /// Determines whether <paramref name="candidate"/> is a worse eviction choice than
     /// <paramref name="current"/> — i.e., whether <paramref name="candidate"/> should be
     /// preferred for eviction over <paramref name="current"/>.
@@ -127,27 +187,28 @@ internal abstract class SamplingEvictionSelector<TRange, TData> : IEvictionSelec
     /// <paramref name="current"/>; <see langword="false"/> otherwise.
     /// </returns>
     /// <remarks>
-    /// Derived selectors implement strategy-specific comparison:
+    /// <para>
+    /// Both <paramref name="candidate"/> and <paramref name="current"/> are guaranteed to carry
+    /// valid selector-specific metadata when this method is called —
+    /// <see cref="EnsureMetadata"/> has already been invoked on both segments before any
+    /// comparison occurs. Implementations can safely cast
+    /// <see cref="CachedSegment{TRange,TData}.EvictionMetadata"/> without null checks or
+    /// type-mismatch guards.
+    /// </para>
+    /// <para>Derived selectors implement strategy-specific comparison:</para>
     /// <list type="bullet">
     /// <item><description>LRU: <c>candidate.LastAccessedAt &lt; current.LastAccessedAt</c></description></item>
     /// <item><description>FIFO: <c>candidate.CreatedAt &lt; current.CreatedAt</c></description></item>
     /// <item><description>SmallestFirst: <c>candidate.Span &lt; current.Span</c></description></item>
     /// </list>
     /// </remarks>
-    /// TODO: Every implementation of this method will need to cast the metadata to its specific type (e.g., LruMetadata).
-    /// TODO: We have to not only check on null and type match, but also set the default value not only use it for calculations and then trash it.
-    /// TODO: some selectors are okay with trashing default values, but some are calculable, so we have to always fix not aligned segments' metadata.
-    /// TODO: For sure, this have to be done not inside this function, because it is pure, without side effects. This method must accept only correct metadata.
-    /// TODO: the main issue is here - how to set the same metadata default value for all the sampled segments if we call one by one and we can NOT pass the default value as a param? Or we can? But if we pass the default value on the selector creation - it must be readonly and immutable, so this will not work for DateTime-based metadata.
     protected abstract bool IsWorse(
         CachedSegment<TRange, TData> candidate,
         CachedSegment<TRange, TData> current);
 
     /// <inheritdoc/>
-    public abstract void InitializeMetadata(CachedSegment<TRange, TData> segment, DateTime now);
+    public abstract void InitializeMetadata(CachedSegment<TRange, TData> segment);
 
     /// <inheritdoc/>
-    public abstract void UpdateMetadata(
-        IReadOnlyList<CachedSegment<TRange, TData>> usedSegments,
-        DateTime now);
+    public abstract void UpdateMetadata(IReadOnlyList<CachedSegment<TRange, TData>> usedSegments);
 }

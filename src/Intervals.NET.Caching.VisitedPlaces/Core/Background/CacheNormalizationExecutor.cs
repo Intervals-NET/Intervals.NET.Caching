@@ -105,10 +105,8 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
     {
         try
         {
-            var now = DateTime.UtcNow;
-
             // Step 1: Update selector metadata for segments read on the User Path.
-            _evictionEngine.UpdateMetadata(request.UsedSegments, now);
+            _evictionEngine.UpdateMetadata(request.UsedSegments);
             _diagnostics.BackgroundStatisticsUpdated();
 
             // Step 2: Store freshly fetched data (null FetchedChunks means full cache hit — skip).
@@ -128,7 +126,7 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
                     var segment = new CachedSegment<TRange, TData>(chunk.Range.Value, data);
 
                     _storage.Add(segment);
-                    _evictionEngine.InitializeSegment(segment, now);
+                    _evictionEngine.InitializeSegment(segment);
                     _diagnostics.BackgroundSegmentStored();
 
                     justStoredSegments.Add(segment);

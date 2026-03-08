@@ -415,9 +415,9 @@ public sealed class CacheNormalizationExecutorTests
     /// </summary>
     private sealed class ThrowingEvictionSelector : IEvictionSelector<int, int>
     {
-        public void InitializeMetadata(CachedSegment<int, int> segment, DateTime now) { }
+        public void InitializeMetadata(CachedSegment<int, int> segment) { }
 
-        public void UpdateMetadata(IReadOnlyList<CachedSegment<int, int>> usedSegments, DateTime now) { }
+        public void UpdateMetadata(IReadOnlyList<CachedSegment<int, int>> usedSegments) { }
 
         public bool TrySelectCandidate(
             IReadOnlyList<CachedSegment<int, int>> segments,

@@ -106,7 +106,7 @@ There are exactly two execution contexts in VPC (compared to three in SlidingWin
 - Process each `CacheNormalizationRequest` in the fixed sequence: metadata update → storage → eviction evaluation + execution → post-removal notification.
 - Delegate Step 1 (metadata update) to `EvictionEngine.UpdateMetadata`.
 - Delegate segment storage to the Storage Strategy.
-- Call `engine.InitializeSegment(segment, now)` immediately after each new segment is stored (sets up selector metadata and notifies stateful policies).
+- Call `engine.InitializeSegment(segment)` immediately after each new segment is stored (sets up selector metadata and notifies stateful policies).
 - Delegate Step 3+4 (policy evaluation and execution) to `EvictionEngine.EvaluateAndExecute`.
 - Perform all `storage.Remove` calls for the returned eviction candidates (sole storage writer).
 - Call `engine.OnSegmentsRemoved(toRemove)` in bulk after all storage removals complete.
@@ -234,8 +234,9 @@ The Eviction Executor is an **internal implementation detail of `EvictionEngine`
 **Responsibilities**
 - Define, create, and update per-segment eviction metadata.
 - Select the single worst eviction candidate from a random sample of segments via `TrySelectCandidate`.
-- Implement `InitializeMetadata(segment, now)` — attach selector-specific metadata to a newly-stored segment.
-- Implement `UpdateMetadata(usedSegments, now)` — update metadata for segments accessed by the User Path.
+- Implement `InitializeMetadata(segment)` — attach selector-specific metadata to a newly-stored segment; time-aware selectors obtain the current timestamp from an injected `TimeProvider`.
+- Implement `UpdateMetadata(usedSegments)` — update metadata for segments accessed by the User Path.
+- Implement `EnsureMetadata(segment)` — called inside the sampling loop before every `IsWorse` comparison; repairs null or stale metadata so `IsWorse` can stay pure.
 - Skip immune segments inline during sampling (the immune set is passed as a parameter).
 
 **Non-responsibilities**
@@ -248,11 +249,12 @@ The Eviction Executor is an **internal implementation detail of `EvictionEngine`
 - VPC.E.4. Per-segment metadata owned by the Eviction Selector
 - VPC.E.4a. Metadata initialized at storage time via `InitializeMetadata`
 - VPC.E.4b. Metadata updated on `UsedSegments` events via `UpdateMetadata`
+- VPC.E.4c. Metadata guaranteed valid before every `IsWorse` comparison via `EnsureMetadata`
 
 **Components**
-- `LruEvictionSelector<TRange, TData>` — selects worst by `LruMetadata.LastAccessedAt` from a random sample
-- `FifoEvictionSelector<TRange, TData>` — selects worst by `FifoMetadata.CreatedAt` from a random sample
-- `SmallestFirstEvictionSelector<TRange, TData, TDomain>` — selects worst by `Range.Span(domain)` from a random sample; no metadata
+- `LruEvictionSelector<TRange, TData>` — selects worst by `LruMetadata.LastAccessedAt` from a random sample; uses `TimeProvider` for timestamps
+- `FifoEvictionSelector<TRange, TData>` — selects worst by `FifoMetadata.CreatedAt` from a random sample; uses `TimeProvider` for timestamps
+- `SmallestFirstEvictionSelector<TRange, TData, TDomain>` — selects worst by `SmallestFirstMetadata.Span` from a random sample; span pre-cached from `Range.Span(domain)` at initialization
 
 ---
 

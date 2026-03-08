@@ -17,7 +17,7 @@ Component maps describe "what exists"; scenarios describe "what happens". Scenar
 - **RequestedRange** — A range requested by the user.
 - **CachedSegments** — The collection of non-contiguous cached segments currently stored in the cache.
 - **Segment** — A single contiguous range with its associated data, stored in `CachedSegments`.
-- **EvictionMetadata** — Per-segment metadata owned by the configured Eviction Selector (`IEvictionMetadata?` on each `CachedSegment`). Selector-specific: `LruMetadata { LastAccessedAt }`, `FifoMetadata { CreatedAt }`, or null for selectors that need no metadata.
+- **EvictionMetadata** — Per-segment metadata owned by the configured Eviction Selector (`IEvictionMetadata?` on each `CachedSegment`). Selector-specific: `LruMetadata { LastAccessedAt }`, `FifoMetadata { CreatedAt }`, `SmallestFirstMetadata { Span }`. Timestamps are obtained from an injected `TimeProvider`; spans are computed from `Range.Span(domain)`.
 - **CacheNormalizationRequest** — A message published by the User Path to the Background Path after every `GetDataAsync` call. Carries used segment references and any newly fetched data.
 - **IDataSource** — A range-based data source used to fetch data absent from the cache.
 - **EvictionPolicy** — Determines whether eviction should run (e.g., too many segments, too much total span). Multiple policies may be active; eviction triggers when ANY fires. Produces an `IEvictionPressure` object representing the violated constraint.
@@ -68,7 +68,7 @@ Scenarios are grouped by path:
 3. Subrange is read from `S.Data`
 4. Data is returned to the user — `RangeResult.CacheInteraction == FullHit`
 5. A `CacheNormalizationRequest` is published: `{ UsedSegments: [S], FetchedData: null, RequestedRange }`
-6. Background Path calls `engine.UpdateMetadata([S], now)` → `selector.UpdateMetadata(...)` — e.g., LRU selector updates `S.LruMetadata.LastAccessedAt`
+6. Background Path calls `engine.UpdateMetadata([S])` → `selector.UpdateMetadata(...)` — e.g., LRU selector updates `S.LruMetadata.LastAccessedAt`
 
 **Note**: No `IDataSource` call is made. No eviction is triggered on stats-only events (eviction is only evaluated after new data is stored).
 
@@ -87,7 +87,7 @@ Scenarios are grouped by path:
 4. Relevant subranges are read from each contributing segment and assembled in-memory
 5. Data is returned to the user — `RangeResult.CacheInteraction == FullHit`
 6. A `CacheNormalizationRequest` is published: `{ UsedSegments: [S₁, S₂, ...], FetchedData: null, RequestedRange }`
-7. Background Path calls `engine.UpdateMetadata([S₁, S₂, ...], now)` → `selector.UpdateMetadata(...)` for each contributing segment
+7. Background Path calls `engine.UpdateMetadata([S₁, S₂, ...])` → `selector.UpdateMetadata(...)` for each contributing segment
 
 **Note**: Multi-segment assembly is a core VPC capability. The assembled data is never stored as a merged segment (merging is not performed). Each source segment remains independent in `CachedSegments`.
 
@@ -137,8 +137,8 @@ Scenarios are grouped by path:
 
 **Core principle**: The Background Path is the sole writer of cache state. It processes `CacheNormalizationRequest`s in strict FIFO order. No supersession — every request is processed. Each request triggers:
 
-1. **Metadata update** — update per-segment eviction metadata for all used segments by calling `engine.UpdateMetadata(usedSegments, now)` (delegated to `selector.UpdateMetadata`)
-2. **Storage** — store fetched data as new segment(s), if `FetchedData != null`; call `engine.InitializeSegment(segment, now)` for each new segment (initializes selector metadata and notifies stateful policies)
+1. **Metadata update** — update per-segment eviction metadata for all used segments by calling `engine.UpdateMetadata(usedSegments)` (delegated to `selector.UpdateMetadata`)
+2. **Storage** — store fetched data as new segment(s), if `FetchedData != null`; call `engine.InitializeSegment(segment)` for each new segment (initializes selector metadata and notifies stateful policies)
 3. **Eviction evaluation + execution** — call `engine.EvaluateAndExecute(allSegments, justStoredSegments)` if new data was stored; returns list of segments to remove
 4. **Post-removal** — remove returned segments from storage (`storage.Remove`); call `engine.OnSegmentsRemoved(toRemove)` to notify stateful policies
 
@@ -151,8 +151,8 @@ Scenarios are grouped by path:
 
 **Sequence**:
 1. Background Path dequeues the event
-2. `engine.UpdateMetadata([S₁, ...], now)` → `selector.UpdateMetadata(...)` — selector updates metadata for each used segment
-   - LRU: sets `LruMetadata.LastAccessedAt = now` on each
+2. `engine.UpdateMetadata([S₁, ...])` → `selector.UpdateMetadata(...)` — selector updates metadata for each used segment
+   - LRU: sets `LruMetadata.LastAccessedAt` to current time on each
    - FIFO / SmallestFirst: no-op
 3. No storage step (no new data)
 4. No eviction evaluation (eviction is only triggered after storage)
@@ -169,10 +169,10 @@ Scenarios are grouped by path:
 
 **Sequence**:
 1. Background Path dequeues the event
-2. If `UsedSegments` is non-empty: `engine.UpdateMetadata(usedSegments, now)` → `selector.UpdateMetadata(...)`
+2. If `UsedSegments` is non-empty: `engine.UpdateMetadata(usedSegments)` → `selector.UpdateMetadata(...)`
 3. Store `FetchedData` as a new `Segment` in `CachedSegments`
    - Segment is added in sorted order (or appended to the strategy's append buffer)
-   - `engine.InitializeSegment(segment, now)` — e.g., `LruMetadata { LastAccessedAt = now }`, `FifoMetadata { CreatedAt = now }`, or no-op
+   - `engine.InitializeSegment(segment)` — e.g., `LruMetadata { LastAccessedAt = <now> }`, `FifoMetadata { CreatedAt = <now> }`, `SmallestFirstMetadata { Span = <computed> }`, etc.
 4. `engine.EvaluateAndExecute(allSegments, justStored)` — no policy constraint exceeded; returns empty list
 5. Processing complete; cache now has one additional segment
 
@@ -188,8 +188,8 @@ Scenarios are grouped by path:
 
 **Sequence**:
 1. Background Path dequeues the event
-2. If `UsedSegments` is non-empty: `engine.UpdateMetadata(usedSegments, now)` → `selector.UpdateMetadata(...)`
-3. Store `FetchedData` as a new `Segment` in `CachedSegments`; `engine.InitializeSegment(segment, now)` attaches fresh metadata and notifies stateful policies
+2. If `UsedSegments` is non-empty: `engine.UpdateMetadata(usedSegments)` → `selector.UpdateMetadata(...)`
+3. Store `FetchedData` as a new `Segment` in `CachedSegments`; `engine.InitializeSegment(segment)` attaches fresh metadata and notifies stateful policies
 4. `engine.EvaluateAndExecute(allSegments, justStored)` — at least one policy fires:
    - Executor builds immune set from `justStoredSegments`
    - Executor loops: `selector.TrySelectCandidate(allSegments, immune, out candidate)` → `pressure.Reduce(candidate)` until satisfied
@@ -209,10 +209,10 @@ Scenarios are grouped by path:
 
 **Sequence**:
 1. Background Path dequeues the event
-2. Update metadata for used segments: `engine.UpdateMetadata(usedSegments, now)`
+2. Update metadata for used segments: `engine.UpdateMetadata(usedSegments)`
 3. Store each gap range as a separate new `Segment` in `CachedSegments`
    - Each stored segment is added independently; no merging with existing segments
-   - `engine.InitializeSegment(segment, now)` is called for each new segment
+   - `engine.InitializeSegment(segment)` is called for each new segment
 4. `engine.EvaluateAndExecute(allSegments, justStoredSegments)` (after all new segments are stored)
 5. If any policy fires: processor removes returned segments; calls `engine.OnSegmentsRemoved(toRemove)`
 
@@ -328,7 +328,7 @@ Scenarios are grouped by path:
 **Trigger**: Count exceeds limit after storing `S₄`
 
 **Sequence**:
-1. `S₄` stored; `engine.InitializeSegment(S₄, now)` attaches `FifoMetadata { CreatedAt = now }`; immunity applies to `S₄`
+1. `S₄` stored; `engine.InitializeSegment(S₄)` attaches `FifoMetadata { CreatedAt = <now> }`; immunity applies to `S₄`
 2. `engine.EvaluateAndExecute`: executor builds immune set `{S₄}`; FIFO Selector samples eligible candidates `{S₁, S₂, S₃}` and selects the one with the smallest `CreatedAt` — `S₁(t=1)`
 3. Processor removes `S₁` from storage; count returns to limit
 
@@ -340,7 +340,7 @@ Scenarios are grouped by path:
 **Trigger**: Count exceeds limit after storing `S₄`
 
 **Sequence**:
-1. `S₄` stored; `engine.InitializeSegment(S₄, now)` attaches `LruMetadata { LastAccessedAt = now }`; immunity applies to `S₄`
+1. `S₄` stored; `engine.InitializeSegment(S₄)` attaches `LruMetadata { LastAccessedAt = <now> }`; immunity applies to `S₄`
 2. `engine.EvaluateAndExecute`: executor builds immune set `{S₄}`; LRU Selector samples eligible candidates `{S₁, S₂, S₃}` and selects the one with the smallest `LastAccessedAt` — `S₂(t=1)`
 3. Processor removes `S₂` from storage; count returns to limit
 

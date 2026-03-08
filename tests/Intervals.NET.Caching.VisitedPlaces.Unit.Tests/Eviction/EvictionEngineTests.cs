@@ -103,12 +103,12 @@ public sealed class EvictionEngineTests
         var segment = CreateSegment(0, 9);
 
         // Initialize metadata so the segment has LRU state to update
-        engine.InitializeSegment(segment, DateTime.UtcNow.AddSeconds(-10));
+        engine.InitializeSegment(segment);
 
         var beforeUpdate = DateTime.UtcNow;
 
         // ACT
-        engine.UpdateMetadata([segment], DateTime.UtcNow);
+        engine.UpdateMetadata([segment]);
 
         // ASSERT — LastAccessedAt must have been refreshed
         var meta = Assert.IsType<LruEvictionSelector<int, int>.LruMetadata>(segment.EvictionMetadata);
@@ -122,7 +122,7 @@ public sealed class EvictionEngineTests
         var engine = CreateEngine(maxSegmentCount: 100);
 
         // ACT & ASSERT
-        var exception = Record.Exception(() => engine.UpdateMetadata([], DateTime.UtcNow));
+        var exception = Record.Exception(() => engine.UpdateMetadata([]));
         Assert.Null(exception);
     }
 
@@ -138,7 +138,7 @@ public sealed class EvictionEngineTests
         var segment = CreateSegment(0, 9);
 
         // ACT
-        engine.InitializeSegment(segment, DateTime.UtcNow);
+        engine.InitializeSegment(segment);
 
         // ASSERT — LRU selector must have set metadata
         Assert.IsType<LruEvictionSelector<int, int>.LruMetadata>(segment.EvictionMetadata);
@@ -161,7 +161,7 @@ public sealed class EvictionEngineTests
         Assert.Equal(0, _diagnostics.EvictionTriggered);
 
         // ACT
-        engine.InitializeSegment(segment, DateTime.UtcNow);
+        engine.InitializeSegment(segment);
 
         // ASSERT — stateful policy now knows about the segment → evaluates as exceeded
         var toRemove = engine.EvaluateAndExecute([segment], [segment]); // immune → empty result
@@ -180,7 +180,7 @@ public sealed class EvictionEngineTests
         // ARRANGE — limit 10; only 3 segments
         var engine = CreateEngine(maxSegmentCount: 10);
         var segments = CreateSegments(3);
-        foreach (var seg in segments) engine.InitializeSegment(seg, DateTime.UtcNow);
+        foreach (var seg in segments) engine.InitializeSegment(seg);
 
         // ACT
         var toRemove = engine.EvaluateAndExecute(segments, []);
@@ -195,7 +195,7 @@ public sealed class EvictionEngineTests
         // ARRANGE
         var engine = CreateEngine(maxSegmentCount: 10);
         var segments = CreateSegments(3);
-        foreach (var seg in segments) engine.InitializeSegment(seg, DateTime.UtcNow);
+        foreach (var seg in segments) engine.InitializeSegment(seg);
 
         // ACT
         engine.EvaluateAndExecute(segments, []);
@@ -271,7 +271,7 @@ public sealed class EvictionEngineTests
         var seg2 = CreateSegment(20, 29); // span 10
         var seg3 = CreateSegment(40, 49); // span 10
         foreach (var s in new[] { seg1, seg2, seg3 })
-            engine.InitializeSegment(s, DateTime.UtcNow);
+            engine.InitializeSegment(s);
 
         var segments = new[] { seg1, seg2, seg3 };
 
@@ -303,8 +303,8 @@ public sealed class EvictionEngineTests
 
         var seg1 = CreateSegment(0, 9);   // span 10
         var seg2 = CreateSegment(20, 29); // span 10 → total 20 > 15
-        engine.InitializeSegment(seg1, DateTime.UtcNow);
-        engine.InitializeSegment(seg2, DateTime.UtcNow);
+        engine.InitializeSegment(seg1);
+        engine.InitializeSegment(seg2);
 
         // Confirm exceeded before removal
         var toRemove = engine.EvaluateAndExecute([seg1, seg2], [seg1, seg2]); // both immune → returns []
@@ -358,10 +358,9 @@ public sealed class EvictionEngineTests
         int count)
     {
         var segments = CreateSegments(count);
-        var now = DateTime.UtcNow;
         foreach (var seg in segments)
         {
-            engine.InitializeSegment(seg, now);
+            engine.InitializeSegment(seg);
         }
         return segments;
     }

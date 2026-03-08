@@ -83,24 +83,24 @@ public interface IEvictionSelector<TRange, TData>
     /// Called by <c>CacheNormalizationExecutor</c> immediately after each segment is added to storage.
     /// </summary>
     /// <param name="segment">The newly stored segment to initialize metadata for.</param>
-    /// <param name="now">The current UTC timestamp at the time of storage.</param>
     /// <remarks>
     /// Selectors that require no metadata (e.g., <c>SmallestFirstEvictionSelector</c>)
     /// implement this as a no-op and leave <see cref="CachedSegment{TRange,TData}.EvictionMetadata"/> null.
+    /// Time-aware selectors (e.g., <c>LruEvictionSelector</c>, <c>FifoEvictionSelector</c>) obtain
+    /// the current timestamp internally via an injected <see cref="TimeProvider"/>.
     /// </remarks>
-    /// TODO: get rid of the now parameter to make the interface is really common, even for those selectors, that do not use datetime in metadata.
-    void InitializeMetadata(CachedSegment<TRange, TData> segment, DateTime now);
+    void InitializeMetadata(CachedSegment<TRange, TData> segment);
 
     /// <summary>
     /// Updates selector-specific metadata on segments that were accessed on the User Path.
     /// Called by <c>CacheNormalizationExecutor</c> in Step 1 of each background request cycle.
     /// </summary>
     /// <param name="usedSegments">The segments that were read during the User Path request.</param>
-    /// <param name="now">The current UTC timestamp at the time of the background event.</param>
     /// <remarks>
     /// Selectors whose metadata is immutable after creation (e.g., <c>FifoEvictionSelector</c>)
     /// implement this as a no-op. Selectors that track access time (e.g., <c>LruEvictionSelector</c>)
-    /// update <c>LastAccessedAt</c> on each segment's metadata.
+    /// update <c>LastAccessedAt</c> on each segment's metadata using an injected
+    /// <see cref="TimeProvider"/>.
     /// </remarks>
-    void UpdateMetadata(IReadOnlyList<CachedSegment<TRange, TData>> usedSegments, DateTime now);
+    void UpdateMetadata(IReadOnlyList<CachedSegment<TRange, TData>> usedSegments);
 }
