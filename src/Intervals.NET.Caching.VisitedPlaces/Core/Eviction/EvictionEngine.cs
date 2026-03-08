@@ -37,8 +37,8 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 /// <para>
 /// The engine fires eviction-specific diagnostics:
 /// <see cref="IVisitedPlacesCacheDiagnostics.EvictionEvaluated"/>,
-    /// <see cref="IVisitedPlacesCacheDiagnostics.EvictionTriggered"/>,
-    /// <see cref="IVisitedPlacesCacheDiagnostics.EvictionExecuted"/>.
+/// <see cref="IVisitedPlacesCacheDiagnostics.EvictionTriggered"/>,
+/// <see cref="IVisitedPlacesCacheDiagnostics.EvictionExecuted"/>.
 /// The processor retains ownership of storage-level diagnostics
 /// (<c>BackgroundSegmentStored</c>, <c>BackgroundStatisticsUpdated</c>, etc.).
 /// </para>
