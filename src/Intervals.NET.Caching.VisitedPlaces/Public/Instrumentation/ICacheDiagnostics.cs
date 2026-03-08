@@ -67,29 +67,29 @@ public interface ICacheDiagnostics
     // ============================================================================
 
     /// <summary>
-    /// Records a background event received and started processing by the Background Path.
-    /// Location: BackgroundEventProcessor.ProcessEventAsync (entry)
+    /// Records a normalization request received and started processing by the Background Path.
+    /// Location: CacheNormalizationExecutor.ExecuteAsync (entry)
     /// Related: Invariant VPC.B.2
     /// </summary>
-    void BackgroundEventReceived();
+    void NormalizationRequestReceived();
 
     /// <summary>
-    /// Records a background event fully processed by the Background Path (all 4 steps completed).
-    /// Location: BackgroundEventProcessor.ProcessEventAsync (exit)
+    /// Records a normalization request fully processed by the Background Path (all 4 steps completed).
+    /// Location: CacheNormalizationExecutor.ExecuteAsync (exit)
     /// Related: Invariant VPC.B.3
     /// </summary>
-    void BackgroundEventProcessed();
+    void NormalizationRequestProcessed();
 
     /// <summary>
     /// Records statistics updated for used segments (Background Path step 1).
-    /// Location: BackgroundEventProcessor.ProcessEventAsync (step 1)
+    /// Location: CacheNormalizationExecutor.ExecuteAsync (step 1)
     /// Related: Invariant VPC.E.4b
     /// </summary>
     void BackgroundStatisticsUpdated();
 
     /// <summary>
     /// Records a new segment stored in the cache (Background Path step 2).
-    /// Location: BackgroundEventProcessor.ProcessEventAsync (step 2)
+    /// Location: CacheNormalizationExecutor.ExecuteAsync (step 2)
     /// Related: Invariant VPC.B.3, VPC.C.1
     /// </summary>
     void BackgroundSegmentStored();
@@ -101,21 +101,21 @@ public interface ICacheDiagnostics
     /// <summary>
     /// Records an eviction evaluation pass (Background Path step 3).
     /// Called once per storage step, regardless of whether any evaluator fired.
-    /// Location: BackgroundEventProcessor.ProcessEventAsync (step 3)
+    /// Location: CacheNormalizationExecutor.ExecuteAsync (step 3)
     /// Related: Invariant VPC.E.1a
     /// </summary>
     void EvictionEvaluated();
 
     /// <summary>
     /// Records that at least one eviction evaluator fired and eviction will be executed.
-    /// Location: BackgroundEventProcessor.ProcessEventAsync (step 3, at least one evaluator fired)
+    /// Location: CacheNormalizationExecutor.ExecuteAsync (step 3, at least one evaluator fired)
     /// Related: Invariant VPC.E.1a, VPC.E.2a
     /// </summary>
     void EvictionTriggered();
 
     /// <summary>
     /// Records a completed eviction execution pass (Background Path step 4).
-    /// Location: BackgroundEventProcessor.ProcessEventAsync (step 4)
+    /// Location: CacheNormalizationExecutor.ExecuteAsync (step 4)
     /// Related: Invariant VPC.E.2a
     /// </summary>
     void EvictionExecuted();
@@ -133,10 +133,10 @@ public interface ICacheDiagnostics
     // ============================================================================
 
     /// <summary>
-    /// Records an unhandled exception that occurred during background event processing.
+    /// Records an unhandled exception that occurred during normalization request processing.
     /// The background loop swallows the exception after reporting it here to prevent crashes.
-    /// Location: BackgroundEventProcessor.ProcessEventAsync (catch)
+    /// Location: CacheNormalizationExecutor.ExecuteAsync (catch)
     /// </summary>
     /// <param name="ex">The exception that was thrown.</param>
-    void BackgroundEventProcessingFailed(Exception ex);
+    void NormalizationRequestProcessingFailed(Exception ex);
 }

@@ -18,11 +18,11 @@ Component maps describe "what exists"; scenarios describe "what happens". Scenar
 - **CachedSegments** — The collection of non-contiguous cached segments currently stored in the cache.
 - **Segment** — A single contiguous range with its associated data, stored in `CachedSegments`.
 - **EvictionMetadata** — Per-segment metadata owned by the configured Eviction Selector (`IEvictionMetadata?` on each `CachedSegment`). Selector-specific: `LruMetadata { LastAccessedAt }`, `FifoMetadata { CreatedAt }`, or null for selectors that need no metadata.
-- **BackgroundEvent** — A message published by the User Path to the Background Path after every `GetDataAsync` call. Carries used segment references and any newly fetched data.
+- **CacheNormalizationRequest** — A message published by the User Path to the Background Path after every `GetDataAsync` call. Carries used segment references and any newly fetched data.
 - **IDataSource** — A range-based data source used to fetch data absent from the cache.
 - **EvictionPolicy** — Determines whether eviction should run (e.g., too many segments, too much total span). Multiple policies may be active; eviction triggers when ANY fires. Produces an `IEvictionPressure` object representing the violated constraint.
 - **EvictionSelector** — Defines, creates, and updates per-segment eviction metadata. Selects the single worst eviction candidate from a random sample of segments (O(SampleSize)) via `TrySelectCandidate`. Strategies: LRU, FIFO, smallest-first, etc.
-- **EvictionEngine** — Facade encapsulating the full eviction subsystem. Exposed to `BackgroundEventProcessor` as its sole eviction dependency. Orchestrates: selector metadata management (`UpdateMetadata`, `InitializeSegment`), policy evaluation, and the constraint satisfaction loop (`EvaluateAndExecute`). Fires eviction-specific diagnostics. Has no storage reference.
+- **EvictionEngine** — Facade encapsulating the full eviction subsystem. Exposed to `CacheNormalizationExecutor` as its sole eviction dependency. Orchestrates: selector metadata management (`UpdateMetadata`, `InitializeSegment`), policy evaluation, and the constraint satisfaction loop (`EvaluateAndExecute`). Fires eviction-specific diagnostics. Has no storage reference.
 - **EvictionExecutor** — Internal component of `EvictionEngine`. Executes the constraint satisfaction loop: builds the immune set from just-stored segments, repeatedly calls `selector.TrySelectCandidate(allSegments, immune, out candidate)` and calls `pressure.Reduce(candidate)` until all pressures are satisfied or no eligible candidates remain. Returns the removal list to the engine.
 
 ---
@@ -50,7 +50,7 @@ Scenarios are grouped by path:
 2. User Path checks `CachedSegments` — no segment covers any part of `RequestedRange`
 3. User Path fetches `RequestedRange` from `IDataSource` synchronously (unavoidable — user request must be served immediately)
 4. Data is returned to the user — `RangeResult.CacheInteraction == FullMiss`
-5. A `BackgroundEvent` is published (fire-and-forget): `{ UsedSegments: [], FetchedData: <fetched range data>, RequestedRange }`
+5. A `CacheNormalizationRequest` is published (fire-and-forget): `{ UsedSegments: [], FetchedData: <fetched range data>, RequestedRange }`
 6. Background Path stores the fetched data as a new `Segment` in `CachedSegments`
 
 **Note**: The User Path does not store data itself. Cache writes are exclusively the responsibility of the Background Path (Single-Writer rule, Invariant VPC.A.1).
@@ -67,7 +67,7 @@ Scenarios are grouped by path:
 2. User Path finds `S` via binary search (or stride index + linear scan, strategy-dependent)
 3. Subrange is read from `S.Data`
 4. Data is returned to the user — `RangeResult.CacheInteraction == FullHit`
-5. A `BackgroundEvent` is published: `{ UsedSegments: [S], FetchedData: null, RequestedRange }`
+5. A `CacheNormalizationRequest` is published: `{ UsedSegments: [S], FetchedData: null, RequestedRange }`
 6. Background Path calls `engine.UpdateMetadata([S], now)` → `selector.UpdateMetadata(...)` — e.g., LRU selector updates `S.LruMetadata.LastAccessedAt`
 
 **Note**: No `IDataSource` call is made. No eviction is triggered on stats-only events (eviction is only evaluated after new data is stored).
@@ -86,7 +86,7 @@ Scenarios are grouped by path:
 3. User Path verifies that the union of intersecting segments covers `RequestedRange` completely (no gaps within `RequestedRange`)
 4. Relevant subranges are read from each contributing segment and assembled in-memory
 5. Data is returned to the user — `RangeResult.CacheInteraction == FullHit`
-6. A `BackgroundEvent` is published: `{ UsedSegments: [S₁, S₂, ...], FetchedData: null, RequestedRange }`
+6. A `CacheNormalizationRequest` is published: `{ UsedSegments: [S₁, S₂, ...], FetchedData: null, RequestedRange }`
 7. Background Path calls `engine.UpdateMetadata([S₁, S₂, ...], now)` → `selector.UpdateMetadata(...)` for each contributing segment
 
 **Note**: Multi-segment assembly is a core VPC capability. The assembled data is never stored as a merged segment (merging is not performed). Each source segment remains independent in `CachedSegments`.
@@ -105,7 +105,7 @@ Scenarios are grouped by path:
 3. Each gap sub-range is synchronously fetched from `IDataSource`
 4. Cached data (from existing segments) and newly fetched data (from gaps) are assembled in-memory
 5. Data is returned to the user — `RangeResult.CacheInteraction == PartialHit`
-6. A `BackgroundEvent` is published: `{ UsedSegments: [S₁, ...], FetchedData: <gap data>, RequestedRange }`
+6. A `CacheNormalizationRequest` is published: `{ UsedSegments: [S₁, ...], FetchedData: <gap data>, RequestedRange }`
 7. Background Path updates statistics for used segments AND stores gap data as new segment(s)
 
 **Note**: The User Path performs only the minimum fetches needed to serve `RequestedRange`. In-memory assembly is local only — no cache writes occur on the user thread.
@@ -124,7 +124,7 @@ Scenarios are grouped by path:
 2. User Path finds no intersecting segments
 3. `RequestedRange` is synchronously fetched from `IDataSource`
 4. Data is returned to the user — `RangeResult.CacheInteraction == FullMiss`
-5. A `BackgroundEvent` is published: `{ UsedSegments: [], FetchedData: <fetched range data>, RequestedRange }`
+5. A `CacheNormalizationRequest` is published: `{ UsedSegments: [], FetchedData: <fetched range data>, RequestedRange }`
 6. Background Path stores fetched data as a new `Segment` in `CachedSegments`
 
 **Key difference from SWC**: Unlike SlidingWindowCache, VPC does NOT discard existing cached segments on a full miss. Existing segments remain intact; only the new data for `RequestedRange` is added. There is no contiguity requirement enforcing a full cache reset.
@@ -135,7 +135,7 @@ Scenarios are grouped by path:
 
 ## II. Background Path Scenarios
 
-**Core principle**: The Background Path is the sole writer of cache state. It processes `BackgroundEvent`s in strict FIFO order. No supersession — every event is processed. Each event triggers:
+**Core principle**: The Background Path is the sole writer of cache state. It processes `CacheNormalizationRequest`s in strict FIFO order. No supersession — every request is processed. Each request triggers:
 
 1. **Metadata update** — update per-segment eviction metadata for all used segments by calling `engine.UpdateMetadata(usedSegments, now)` (delegated to `selector.UpdateMetadata`)
 2. **Storage** — store fetched data as new segment(s), if `FetchedData != null`; call `engine.InitializeSegment(segment, now)` for each new segment (initializes selector metadata and notifies stateful policies)

@@ -91,7 +91,7 @@ public sealed class CacheDataSourceInteractionTests : IAsyncDisposable
         Assert.Equal(1, _diagnostics.UserRequestFullCacheMiss);
         Assert.Equal(0, _diagnostics.UserRequestFullCacheHit);
         Assert.Equal(0, _diagnostics.UserRequestPartialCacheHit);
-        Assert.Equal(1, _diagnostics.BackgroundEventProcessed);
+        Assert.Equal(1, _diagnostics.NormalizationRequestProcessed);
         Assert.True(_diagnostics.BackgroundSegmentStored >= 1);
     }
 

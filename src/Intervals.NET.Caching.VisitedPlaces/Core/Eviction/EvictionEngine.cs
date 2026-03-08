@@ -31,7 +31,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 /// <para>
 /// The engine holds no reference to <c>ISegmentStorage</c>. All storage mutations
 /// (<c>Add</c>, <c>Remove</c>) remain exclusively in
-/// <see cref="Background.BackgroundEventProcessor{TRange,TData,TDomain}"/> (Invariant VPC.A.10).
+/// <see cref="Background.CacheNormalizationExecutor{TRange,TData,TDomain}"/> (Invariant VPC.A.10).
 /// </para>
 /// <para><strong>Diagnostics split:</strong></para>
 /// <para>

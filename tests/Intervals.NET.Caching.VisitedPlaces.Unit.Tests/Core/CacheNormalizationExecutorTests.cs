@@ -12,32 +12,32 @@ using Intervals.NET.Domain.Default.Numeric;
 namespace Intervals.NET.Caching.VisitedPlaces.Unit.Tests.Core;
 
 /// <summary>
-/// Unit tests for <see cref="BackgroundEventProcessor{TRange,TData,TDomain}"/>.
+/// Unit tests for <see cref="CacheNormalizationExecutor{TRange,TData,TDomain}"/>.
 /// Verifies the four-step Background Path sequence:
 /// (1) statistics update, (2) store data, (3) evaluate eviction, (4) execute eviction.
 /// </summary>
-public sealed class BackgroundEventProcessorTests
+public sealed class CacheNormalizationExecutorTests
 {
     private readonly SnapshotAppendBufferStorage<int, int> _storage = new();
     private readonly EventCounterCacheDiagnostics _diagnostics = new();
 
-    #region ProcessEventAsync — Step 1: Statistics Update
+    #region ExecuteAsync — Step 1: Statistics Update
 
     [Fact]
-    public async Task ProcessEventAsync_WithUsedSegments_UpdatesMetadata()
+    public async Task ExecuteAsync_WithUsedSegments_UpdatesMetadata()
     {
         // ARRANGE
-        var processor = CreateProcessor(maxSegmentCount: 100);
+        var executor = CreateExecutor(maxSegmentCount: 100);
         var segment = AddToStorage(_storage, 0, 9);
         var beforeAccess = DateTime.UtcNow;
 
-        var evt = CreateEvent(
+        var request = CreateRequest(
             requestedRange: TestHelpers.CreateRange(0, 9),
             usedSegments: [segment],
             fetchedChunks: null);
 
         // ACT
-        await processor.ProcessEventAsync(evt, CancellationToken.None);
+        await executor.ExecuteAsync(request, CancellationToken.None);
 
         // ASSERT — LRU metadata updated (LastAccessedAt refreshed to >= beforeAccess)
         var meta = Assert.IsType<LruEvictionSelector<int, int>.LruMetadata>(segment.EvictionMetadata);
@@ -46,19 +46,19 @@ public sealed class BackgroundEventProcessorTests
     }
 
     [Fact]
-    public async Task ProcessEventAsync_WithNoUsedSegments_StillFiresStatisticsUpdatedDiagnostic()
+    public async Task ExecuteAsync_WithNoUsedSegments_StillFiresStatisticsUpdatedDiagnostic()
     {
         // ARRANGE — full miss: no used segments, but fetched chunks present
-        var processor = CreateProcessor(maxSegmentCount: 100);
+        var executor = CreateExecutor(maxSegmentCount: 100);
         var chunk = CreateChunk(0, 9);
 
-        var evt = CreateEvent(
+        var request = CreateRequest(
             requestedRange: TestHelpers.CreateRange(0, 9),
             usedSegments: [],
             fetchedChunks: [chunk]);
 
         // ACT
-        await processor.ProcessEventAsync(evt, CancellationToken.None);
+        await executor.ExecuteAsync(request, CancellationToken.None);
 
         // ASSERT — statistics update still fires even with empty usedSegments
         Assert.Equal(1, _diagnostics.BackgroundStatisticsUpdated);
@@ -66,22 +66,22 @@ public sealed class BackgroundEventProcessorTests
 
     #endregion
 
-    #region ProcessEventAsync — Step 2: Store Data
+    #region ExecuteAsync — Step 2: Store Data
 
     [Fact]
-    public async Task ProcessEventAsync_WithFetchedChunks_StoresSegmentAndFiresDiagnostic()
+    public async Task ExecuteAsync_WithFetchedChunks_StoresSegmentAndFiresDiagnostic()
     {
         // ARRANGE
-        var processor = CreateProcessor(maxSegmentCount: 100);
+        var executor = CreateExecutor(maxSegmentCount: 100);
         var chunk = CreateChunk(0, 9);
 
-        var evt = CreateEvent(
+        var request = CreateRequest(
             requestedRange: TestHelpers.CreateRange(0, 9),
             usedSegments: [],
             fetchedChunks: [chunk]);
 
         // ACT
-        await processor.ProcessEventAsync(evt, CancellationToken.None);
+        await executor.ExecuteAsync(request, CancellationToken.None);
 
         // ASSERT — segment stored in storage
         Assert.Equal(1, _storage.Count);
@@ -89,20 +89,20 @@ public sealed class BackgroundEventProcessorTests
     }
 
     [Fact]
-    public async Task ProcessEventAsync_WithMultipleFetchedChunks_StoresAllSegments()
+    public async Task ExecuteAsync_WithMultipleFetchedChunks_StoresAllSegments()
     {
         // ARRANGE
-        var processor = CreateProcessor(maxSegmentCount: 100);
+        var executor = CreateExecutor(maxSegmentCount: 100);
         var chunk1 = CreateChunk(0, 9);
         var chunk2 = CreateChunk(20, 29);
 
-        var evt = CreateEvent(
+        var request = CreateRequest(
             requestedRange: TestHelpers.CreateRange(0, 29),
             usedSegments: [],
             fetchedChunks: [chunk1, chunk2]);
 
         // ACT
-        await processor.ProcessEventAsync(evt, CancellationToken.None);
+        await executor.ExecuteAsync(request, CancellationToken.None);
 
         // ASSERT
         Assert.Equal(2, _storage.Count);
@@ -110,19 +110,19 @@ public sealed class BackgroundEventProcessorTests
     }
 
     [Fact]
-    public async Task ProcessEventAsync_WithNullFetchedChunks_DoesNotStoreAnySegment()
+    public async Task ExecuteAsync_WithNullFetchedChunks_DoesNotStoreAnySegment()
     {
         // ARRANGE — full cache hit: FetchedChunks is null
-        var processor = CreateProcessor(maxSegmentCount: 100);
+        var executor = CreateExecutor(maxSegmentCount: 100);
         var segment = AddToStorage(_storage, 0, 9);
 
-        var evt = CreateEvent(
+        var request = CreateRequest(
             requestedRange: TestHelpers.CreateRange(0, 9),
             usedSegments: [segment],
             fetchedChunks: null);
 
         // ACT
-        await processor.ProcessEventAsync(evt, CancellationToken.None);
+        await executor.ExecuteAsync(request, CancellationToken.None);
 
         // ASSERT — storage unchanged (still only the pre-existing segment)
         Assert.Equal(1, _storage.Count);
@@ -130,20 +130,20 @@ public sealed class BackgroundEventProcessorTests
     }
 
     [Fact]
-    public async Task ProcessEventAsync_WithChunkWithNullRange_SkipsStoringThatChunk()
+    public async Task ExecuteAsync_WithChunkWithNullRange_SkipsStoringThatChunk()
     {
         // ARRANGE — chunk with null Range means data is out of bounds
-        var processor = CreateProcessor(maxSegmentCount: 100);
+        var executor = CreateExecutor(maxSegmentCount: 100);
         var validChunk = CreateChunk(0, 9);
         var nullRangeChunk = new RangeChunk<int, int>(null, []);
 
-        var evt = CreateEvent(
+        var request = CreateRequest(
             requestedRange: TestHelpers.CreateRange(0, 9),
             usedSegments: [],
             fetchedChunks: [nullRangeChunk, validChunk]);
 
         // ACT
-        await processor.ProcessEventAsync(evt, CancellationToken.None);
+        await executor.ExecuteAsync(request, CancellationToken.None);
 
         // ASSERT — only the valid chunk is stored
         Assert.Equal(1, _storage.Count);
@@ -152,22 +152,22 @@ public sealed class BackgroundEventProcessorTests
 
     #endregion
 
-    #region ProcessEventAsync — Step 3: Evaluate Eviction
+    #region ExecuteAsync — Step 3: Evaluate Eviction
 
     [Fact]
-    public async Task ProcessEventAsync_WhenStorageBelowLimit_DoesNotTriggerEviction()
+    public async Task ExecuteAsync_WhenStorageBelowLimit_DoesNotTriggerEviction()
     {
         // ARRANGE — limit is 5, only 1 stored → policy does not fire
-        var processor = CreateProcessor(maxSegmentCount: 5);
+        var executor = CreateExecutor(maxSegmentCount: 5);
         var chunk = CreateChunk(0, 9);
 
-        var evt = CreateEvent(
+        var request = CreateRequest(
             requestedRange: TestHelpers.CreateRange(0, 9),
             usedSegments: [],
             fetchedChunks: [chunk]);
 
         // ACT
-        await processor.ProcessEventAsync(evt, CancellationToken.None);
+        await executor.ExecuteAsync(request, CancellationToken.None);
 
         // ASSERT — evaluation ran but eviction was NOT triggered
         Assert.Equal(1, _diagnostics.EvictionEvaluated);
@@ -176,22 +176,22 @@ public sealed class BackgroundEventProcessorTests
     }
 
     [Fact]
-    public async Task ProcessEventAsync_WhenStorageExceedsLimit_TriggersEviction()
+    public async Task ExecuteAsync_WhenStorageExceedsLimit_TriggersEviction()
     {
         // ARRANGE — pre-populate storage with 2 segments, limit is 2; adding one more triggers eviction
-        var processor = CreateProcessor(maxSegmentCount: 2);
+        var executor = CreateExecutor(maxSegmentCount: 2);
         AddToStorage(_storage, 0, 9);
         AddToStorage(_storage, 20, 29);
 
         var chunk = CreateChunk(40, 49);  // This will push count to 3 > 2
 
-        var evt = CreateEvent(
+        var request = CreateRequest(
             requestedRange: TestHelpers.CreateRange(40, 49),
             usedSegments: [],
             fetchedChunks: [chunk]);
 
         // ACT
-        await processor.ProcessEventAsync(evt, CancellationToken.None);
+        await executor.ExecuteAsync(request, CancellationToken.None);
 
         // ASSERT — eviction triggered and executed
         Assert.Equal(1, _diagnostics.EvictionEvaluated);
@@ -202,19 +202,19 @@ public sealed class BackgroundEventProcessorTests
     }
 
     [Fact]
-    public async Task ProcessEventAsync_WithNullFetchedChunks_SkipsEvictionEvaluation()
+    public async Task ExecuteAsync_WithNullFetchedChunks_SkipsEvictionEvaluation()
     {
         // ARRANGE — full cache hit: no new data stored → no eviction evaluation
-        var processor = CreateProcessor(maxSegmentCount: 1);
+        var executor = CreateExecutor(maxSegmentCount: 1);
         var segment = AddToStorage(_storage, 0, 9);
 
-        var evt = CreateEvent(
+        var request = CreateRequest(
             requestedRange: TestHelpers.CreateRange(0, 9),
             usedSegments: [segment],
             fetchedChunks: null);
 
         // ACT
-        await processor.ProcessEventAsync(evt, CancellationToken.None);
+        await executor.ExecuteAsync(request, CancellationToken.None);
 
         // ASSERT — steps 3 & 4 skipped entirely
         Assert.Equal(0, _diagnostics.EvictionEvaluated);
@@ -224,24 +224,24 @@ public sealed class BackgroundEventProcessorTests
 
     #endregion
 
-    #region ProcessEventAsync — Step 4: Eviction Execution
+    #region ExecuteAsync — Step 4: Eviction Execution
 
     [Fact]
-    public async Task ProcessEventAsync_Eviction_JustStoredSegmentIsImmune()
+    public async Task ExecuteAsync_Eviction_JustStoredSegmentIsImmune()
     {
         // ARRANGE — only 1 slot allowed; the just-stored segment should survive
-        var processor = CreateProcessor(maxSegmentCount: 1);
+        var executor = CreateExecutor(maxSegmentCount: 1);
         var oldSeg = AddToStorage(_storage, 0, 9);
 
         var chunk = CreateChunk(20, 29);  // will be stored → count=2 > 1 → eviction
 
-        var evt = CreateEvent(
+        var request = CreateRequest(
             requestedRange: TestHelpers.CreateRange(20, 29),
             usedSegments: [],
             fetchedChunks: [chunk]);
 
         // ACT
-        await processor.ProcessEventAsync(evt, CancellationToken.None);
+        await executor.ExecuteAsync(request, CancellationToken.None);
 
         // ASSERT — the old segment was evicted (not the just-stored one)
         Assert.Equal(1, _storage.Count);
@@ -254,41 +254,41 @@ public sealed class BackgroundEventProcessorTests
 
     #endregion
 
-    #region ProcessEventAsync — Diagnostics Lifecycle
+    #region ExecuteAsync — Diagnostics Lifecycle
 
     [Fact]
-    public async Task ProcessEventAsync_Always_FiresBackgroundEventProcessed()
+    public async Task ExecuteAsync_Always_FiresNormalizationRequestProcessed()
     {
         // ARRANGE
-        var processor = CreateProcessor(maxSegmentCount: 100);
+        var executor = CreateExecutor(maxSegmentCount: 100);
 
-        var evt = CreateEvent(
+        var request = CreateRequest(
             requestedRange: TestHelpers.CreateRange(0, 9),
             usedSegments: [],
             fetchedChunks: null);
 
         // ACT
-        await processor.ProcessEventAsync(evt, CancellationToken.None);
+        await executor.ExecuteAsync(request, CancellationToken.None);
 
         // ASSERT
-        Assert.Equal(1, _diagnostics.BackgroundEventProcessed);
+        Assert.Equal(1, _diagnostics.NormalizationRequestProcessed);
     }
 
     [Fact]
-    public async Task ProcessEventAsync_MultipleEvents_AccumulatesDiagnostics()
+    public async Task ExecuteAsync_MultipleRequests_AccumulatesDiagnostics()
     {
         // ARRANGE
-        var processor = CreateProcessor(maxSegmentCount: 100);
+        var executor = CreateExecutor(maxSegmentCount: 100);
 
-        var evt1 = CreateEvent(TestHelpers.CreateRange(0, 9), [], [CreateChunk(0, 9)]);
-        var evt2 = CreateEvent(TestHelpers.CreateRange(20, 29), [], [CreateChunk(20, 29)]);
+        var request1 = CreateRequest(TestHelpers.CreateRange(0, 9), [], [CreateChunk(0, 9)]);
+        var request2 = CreateRequest(TestHelpers.CreateRange(20, 29), [], [CreateChunk(20, 29)]);
 
         // ACT
-        await processor.ProcessEventAsync(evt1, CancellationToken.None);
-        await processor.ProcessEventAsync(evt2, CancellationToken.None);
+        await executor.ExecuteAsync(request1, CancellationToken.None);
+        await executor.ExecuteAsync(request2, CancellationToken.None);
 
         // ASSERT
-        Assert.Equal(2, _diagnostics.BackgroundEventProcessed);
+        Assert.Equal(2, _diagnostics.NormalizationRequestProcessed);
         Assert.Equal(2, _diagnostics.BackgroundStatisticsUpdated);
         Assert.Equal(2, _diagnostics.BackgroundSegmentStored);
         Assert.Equal(2, _storage.Count);
@@ -296,10 +296,10 @@ public sealed class BackgroundEventProcessorTests
 
     #endregion
 
-    #region ProcessEventAsync — Exception Handling
+    #region ExecuteAsync — Exception Handling
 
     [Fact]
-    public async Task ProcessEventAsync_WhenSelectorThrows_SwallowsExceptionAndFiresFailedDiagnostic()
+    public async Task ExecuteAsync_WhenSelectorThrows_SwallowsExceptionAndFiresFailedDiagnostic()
     {
         // ARRANGE — use a throwing selector to simulate a fault during eviction
         var throwingSelector = new ThrowingEvictionSelector();
@@ -307,7 +307,7 @@ public sealed class BackgroundEventProcessorTests
             [new MaxSegmentCountPolicy<int, int>(1)],
             throwingSelector,
             _diagnostics);
-        var processor = new BackgroundEventProcessor<int, int, IntegerFixedStepDomain>(
+        var executor = new CacheNormalizationExecutor<int, int, IntegerFixedStepDomain>(
             _storage,
             evictionEngine,
             _diagnostics);
@@ -316,23 +316,23 @@ public sealed class BackgroundEventProcessorTests
         AddToStorage(_storage, 0, 9);
         var chunk = CreateChunk(20, 29);
 
-        var evt = CreateEvent(
+        var request = CreateRequest(
             requestedRange: TestHelpers.CreateRange(20, 29),
             usedSegments: [],
             fetchedChunks: [chunk]);
 
         // ACT
         var ex = await Record.ExceptionAsync(() =>
-            processor.ProcessEventAsync(evt, CancellationToken.None));
+            executor.ExecuteAsync(request, CancellationToken.None));
 
         // ASSERT — no exception propagated; failed diagnostic incremented
         Assert.Null(ex);
-        Assert.Equal(1, _diagnostics.BackgroundEventProcessingFailed);
-        Assert.Equal(0, _diagnostics.BackgroundEventProcessed);
+        Assert.Equal(1, _diagnostics.NormalizationRequestProcessingFailed);
+        Assert.Equal(0, _diagnostics.NormalizationRequestProcessed);
     }
 
     [Fact]
-    public async Task ProcessEventAsync_WhenStorageThrows_SwallowsExceptionAndFiresFailedDiagnostic()
+    public async Task ExecuteAsync_WhenStorageThrows_SwallowsExceptionAndFiresFailedDiagnostic()
     {
         // ARRANGE — use a throwing storage to simulate a storage fault
         var throwingStorage = new ThrowingSegmentStorage();
@@ -340,32 +340,32 @@ public sealed class BackgroundEventProcessorTests
             [new MaxSegmentCountPolicy<int, int>(100)],
             new LruEvictionSelector<int, int>(),
             _diagnostics);
-        var processor = new BackgroundEventProcessor<int, int, IntegerFixedStepDomain>(
+        var executor = new CacheNormalizationExecutor<int, int, IntegerFixedStepDomain>(
             throwingStorage,
             evictionEngine,
             _diagnostics);
 
         var chunk = CreateChunk(0, 9);
-        var evt = CreateEvent(
+        var request = CreateRequest(
             requestedRange: TestHelpers.CreateRange(0, 9),
             usedSegments: [],
             fetchedChunks: [chunk]);
 
         // ACT
         var ex = await Record.ExceptionAsync(() =>
-            processor.ProcessEventAsync(evt, CancellationToken.None));
+            executor.ExecuteAsync(request, CancellationToken.None));
 
         // ASSERT
         Assert.Null(ex);
-        Assert.Equal(1, _diagnostics.BackgroundEventProcessingFailed);
-        Assert.Equal(0, _diagnostics.BackgroundEventProcessed);
+        Assert.Equal(1, _diagnostics.NormalizationRequestProcessingFailed);
+        Assert.Equal(0, _diagnostics.NormalizationRequestProcessed);
     }
 
     #endregion
 
     #region Helpers — Factories
 
-    private BackgroundEventProcessor<int, int, IntegerFixedStepDomain> CreateProcessor(
+    private CacheNormalizationExecutor<int, int, IntegerFixedStepDomain> CreateExecutor(
         int maxSegmentCount)
     {
         var evictionEngine = new EvictionEngine<int, int>(
@@ -373,13 +373,13 @@ public sealed class BackgroundEventProcessorTests
             new LruEvictionSelector<int, int>(),
             _diagnostics);
 
-        return new BackgroundEventProcessor<int, int, IntegerFixedStepDomain>(
+        return new CacheNormalizationExecutor<int, int, IntegerFixedStepDomain>(
             _storage,
             evictionEngine,
             _diagnostics);
     }
 
-    private static BackgroundEvent<int, int> CreateEvent(
+    private static CacheNormalizationRequest<int, int> CreateRequest(
         Range<int> requestedRange,
         IReadOnlyList<CachedSegment<int, int>> usedSegments,
         IReadOnlyList<RangeChunk<int, int>>? fetchedChunks) =>

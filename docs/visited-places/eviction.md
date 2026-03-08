@@ -18,12 +18,12 @@ VPC eviction is a **constraint satisfaction** system with five decoupled compone
 | **Eviction Engine**          | Eviction facade             | Orchestrates selector, evaluator, and executor; owns eviction diagnostics |
 | **Eviction Policy Evaluator**| Policy lifecycle manager    | Maintains stateful policy aggregates; constructs composite pressure      |
 
-The **Eviction Engine** mediates all interactions between these components. `BackgroundEventProcessor` depends only on the engine — it has no direct reference to the evaluator, selector, or executor.
+The **Eviction Engine** mediates all interactions between these components. `CacheNormalizationExecutor` depends only on the engine — it has no direct reference to the evaluator, selector, or executor.
 
 ### Execution Flow
 
 ```
-BackgroundEventProcessor
+CacheNormalizationExecutor
   │
   ├─ engine.UpdateMetadata(usedSegments, now)
   │    └─ selector.UpdateMetadata(...)
@@ -273,7 +273,7 @@ The just-stored segments are **always excluded** from the candidate set. The exe
 
 ## Eviction Engine
 
-The Eviction Engine (`EvictionEngine<TRange, TData>`) is the **single eviction facade** exposed to `BackgroundEventProcessor`. It encapsulates the `EvictionPolicyEvaluator`, `EvictionExecutor`, and `IEvictionSelector` — the processor has no direct reference to any of these.
+The Eviction Engine (`EvictionEngine<TRange, TData>`) is the **single eviction facade** exposed to `CacheNormalizationExecutor`. It encapsulates the `EvictionPolicyEvaluator`, `EvictionExecutor`, and `IEvictionSelector` — the executor has no direct reference to any of these.
 
 ### Responsibilities
 
@@ -293,7 +293,7 @@ The Eviction Engine (`EvictionEngine<TRange, TData>`) is the **single eviction f
 
 ### Storage Ownership
 
-The engine holds **no reference to `ISegmentStorage`**. All `storage.Add` and `storage.Remove` calls remain exclusively in `BackgroundEventProcessor` (Invariant VPC.A.10).
+The engine holds **no reference to `ISegmentStorage`**. All `storage.Add` and `storage.Remove` calls remain exclusively in `CacheNormalizationExecutor` (Invariant VPC.A.10).
 
 ### Diagnostics Split
 
@@ -362,7 +362,7 @@ Metadata classes are nested `internal sealed` classes inside their respective se
 
 ### Ownership
 
-Metadata is managed exclusively by the configured selector via two methods called by the `EvictionEngine` (which in turn is called by `BackgroundEventProcessor`):
+Metadata is managed exclusively by the configured selector via two methods called by the `EvictionEngine` (which in turn is called by `CacheNormalizationExecutor`):
 
 - `InitializeMetadata(segment, now)` — called immediately after each segment is stored (step 2); selector attaches its metadata to `segment.EvictionMetadata`
 - `UpdateMetadata(usedSegments, now)` — called at the start of each event cycle for segments accessed by the User Path (step 1); selector updates its metadata on each used segment
@@ -387,7 +387,7 @@ Segment stored (Background Path, step 2):
       → e.g., FifoMetadata { CreatedAt = now }
       → no-op for SmallestFirst
 
-Segment used (BackgroundEvent.UsedSegments, Background Path, step 1):
+Segment used (CacheNormalizationRequest.UsedSegments, Background Path, step 1):
   engine.UpdateMetadata(usedSegments, now)
     → selector.UpdateMetadata(usedSegments, now)
       → e.g., LruMetadata.LastAccessedAt = now
@@ -421,7 +421,7 @@ Step 3+4: EvaluateAndExecute                     (EvictionEngine)
   |              → selector.TrySelectCandidate(...)  [loop]
   |        Returns: toRemove list
   |
-Step 4 (storage): Remove evicted segments        (BackgroundEventProcessor, sole storage writer)
+Step 4 (storage): Remove evicted segments        (CacheNormalizationExecutor, sole storage writer)
   |      + engine.OnSegmentsRemoved(toRemove)
   |        → evaluator.OnSegmentRemoved(...)  per segment
 ```

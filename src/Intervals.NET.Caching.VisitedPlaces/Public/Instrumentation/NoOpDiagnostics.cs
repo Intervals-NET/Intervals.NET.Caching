@@ -30,10 +30,10 @@ public sealed class NoOpDiagnostics : ICacheDiagnostics
     public void DataSourceFetchGap() { }
 
     /// <inheritdoc/>
-    public void BackgroundEventReceived() { }
+    public void NormalizationRequestReceived() { }
 
     /// <inheritdoc/>
-    public void BackgroundEventProcessed() { }
+    public void NormalizationRequestProcessed() { }
 
     /// <inheritdoc/>
     public void BackgroundStatisticsUpdated() { }
@@ -54,5 +54,5 @@ public sealed class NoOpDiagnostics : ICacheDiagnostics
     public void EvictionSegmentRemoved() { }
 
     /// <inheritdoc/>
-    public void BackgroundEventProcessingFailed(Exception ex) { }
+    public void NormalizationRequestProcessingFailed(Exception ex) { }
 }

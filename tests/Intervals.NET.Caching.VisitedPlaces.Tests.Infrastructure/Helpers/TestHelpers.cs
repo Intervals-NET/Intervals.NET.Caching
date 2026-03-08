@@ -192,12 +192,12 @@ public static class TestHelpers
     }
 
     /// <summary>
-    /// Asserts that background events were processed.
+    /// Asserts that normalization requests were processed.
     /// </summary>
-    public static void AssertBackgroundEventsProcessed(EventCounterCacheDiagnostics diagnostics, int minExpected = 1)
+    public static void AssertNormalizationRequestsProcessed(EventCounterCacheDiagnostics diagnostics, int minExpected = 1)
     {
-        Assert.True(diagnostics.BackgroundEventProcessed >= minExpected,
-            $"Expected at least {minExpected} background events processed, but found {diagnostics.BackgroundEventProcessed}.");
+        Assert.True(diagnostics.NormalizationRequestProcessed >= minExpected,
+            $"Expected at least {minExpected} normalization requests processed, but found {diagnostics.NormalizationRequestProcessed}.");
     }
 
     /// <summary>
@@ -233,9 +233,9 @@ public static class TestHelpers
     /// </summary>
     public static void AssertBackgroundLifecycleIntegrity(EventCounterCacheDiagnostics diagnostics)
     {
-        var received = diagnostics.BackgroundEventReceived;
-        var processed = diagnostics.BackgroundEventProcessed;
-        var failed = diagnostics.BackgroundEventProcessingFailed;
+        var received = diagnostics.NormalizationRequestReceived;
+        var processed = diagnostics.NormalizationRequestProcessed;
+        var failed = diagnostics.NormalizationRequestProcessingFailed;
         Assert.Equal(received, processed + failed);
     }
 
@@ -244,6 +244,6 @@ public static class TestHelpers
     /// </summary>
     public static void AssertNoBackgroundFailures(EventCounterCacheDiagnostics diagnostics)
     {
-        Assert.Equal(0, diagnostics.BackgroundEventProcessingFailed);
+        Assert.Equal(0, diagnostics.NormalizationRequestProcessingFailed);
     }
 }

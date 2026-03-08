@@ -17,7 +17,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Infrastructure.Adapters;
 /// </para>
 /// <para><strong>Cancellation note:</strong></para>
 /// <para>
-/// BackgroundEvents are never cancelled (Invariant VPC.A.11), so <c>WorkCancelled</c> is a
+/// CacheNormalizationRequests are never cancelled (Invariant VPC.A.11), so <c>WorkCancelled</c> is a
 /// no-op: the scheduler may call it defensively, but it will never fire in practice.
 /// </para>
 /// </remarks>
@@ -35,17 +35,17 @@ internal sealed class VisitedPlacesWorkSchedulerDiagnostics : IWorkSchedulerDiag
     }
 
     /// <inheritdoc/>
-    /// <remarks>Maps to <see cref="ICacheDiagnostics.BackgroundEventReceived"/>.</remarks>
-    public void WorkStarted() => _inner.BackgroundEventReceived();
+    /// <remarks>Maps to <see cref="ICacheDiagnostics.NormalizationRequestReceived"/>.</remarks>
+    public void WorkStarted() => _inner.NormalizationRequestReceived();
 
     /// <inheritdoc/>
     /// <remarks>
-    /// No-op: BackgroundEvents are never cancelled (Invariant VPC.A.11).
+    /// No-op: CacheNormalizationRequests are never cancelled (Invariant VPC.A.11).
     /// The scheduler may call this defensively; it will never fire in practice.
     /// </remarks>
     public void WorkCancelled() { }
 
     /// <inheritdoc/>
-    /// <remarks>Maps to <see cref="ICacheDiagnostics.BackgroundEventProcessingFailed"/>.</remarks>
-    public void WorkFailed(Exception ex) => _inner.BackgroundEventProcessingFailed(ex);
+    /// <remarks>Maps to <see cref="ICacheDiagnostics.NormalizationRequestProcessingFailed"/>.</remarks>
+    public void WorkFailed(Exception ex) => _inner.NormalizationRequestProcessingFailed(ex);
 }

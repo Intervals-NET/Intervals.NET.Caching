@@ -73,7 +73,7 @@ Assert.Equal(expectedCount, cache.SegmentCount);
 
 **VPC.A.5** [Architectural] The User Path is the **sole source of background events**.
 
-- Only the User Path publishes `BackgroundEvent`s; no other component may inject events into the background queue
+- Only the User Path publishes `CacheNormalizationRequest`s; no other component may inject requests into the background queue
 
 **VPC.A.6** [Architectural] Background storage and statistics updates are **always performed asynchronously** relative to the User Path.
 
@@ -132,7 +132,7 @@ Assert.Equal(expectedCount, cache.SegmentCount);
 
 ### VPC.B.1 FIFO Ordering
 
-**VPC.B.1** [Architectural] The Background Path processes `BackgroundEvent`s in **strict FIFO order**.
+**VPC.B.1** [Architectural] The Background Path processes `CacheNormalizationRequest`s in **strict FIFO order**.
 
 - Events are consumed in the exact order they were enqueued by the User Path
 - No supersession: a newer event does NOT skip or cancel an older one
@@ -143,13 +143,13 @@ Assert.Equal(expectedCount, cache.SegmentCount);
 - Metadata accuracy depends on processing every access event in order (e.g., LRU `LastAccessedAt`)
 - Supersession (as in SlidingWindowCache) would silently lose access events, corrupting eviction decisions (e.g., LRU evicting a heavily-used segment)
 
-**VPC.B.2** [Architectural] **Every** `BackgroundEvent` published by the User Path is **eventually processed** by the Background Path.
+**VPC.B.2** [Architectural] **Every** `CacheNormalizationRequest` published by the User Path is **eventually processed** by the Background Path.
 
 - No event is dropped, overwritten, or lost after enqueue
 
 ### VPC.B.2 Event Processing Steps
 
-**VPC.B.3** [Architectural] Each `BackgroundEvent` is processed in the following **fixed sequence**:
+**VPC.B.3** [Architectural] Each `CacheNormalizationRequest` is processed in the following **fixed sequence**:
 
 1. Update metadata for all `UsedSegments` by delegating to the `EvictionEngine` (`engine.UpdateMetadata` → `selector.UpdateMetadata`)
 2. Store `FetchedData` as new segment(s), if present; call `engine.InitializeSegment(segment, now)` after each store
@@ -241,7 +241,7 @@ Assert.Equal(expectedCount, cache.SegmentCount);
 - No concurrent writes to `CachedSegments` or segment `EvictionMetadata` are ever possible
 - Internal storage strategy state (append buffer, stride index) is owned exclusively by the Background Path
 
-**VPC.D.4** [Architectural] `BackgroundEvent`s published by multiple concurrent User Path calls are **safely enqueued** without coordination between them.
+**VPC.D.4** [Architectural] `CacheNormalizationRequest`s published by multiple concurrent User Path calls are **safely enqueued** without coordination between them.
 
 - The event queue (channel) handles concurrent producers and a single consumer safely
 - The order of events from concurrent producers is not deterministic; both orderings are valid
@@ -310,12 +310,12 @@ Assert.Equal(expectedCount, cache.SegmentCount);
 
 **VPC.E.4a** [Architectural] Per-segment metadata is initialized when the segment is stored:
 
-- `engine.InitializeSegment(segment, now)` is called by `BackgroundEventProcessor` immediately after `_storage.Add(segment)`, which in turn calls `selector.InitializeMetadata(segment, now)`
+- `engine.InitializeSegment(segment, now)` is called by `CacheNormalizationExecutor` immediately after `_storage.Add(segment)`, which in turn calls `selector.InitializeMetadata(segment, now)`
 - Example: `LruMetadata { LastAccessedAt = now }`, `FifoMetadata { CreatedAt = now }`
 
-**VPC.E.4b** [Architectural] Per-segment metadata is updated when the segment appears in a `BackgroundEvent`'s `UsedSegments` list:
+**VPC.E.4b** [Architectural] Per-segment metadata is updated when the segment appears in a `CacheNormalizationRequest`'s `UsedSegments` list:
 
-- `engine.UpdateMetadata(usedSegments, now)` is called by `BackgroundEventProcessor` at the start of each event cycle, which delegates to `selector.UpdateMetadata(usedSegments, now)`
+- `engine.UpdateMetadata(usedSegments, now)` is called by `CacheNormalizationExecutor` at the start of each event cycle, which delegates to `selector.UpdateMetadata(usedSegments, now)`
 - Example: `LruMetadata.LastAccessedAt = now`; FIFO and SmallestFirst selectors perform no-op updates
 
 **VPC.E.5** [Architectural] Eviction evaluation and execution are performed **exclusively by the Background Path**, never by the User Path.
@@ -333,8 +333,8 @@ Assert.Equal(expectedCount, cache.SegmentCount);
 
 **VPC.E.8** [Architectural] The eviction subsystem internals (`EvictionPolicyEvaluator`, `EvictionExecutor`, `IEvictionSelector`) are **encapsulated behind `EvictionEngine`**.
 
-- `BackgroundEventProcessor` depends only on `EvictionEngine` — it has no direct reference to the evaluator, executor, or selector
-- This boundary enforces single-responsibility: the processor owns storage mutations; the engine owns eviction coordination
+- `CacheNormalizationExecutor` depends only on `EvictionEngine` — it has no direct reference to the evaluator, executor, or selector
+- This boundary enforces single-responsibility: the executor owns storage mutations; the engine owns eviction coordination
 
 ---
 

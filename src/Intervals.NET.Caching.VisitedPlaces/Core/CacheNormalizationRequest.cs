@@ -32,13 +32,12 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core;
 /// </list>
 /// <para><strong>Cancellation (Invariant VPC.A.11):</strong></para>
 /// <para>
-/// Background events are NEVER cancelled — the FIFO queue processes all events regardless of
+/// CacheNormalizationRequests are NEVER cancelled — the FIFO queue processes all requests regardless of
 /// order. <see cref="Cancel"/> is a no-op and <see cref="CancellationToken"/> is always
 /// <see cref="CancellationToken.None"/>.
 /// </para>
 /// </remarks>
-/// TODO: I am not sure that the name is proper. Background event sounds very generic.
-internal sealed class BackgroundEvent<TRange, TData> : ISchedulableWorkItem
+internal sealed class CacheNormalizationRequest<TRange, TData> : ISchedulableWorkItem
     where TRange : IComparable<TRange>
 {
     /// <summary>The original range requested by the user on the User Path.</summary>
@@ -60,12 +59,12 @@ internal sealed class BackgroundEvent<TRange, TData> : ISchedulableWorkItem
     public IReadOnlyList<RangeChunk<TRange, TData>>? FetchedChunks { get; }
 
     /// <summary>
-    /// Initializes a new <see cref="BackgroundEvent{TRange,TData}"/>.
+    /// Initializes a new <see cref="CacheNormalizationRequest{TRange,TData}"/>.
     /// </summary>
     /// <param name="requestedRange">The range the user requested.</param>
     /// <param name="usedSegments">Segments read from the cache on the User Path.</param>
     /// <param name="fetchedChunks">Data fetched from IDataSource; null on a full cache hit.</param>
-    internal BackgroundEvent(
+    internal CacheNormalizationRequest(
         Range<TRange> requestedRange,
         IReadOnlyList<CachedSegment<TRange, TData>> usedSegments,
         IReadOnlyList<RangeChunk<TRange, TData>>? fetchedChunks)
@@ -77,20 +76,20 @@ internal sealed class BackgroundEvent<TRange, TData> : ISchedulableWorkItem
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Always <see cref="CancellationToken.None"/>. BackgroundEvents are never cancelled
+    /// Always <see cref="CancellationToken.None"/>. CacheNormalizationRequests are never cancelled
     /// (Invariant VPC.A.11: FIFO queue, no supersession).
     /// </remarks>
     public CancellationToken CancellationToken => CancellationToken.None;
 
     /// <inheritdoc/>
     /// <remarks>
-    /// No-op: BackgroundEvents are never cancelled (Invariant VPC.A.11).
+    /// No-op: CacheNormalizationRequests are never cancelled (Invariant VPC.A.11).
     /// </remarks>
     public void Cancel() { }
 
     /// <inheritdoc/>
     /// <remarks>
-    /// No-op: BackgroundEvents own no disposable resources.
+    /// No-op: CacheNormalizationRequests own no disposable resources.
     /// </remarks>
     public void Dispose() { }
 }

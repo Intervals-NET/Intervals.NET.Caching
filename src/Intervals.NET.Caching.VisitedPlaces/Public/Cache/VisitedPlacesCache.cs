@@ -20,12 +20,12 @@ namespace Intervals.NET.Caching.VisitedPlaces.Public.Cache;
 /// and <strong>Composition Root</strong>. It wires together all internal actors but implements no
 /// business logic itself. All user requests are delegated to the internal
 /// <see cref="UserRequestHandler{TRange,TData,TDomain}"/>; all background work is handled by
-/// <see cref="BackgroundEventProcessor{TRange,TData,TDomain}"/> via the scheduler.
+/// <see cref="CacheNormalizationExecutor{TRange,TData,TDomain}"/> via the scheduler.
 /// </para>
 /// <para><strong>Internal Actors:</strong></para>
 /// <list type="bullet">
 /// <item><description><strong>UserRequestHandler</strong> — User Path (read-only, fires events)</description></item>
-/// <item><description><strong>BackgroundEventProcessor</strong> — Background Storage Loop (single writer)</description></item>
+/// <item><description><strong>CacheNormalizationExecutor</strong> — Background Storage Loop (single writer)</description></item>
 /// <item><description><strong>TaskBasedWorkScheduler / ChannelBasedWorkScheduler</strong> — serializes background events, manages activity</description></item>
 /// </list>
 /// <para><strong>Threading Model:</strong></para>
@@ -101,8 +101,8 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
         // and eviction-specific diagnostics. Storage mutations remain in the processor.
         var evictionEngine = new EvictionEngine<TRange, TData>(policies, selector, cacheDiagnostics);
 
-        // Background event processor: single writer, executes the four-step Background Path.
-        var processor = new BackgroundEventProcessor<TRange, TData, TDomain>(
+        // Cache normalization executor: single writer, executes the four-step Background Path.
+        var executor = new CacheNormalizationExecutor<TRange, TData, TDomain>(
             storage,
             evictionEngine,
             cacheDiagnostics);
@@ -113,15 +113,15 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
         // Scheduler: serializes background events without delay (debounce = zero).
         // When EventChannelCapacity is null, use unbounded TaskBasedWorkScheduler (default).
         // When EventChannelCapacity is set, use bounded ChannelBasedWorkScheduler with backpressure.
-        IWorkScheduler<BackgroundEvent<TRange, TData>> scheduler = options.EventChannelCapacity is { } capacity
-            ? new ChannelBasedWorkScheduler<BackgroundEvent<TRange, TData>>(
-                executor: (evt, ct) => processor.ProcessEventAsync(evt, ct),
+        IWorkScheduler<CacheNormalizationRequest<TRange, TData>> scheduler = options.EventChannelCapacity is { } capacity
+            ? new ChannelBasedWorkScheduler<CacheNormalizationRequest<TRange, TData>>(
+                executor: (evt, ct) => executor.ExecuteAsync(evt, ct),
                 debounceProvider: static () => TimeSpan.Zero,
                 diagnostics: schedulerDiagnostics,
                 activityCounter: _activityCounter,
                 capacity: capacity)
-            : new TaskBasedWorkScheduler<BackgroundEvent<TRange, TData>>(
-                executor: (evt, ct) => processor.ProcessEventAsync(evt, ct),
+            : new TaskBasedWorkScheduler<CacheNormalizationRequest<TRange, TData>>(
+                executor: (evt, ct) => executor.ExecuteAsync(evt, ct),
                 debounceProvider: static () => TimeSpan.Zero,
                 diagnostics: schedulerDiagnostics,
                 activityCounter: _activityCounter);

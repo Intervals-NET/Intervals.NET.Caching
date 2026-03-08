@@ -201,7 +201,7 @@ public sealed class VisitedPlacesCacheInvariantTests : IAsyncDisposable
     // ============================================================
 
     /// <summary>
-    /// Invariant VPC.B.3 [Behavioral]: Each BackgroundEvent is processed in the fixed sequence:
+    /// Invariant VPC.B.3 [Behavioral]: Each CacheNormalizationRequest is processed in the fixed sequence:
     /// (1) statistics update, (2) store data, (3) evaluate eviction, (4) execute eviction.
     /// Verified by checking that diagnostics counters fire in the correct quantities.
     /// </summary>
@@ -211,7 +211,7 @@ public sealed class VisitedPlacesCacheInvariantTests : IAsyncDisposable
         // ARRANGE
         var cache = CreateCache();
 
-        // ACT — a full miss triggers a BackgroundEvent with FetchedChunks
+        // ACT — a full miss triggers a CacheNormalizationRequest with FetchedChunks
         await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(0, 9));
 
         // ASSERT — all four steps executed
@@ -224,7 +224,7 @@ public sealed class VisitedPlacesCacheInvariantTests : IAsyncDisposable
         // Step 4: eviction NOT triggered (only 1 segment, limit is 100)
         Assert.Equal(0, _diagnostics.EvictionTriggered);
         // Lifecycle: event processed
-        Assert.Equal(1, _diagnostics.BackgroundEventProcessed);
+        Assert.Equal(1, _diagnostics.NormalizationRequestProcessed);
     }
 
     /// <summary>

@@ -11,7 +11,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.UserPath;
 /// <summary>
 /// Handles user requests on the User Path: reads cached segments, computes gaps, fetches missing
 /// data from <c>IDataSource</c>, assembles the result, and publishes a
-/// <see cref="BackgroundEvent{TRange,TData}"/> (fire-and-forget) for the Background Storage Loop.
+/// <see cref="CacheNormalizationRequest{TRange,TData}"/> (fire-and-forget) for the Background Storage Loop.
 /// </summary>
 /// <typeparam name="TRange">The type representing range boundaries.</typeparam>
 /// <typeparam name="TData">The type of data being cached.</typeparam>
@@ -29,7 +29,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.UserPath;
 /// <item><description>Compute coverage gaps within the requested range</description></item>
 /// <item><description>Fetch gap data from <c>IDataSource</c> (User Path — inline, synchronous w.r.t. the request)</description></item>
 /// <item><description>Assemble and return a <see cref="RangeResult{TRange,TData}"/></description></item>
-/// <item><description>Publish a <see cref="BackgroundEvent{TRange,TData}"/> (fire-and-forget)</description></item>
+    /// <item><description>Publish a <see cref="CacheNormalizationRequest{TRange,TData}"/> (fire-and-forget)</description></item>
 /// </list>
 /// </remarks>
 internal sealed class UserRequestHandler<TRange, TData, TDomain>
@@ -38,7 +38,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
 {
     private readonly ISegmentStorage<TRange, TData> _storage;
     private readonly IDataSource<TRange, TData> _dataSource;
-    private readonly IWorkScheduler<BackgroundEvent<TRange, TData>> _scheduler;
+    private readonly IWorkScheduler<CacheNormalizationRequest<TRange, TData>> _scheduler;
     private readonly ICacheDiagnostics _diagnostics;
     private readonly TDomain _domain;
 
@@ -51,7 +51,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     public UserRequestHandler(
         ISegmentStorage<TRange, TData> storage,
         IDataSource<TRange, TData> dataSource,
-        IWorkScheduler<BackgroundEvent<TRange, TData>> scheduler,
+        IWorkScheduler<CacheNormalizationRequest<TRange, TData>> scheduler,
         ICacheDiagnostics diagnostics,
         TDomain domain)
     {
@@ -78,7 +78,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     /// <item><description>Determine scenario: FullHit (no gaps), FullMiss (no segments hit), or PartialHit (some gaps)</description></item>
     /// <item><description>Fetch gap data from IDataSource (FullMiss / PartialHit)</description></item>
     /// <item><description>Assemble result data from segments and/or fetched chunks</description></item>
-    /// <item><description>Increment activity counter (S.H.1), publish BackgroundEvent (fire-and-forget)</description></item>
+        /// <item><description>Increment activity counter (S.H.1), publish CacheNormalizationRequest (fire-and-forget)</description></item>
     /// <item><description>Return RangeResult immediately</description></item>
     /// </list>
     /// </remarks>
@@ -153,15 +153,15 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
             (resultData, actualRange) = AssembleMixed(requestedRange, hittingSegments, fetchedChunks, _domain);
         }
 
-        // Step 6: Publish BackgroundEvent and await the enqueue (preserves activity counter correctness).
+        // Step 6: Publish CacheNormalizationRequest and await the enqueue (preserves activity counter correctness).
         // Awaiting PublishWorkItemAsync only waits for the channel enqueue — not background processing —
         // so fire-and-forget semantics are preserved. The background loop handles processing asynchronously.
-        var backgroundEvent = new BackgroundEvent<TRange, TData>(
+        var request = new CacheNormalizationRequest<TRange, TData>(
             requestedRange,
             hittingSegments,
             fetchedChunks);
 
-        await _scheduler.PublishWorkItemAsync(backgroundEvent, cancellationToken)
+        await _scheduler.PublishWorkItemAsync(request, cancellationToken)
             .ConfigureAwait(false);
 
         _diagnostics.UserRequestServed();

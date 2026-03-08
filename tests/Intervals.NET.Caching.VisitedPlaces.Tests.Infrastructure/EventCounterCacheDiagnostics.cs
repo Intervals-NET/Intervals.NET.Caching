@@ -22,15 +22,15 @@ public sealed class EventCounterCacheDiagnostics : ICacheDiagnostics
     private int _userRequestPartialCacheHit;
     private int _userRequestFullCacheMiss;
     private int _dataSourceFetchGap;
-    private int _backgroundEventReceived;
-    private int _backgroundEventProcessed;
+    private int _normalizationRequestReceived;
+    private int _normalizationRequestProcessed;
     private int _backgroundStatisticsUpdated;
     private int _backgroundSegmentStored;
     private int _evictionEvaluated;
     private int _evictionTriggered;
     private int _evictionExecuted;
     private int _evictionSegmentRemoved;
-    private int _backgroundEventProcessingFailed;
+    private int _normalizationRequestProcessingFailed;
 
     // ============================================================
     // USER PATH COUNTERS
@@ -59,11 +59,11 @@ public sealed class EventCounterCacheDiagnostics : ICacheDiagnostics
     // BACKGROUND PROCESSING COUNTERS
     // ============================================================
 
-    /// <summary>Number of background events received and started processing.</summary>
-    public int BackgroundEventReceived => Volatile.Read(ref _backgroundEventReceived);
+    /// <summary>Number of normalization requests received and started processing.</summary>
+    public int NormalizationRequestReceived => Volatile.Read(ref _normalizationRequestReceived);
 
-    /// <summary>Number of background events that completed all four processing steps.</summary>
-    public int BackgroundEventProcessed => Volatile.Read(ref _backgroundEventProcessed);
+    /// <summary>Number of normalization requests that completed all four processing steps.</summary>
+    public int NormalizationRequestProcessed => Volatile.Read(ref _normalizationRequestProcessed);
 
     /// <summary>Number of statistics-update steps executed (Background Path step 1).</summary>
     public int BackgroundStatisticsUpdated => Volatile.Read(ref _backgroundStatisticsUpdated);
@@ -91,8 +91,8 @@ public sealed class EventCounterCacheDiagnostics : ICacheDiagnostics
     // ERROR COUNTERS
     // ============================================================
 
-    /// <summary>Number of background events that failed with an unhandled exception.</summary>
-    public int BackgroundEventProcessingFailed => Volatile.Read(ref _backgroundEventProcessingFailed);
+    /// <summary>Number of normalization requests that failed with an unhandled exception.</summary>
+    public int NormalizationRequestProcessingFailed => Volatile.Read(ref _normalizationRequestProcessingFailed);
 
     // ============================================================
     // RESET
@@ -109,15 +109,15 @@ public sealed class EventCounterCacheDiagnostics : ICacheDiagnostics
         Interlocked.Exchange(ref _userRequestPartialCacheHit, 0);
         Interlocked.Exchange(ref _userRequestFullCacheMiss, 0);
         Interlocked.Exchange(ref _dataSourceFetchGap, 0);
-        Interlocked.Exchange(ref _backgroundEventReceived, 0);
-        Interlocked.Exchange(ref _backgroundEventProcessed, 0);
+        Interlocked.Exchange(ref _normalizationRequestReceived, 0);
+        Interlocked.Exchange(ref _normalizationRequestProcessed, 0);
         Interlocked.Exchange(ref _backgroundStatisticsUpdated, 0);
         Interlocked.Exchange(ref _backgroundSegmentStored, 0);
         Interlocked.Exchange(ref _evictionEvaluated, 0);
         Interlocked.Exchange(ref _evictionTriggered, 0);
         Interlocked.Exchange(ref _evictionExecuted, 0);
         Interlocked.Exchange(ref _evictionSegmentRemoved, 0);
-        Interlocked.Exchange(ref _backgroundEventProcessingFailed, 0);
+        Interlocked.Exchange(ref _normalizationRequestProcessingFailed, 0);
     }
 
     // ============================================================
@@ -140,10 +140,10 @@ public sealed class EventCounterCacheDiagnostics : ICacheDiagnostics
     void ICacheDiagnostics.DataSourceFetchGap() => Interlocked.Increment(ref _dataSourceFetchGap);
 
     /// <inheritdoc/>
-    void ICacheDiagnostics.BackgroundEventReceived() => Interlocked.Increment(ref _backgroundEventReceived);
+    void ICacheDiagnostics.NormalizationRequestReceived() => Interlocked.Increment(ref _normalizationRequestReceived);
 
     /// <inheritdoc/>
-    void ICacheDiagnostics.BackgroundEventProcessed() => Interlocked.Increment(ref _backgroundEventProcessed);
+    void ICacheDiagnostics.NormalizationRequestProcessed() => Interlocked.Increment(ref _normalizationRequestProcessed);
 
     /// <inheritdoc/>
     void ICacheDiagnostics.BackgroundStatisticsUpdated() => Interlocked.Increment(ref _backgroundStatisticsUpdated);
@@ -164,6 +164,6 @@ public sealed class EventCounterCacheDiagnostics : ICacheDiagnostics
     void ICacheDiagnostics.EvictionSegmentRemoved() => Interlocked.Increment(ref _evictionSegmentRemoved);
 
     /// <inheritdoc/>
-    void ICacheDiagnostics.BackgroundEventProcessingFailed(Exception ex) =>
-        Interlocked.Increment(ref _backgroundEventProcessingFailed);
+    void ICacheDiagnostics.NormalizationRequestProcessingFailed(Exception ex) =>
+        Interlocked.Increment(ref _normalizationRequestProcessingFailed);
 }

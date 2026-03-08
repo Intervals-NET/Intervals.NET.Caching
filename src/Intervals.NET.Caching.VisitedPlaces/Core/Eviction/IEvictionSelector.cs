@@ -80,7 +80,7 @@ public interface IEvictionSelector<TRange, TData>
 
     /// <summary>
     /// Attaches selector-specific metadata to a newly stored segment.
-    /// Called by <c>BackgroundEventProcessor</c> immediately after each segment is added to storage.
+    /// Called by <c>CacheNormalizationExecutor</c> immediately after each segment is added to storage.
     /// </summary>
     /// <param name="segment">The newly stored segment to initialize metadata for.</param>
     /// <param name="now">The current UTC timestamp at the time of storage.</param>
@@ -93,7 +93,7 @@ public interface IEvictionSelector<TRange, TData>
 
     /// <summary>
     /// Updates selector-specific metadata on segments that were accessed on the User Path.
-    /// Called by <c>BackgroundEventProcessor</c> in Step 1 of each background event cycle.
+    /// Called by <c>CacheNormalizationExecutor</c> in Step 1 of each background request cycle.
     /// </summary>
     /// <param name="usedSegments">The segments that were read during the User Path request.</param>
     /// <param name="now">The current UTC timestamp at the time of the background event.</param>

@@ -297,7 +297,7 @@ The append buffer is an internal optimization to defer sort-order maintenance. I
 
 ### Non-Merging Invariant
 
-Neither strategy ever merges two segments into one. When `Normalization` is mentioned above, it refers to rebuilding the sorted array or stride index — not merging segment data. Each segment created by the Background Path (from a `BackgroundEvent.FetchedData` entry) retains its own identity, statistics, and position in the collection for its entire lifetime.
+Neither strategy ever merges two segments into one. When `Normalization` is mentioned above, it refers to rebuilding the sorted array or stride index — not merging segment data. Each segment created by the Background Path (from a `CacheNormalizationRequest.FetchedChunks` entry) retains its own identity, statistics, and position in the collection for its entire lifetime.
 
 ---
 

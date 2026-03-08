@@ -32,8 +32,8 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 /// <para><strong>Execution Context:</strong> Background Path (single writer thread)</para>
 /// <para><strong>Design:</strong></para>
 /// <para>
-/// <see cref="BackgroundEventProcessor{TRange,TData,TDomain}"/> previously held all of this
-/// logic inline. Moving it here simplifies the processor and creates a clean boundary for
+/// <see cref="CacheNormalizationExecutor{TRange,TData,TDomain}"/> previously held all of this
+/// logic inline. Moving it here simplifies the executor and creates a clean boundary for
 /// stateful policy support. The processor is unaware of whether any given policy is stateful;
 /// it only calls the three evaluator methods at the appropriate points in the four-step sequence.
 /// </para>
@@ -83,7 +83,7 @@ internal sealed class EvictionPolicyEvaluator<TRange, TData>
     /// </summary>
     /// <param name="segment">The segment that was just added to storage.</param>
     /// <remarks>
-    /// Called by <see cref="BackgroundEventProcessor{TRange,TData,TDomain}"/> in Step 2
+    /// Called by <see cref="CacheNormalizationExecutor{TRange,TData,TDomain}"/> in Step 2
     /// (store data) immediately after each segment is added to storage and selector metadata
     /// is initialized.
     /// </remarks>
@@ -101,7 +101,7 @@ internal sealed class EvictionPolicyEvaluator<TRange, TData>
     /// </summary>
     /// <param name="segment">The segment that was just removed from storage.</param>
     /// <remarks>
-    /// Called by <see cref="BackgroundEventProcessor{TRange,TData,TDomain}"/> in Step 4
+    /// Called by <see cref="CacheNormalizationExecutor{TRange,TData,TDomain}"/> in Step 4
     /// (execute eviction) immediately after each segment is removed from storage.
     /// </remarks>
     public void OnSegmentRemoved(CachedSegment<TRange, TData> segment)
@@ -134,8 +134,8 @@ internal sealed class EvictionPolicyEvaluator<TRange, TData>
     /// </list>
     /// </returns>
     /// <remarks>
-    /// Called by <see cref="BackgroundEventProcessor{TRange,TData,TDomain}"/> in Step 3
-    /// (evaluate eviction), only when at least one segment was stored in the current event cycle.
+    /// Called by <see cref="CacheNormalizationExecutor{TRange,TData,TDomain}"/> in Step 3
+    /// (evaluate eviction), only when at least one segment was stored in the current request cycle.
     /// </remarks>
     public IEvictionPressure<TRange, TData> Evaluate(
         IReadOnlyList<CachedSegment<TRange, TData>> allSegments)

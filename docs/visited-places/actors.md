@@ -7,7 +7,7 @@ This document is the canonical actor catalog for `VisitedPlacesCache`. Formal in
 ## Execution Contexts
 
 - **User Thread** — serves `GetDataAsync`; ends at event publish (fire-and-forget).
-- **Background Storage Loop** — single background thread; dequeues `BackgroundEvent`s and performs all cache mutations (statistics updates, segment storage, eviction).
+- **Background Storage Loop** — single background thread; dequeues `CacheNormalizationRequest`s and performs all cache mutations (statistics updates, segment storage, eviction).
 
 There are exactly two execution contexts in VPC (compared to three in SlidingWindowCache). There is no Decision Path; the Background Path combines the roles of event processing and cache mutation.
 
@@ -23,7 +23,7 @@ There are exactly two execution contexts in VPC (compared to three in SlidingWin
 - Compute true gaps (uncovered sub-ranges within `RequestedRange`).
 - Fetch gap data synchronously from `IDataSource` if any gaps exist.
 - Assemble response data from cached segments and freshly-fetched gap data (in-memory, local to user thread).
-- Publish a `BackgroundEvent` (fire-and-forget) containing used segment references and fetched data.
+- Publish a `CacheNormalizationRequest` (fire-and-forget) containing used segment references and fetched data.
 
 **Non-responsibilities**
 - Does not mutate `CachedSegments`.
@@ -57,7 +57,7 @@ There are exactly two execution contexts in VPC (compared to three in SlidingWin
 ### Event Publisher
 
 **Responsibilities**
-- Construct a `BackgroundEvent` after every `GetDataAsync` call.
+- Construct a `CacheNormalizationRequest` after every `GetDataAsync` call.
 - Enqueue the event into the background channel (thread-safe, non-blocking).
 - Manage the `AsyncActivityCounter` lifecycle for the published event (increment before publish, decrement in the Background Path's `finally`).
 
@@ -79,7 +79,7 @@ There are exactly two execution contexts in VPC (compared to three in SlidingWin
 ### Background Event Loop
 
 **Responsibilities**
-- Dequeue `BackgroundEvent`s in FIFO order.
+- Dequeue `CacheNormalizationRequest`s in FIFO order.
 - Dispatch each event to the Background Path for processing.
 - Ensure sequential (non-concurrent) processing of all events.
 - Manage loop lifecycle (start on construction, exit on disposal cancellation).
@@ -103,7 +103,7 @@ There are exactly two execution contexts in VPC (compared to three in SlidingWin
 ### Background Path (Event Processor)
 
 **Responsibilities**
-- Process each `BackgroundEvent` in the fixed sequence: metadata update → storage → eviction evaluation + execution → post-removal notification.
+- Process each `CacheNormalizationRequest` in the fixed sequence: metadata update → storage → eviction evaluation + execution → post-removal notification.
 - Delegate Step 1 (metadata update) to `EvictionEngine.UpdateMetadata`.
 - Delegate segment storage to the Storage Strategy.
 - Call `engine.InitializeSegment(segment, now)` immediately after each new segment is stored (sets up selector metadata and notifies stateful policies).
