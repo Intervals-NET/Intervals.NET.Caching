@@ -81,8 +81,8 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
         IDataSource<TRange, TData> dataSource,
         TDomain domain,
         VisitedPlacesCacheOptions options,
-        IReadOnlyList<IEvictionPolicy<TRange, TData>> policies,
-        IEvictionSelector<TRange, TData> selector,
+        IReadOnlyList<IEvictionPolicy<TRange, TData>> policies, // todo: I guess this can be set not as a separate cache parameter in ctor, but as a one of the configg values in options.
+        IEvictionSelector<TRange, TData> selector, // todo: I guess this can be set not as a separate cache parameter in ctor, but as a one of the configg values in options.
         ICacheDiagnostics? cacheDiagnostics = null)
     {
         // Fall back to no-op diagnostics so internal actors never receive null.
