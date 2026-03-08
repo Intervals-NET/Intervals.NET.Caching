@@ -227,8 +227,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
         var pieces = new List<ReadOnlyMemory<TData>>();
         var totalLength = 0;
 
-        // todo avoid materialization - utilize IEnumerable
-        var sorted = segments.OrderBy(s => s.Range.Start.Value).ToArray();
+        var sorted = segments.OrderBy(s => s.Range.Start.Value);
 
         foreach (var seg in sorted)
         {
@@ -305,7 +304,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
         pieces.Sort(static (a, b) => a.Start.CompareTo(b.Start));
 
         var totalLength = pieces.Sum(p => p.Data.Length);
-        var assembled = ConcatenateMemory(pieces.Select(p => p.Data).ToArray(), totalLength);
+        var assembled = ConcatenateMemory(pieces.Select(p => p.Data), totalLength);
 
         // Determine actual range: from requestedRange.Start to requestedRange.End
         // (bounded by what we actually assembled — use requestedRange as approximation).
@@ -354,27 +353,36 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
         => new(data.ToArray());
 
     private static ReadOnlyMemory<TData> ConcatenateMemory(
-        IList<ReadOnlyMemory<TData>> pieces,
+        IEnumerable<ReadOnlyMemory<TData>> pieces,
         int totalLength)
     {
-        if (pieces.Count == 0)
+        using var enumerator = pieces.GetEnumerator();
+
+        if (!enumerator.MoveNext())
         {
             return ReadOnlyMemory<TData>.Empty;
         }
 
-        if (pieces.Count == 1)
+        var first = enumerator.Current;
+
+        if (!enumerator.MoveNext())
         {
-            return pieces[0];
+            return first;
         }
 
         var result = new TData[totalLength];
         var offset = 0;
 
-        foreach (var piece in pieces)
+        first.Span.CopyTo(result.AsSpan(offset));
+        offset += first.Length;
+
+        do
         {
+            var piece = enumerator.Current;
             piece.Span.CopyTo(result.AsSpan(offset));
             offset += piece.Length;
         }
+        while (enumerator.MoveNext());
 
         return result;
     }
