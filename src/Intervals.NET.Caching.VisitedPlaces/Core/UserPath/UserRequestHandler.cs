@@ -98,17 +98,19 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
         }
 
         // Step 1: Read intersecting segments (read-only, Invariant VPC.A.10).
-        var hittingSegments = _storage.FindIntersecting(requestedRange);
+        var hittingSegments = _storage.FindIntersecting(requestedRange); // todo 1 array allocation
 
         // Step 2: Map segments to RangeData — zero-copy via ReadOnlyMemoryEnumerable.
+        // todo think about avoiding redundant temp allocation in the above FindIntersecting - by making the ReadOnlyList<RangeData<...>> as the return type
         var hittingRangeData = hittingSegments
             .Select(s => new ReadOnlyMemoryEnumerable<TData>(s.Data).ToRangeData(s.Range, _domain))
-            .ToArray();
+            .ToArray(); // todo 1 array allocation
 
         // Step 3: Compute coverage gaps.
-        var gaps = ComputeGaps(requestedRange, hittingSegments);
+        var gaps = ComputeGaps(requestedRange, hittingSegments); // todo 1 array allocation
 
         CacheInteraction cacheInteraction;
+        // todo: check whether we can make it as IEnumerable, to avoid materialisation
         IReadOnlyList<RangeChunk<TRange, TData>>? fetchedChunks;
         ReadOnlyMemory<TData> resultData;
         Range<TRange>? actualRange;
@@ -119,7 +121,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
             cacheInteraction = CacheInteraction.FullHit;
             _diagnostics.UserRequestFullCacheHit();
 
-            (resultData, actualRange) = Assemble(requestedRange, hittingRangeData);
+            (resultData, actualRange) = Assemble(requestedRange, hittingRangeData); // todo 3 array allocations
             fetchedChunks = null; // Signal to background: no new data to store
         }
         else if (hittingRangeData.Length == 0)
@@ -133,10 +135,10 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
 
             _diagnostics.DataSourceFetchGap();
 
-            fetchedChunks = [chunk];
+            fetchedChunks = [chunk]; // todo 1 array allocation
             actualRange = chunk.Range;
             resultData = chunk.Range.HasValue
-                ? new ReadOnlyMemory<TData>(chunk.Data.ToArray())
+                ? new ReadOnlyMemory<TData>(chunk.Data.ToArray()) // todo 1 array allocation
                 : ReadOnlyMemory<TData>.Empty;
         }
         else
@@ -149,9 +151,10 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
             var chunks = await _dataSource.FetchAsync(gaps, cancellationToken)
                 .ConfigureAwait(false);
 
-            fetchedChunks = [.. chunks];
+            fetchedChunks = [.. chunks]; // todo 1 array allocation
 
             // Fire one diagnostic event per gap fetched.
+            // todo we can avoid redundant iteration through gaps - diagnose in iterator below
             for (var i = 0; i < gaps.Count; i++)
             {
                 _diagnostics.DataSourceFetchGap();
@@ -163,7 +166,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
                 .Select(c => c.Data.ToRangeData(c.Range!.Value, _domain));
 
             // Assemble result from all RangeData sources (segments + fetched chunks).
-            (resultData, actualRange) = Assemble(requestedRange, [.. hittingRangeData, .. chunkRangeData]);
+            (resultData, actualRange) = Assemble(requestedRange, [.. hittingRangeData, .. chunkRangeData]); // todo 4 array allocations
         }
 
         // Step 7: Publish CacheNormalizationRequest and await the enqueue (preserves activity counter correctness).
@@ -199,6 +202,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     /// Computes the gaps in <paramref name="requestedRange"/> not covered by
     /// <paramref name="hittingSegments"/>.
     /// </summary>
+    /// TODO: looks like we can make this method returning IEnumerable
     private static IReadOnlyList<Range<TRange>> ComputeGaps(
         Range<TRange> requestedRange,
         IReadOnlyList<CachedSegment<TRange, TData>> hittingSegments)
@@ -254,7 +258,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     {
         // Pass 1: intersect each source with the requested range, compute per-piece length from
         // domain spans (cheap arithmetic — no enumeration), accumulate total length inline.
-        var pieces = new List<RangeData<TRange, TData, TDomain>>(sources.Count);
+        var pieces = new List<RangeData<TRange, TData, TDomain>>(sources.Count); // todo allocation
         var totalLength = 0L;
 
         foreach (var source in sources)
@@ -285,14 +289,14 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
                 return (ReadOnlyMemory<TData>.Empty, null);
             case 1:
                 // single source — enumerate directly into a right-sized array, no extra work.
-                return (new ReadOnlyMemory<TData>(pieces[0].Data.ToArray()), requestedRange);
+                return (new ReadOnlyMemory<TData>(pieces[0].Data.ToArray()), requestedRange); // todo allocation
         }
 
         pieces.Sort(static (a, b) => a.Range.Start.CompareTo(b.Range.Start));
 
         // Pass 2: allocate one result array, enumerate each slice directly into it at its offset.
         // No intermediate arrays, no redundant copies.
-        var result = new TData[totalLength];
+        var result = new TData[totalLength]; // todo allocation
         var offset = 0;
 
         foreach (var piece in pieces)
