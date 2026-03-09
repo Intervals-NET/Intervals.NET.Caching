@@ -102,8 +102,8 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
 
         // Step 2: Map segments to RangeData — zero-copy via ReadOnlyMemoryEnumerable.
         var hittingRangeData = hittingSegments
-            .Select(s => SegmentToRangeData(s, _domain))
-            .ToList();
+            .Select(s => new ReadOnlyMemoryEnumerable<TData>(s.Data).ToRangeData(s.Range, _domain))
+            .ToArray();
 
         // Step 3: Compute coverage gaps.
         var gaps = ComputeGaps(requestedRange, hittingSegments);
@@ -113,7 +113,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
         ReadOnlyMemory<TData> resultData;
         Range<TRange>? actualRange;
 
-        if (gaps.Count == 0 && hittingRangeData.Count > 0)
+        if (gaps.Count == 0 && hittingRangeData.Length > 0)
         {
             // Full Hit: entire requested range is covered by cached segments.
             cacheInteraction = CacheInteraction.FullHit;
@@ -122,7 +122,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
             (resultData, actualRange) = Assemble(requestedRange, hittingRangeData);
             fetchedChunks = null; // Signal to background: no new data to store
         }
-        else if (hittingRangeData.Count == 0)
+        else if (hittingRangeData.Length == 0)
         {
             // Full Miss: no cached data at all for this range.
             cacheInteraction = CacheInteraction.FullMiss;
@@ -136,7 +136,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
             fetchedChunks = [chunk];
             actualRange = chunk.Range;
             resultData = chunk.Range.HasValue
-                ? MaterialiseData(chunk.Data)
+                ? new ReadOnlyMemory<TData>(chunk.Data.ToArray())
                 : ReadOnlyMemory<TData>.Empty;
         }
         else
@@ -224,7 +224,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
             });
         }
 
-        return [..remaining];
+        return [.. remaining];
     }
 
     /// <summary>
@@ -238,15 +238,24 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     /// (<see langword="null"/> when no source intersects <paramref name="requestedRange"/>).
     /// </returns>
     /// <remarks>
-    /// Each source is intersected with <paramref name="requestedRange"/>, sliced lazily in domain
-    /// space via the <see cref="RangeData{TRangeType,TDataType,TRangeDomain}"/> indexer, and then
-    /// materialized. Only the intersection portion is ever allocated — no oversized backing arrays.
+    /// <para>
+    /// Each source is intersected with <paramref name="requestedRange"/> and sliced lazily in
+    /// domain space via the <see cref="RangeData{TRangeType,TDataType,TRangeDomain}"/> indexer.
+    /// </para>
+    /// <para>
+    /// Total length is computed from domain spans (no enumeration required), then a single
+    /// result array is allocated and each slice is enumerated directly into it at the correct
+    /// offset — one allocation, one pass per source, no intermediate arrays, no redundant copies.
+    /// </para>
     /// </remarks>
     private static (ReadOnlyMemory<TData> Data, Range<TRange>? ActualRange) Assemble(
         Range<TRange> requestedRange,
         IReadOnlyList<RangeData<TRange, TData, TDomain>> sources)
     {
-        var pieces = new List<(TRange Start, ReadOnlyMemory<TData> Data)>(sources.Count);
+        // Pass 1: intersect each source with the requested range, compute per-piece length from
+        // domain spans (cheap arithmetic — no enumeration), accumulate total length inline.
+        var pieces = new List<RangeData<TRange, TData, TDomain>>(sources.Count);
+        var totalLength = 0L;
 
         foreach (var source in sources)
         {
@@ -256,71 +265,44 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
                 continue;
             }
 
-            // Slice lazily in domain space, then materialize only the intersection portion.
-            var slicedData = MaterialiseData(source[intersectionRange.Value].Data);
-            pieces.Add((intersectionRange.Value.Start.Value, slicedData));
+            var spanRangeValue = intersectionRange.Value.Span(source.Domain);
+            if (!spanRangeValue.IsFinite || spanRangeValue.Value <= 0)
+            {
+                continue;
+            }
+
+            // Slice lazily — no allocation, no enumeration yet.
+            var length = spanRangeValue.Value;
+            pieces.Add(source[intersectionRange.Value]);
+            totalLength += length;
         }
 
-        if (pieces.Count == 0)
+        // Fast-path
+        switch (pieces.Count)
         {
-            return (ReadOnlyMemory<TData>.Empty, null);
+            case 0:
+                // no pieces intersect the requested range — return empty result with null range.
+                return (ReadOnlyMemory<TData>.Empty, null);
+            case 1:
+                // single source — enumerate directly into a right-sized array, no extra work.
+                return (new ReadOnlyMemory<TData>(pieces[0].Data.ToArray()), requestedRange);
         }
 
-        // Sort pieces by start and concatenate.
-        pieces.Sort(static (a, b) => a.Start.CompareTo(b.Start));
+        pieces.Sort(static (a, b) => a.Range.Start.CompareTo(b.Range.Start));
 
-        var totalLength = pieces.Sum(p => p.Data.Length);
-        var assembled = ConcatenateMemory(pieces.Select(p => p.Data), totalLength);
-
-        // Determine actual range: from requestedRange.Start to requestedRange.End
-        // (bounded by what we actually assembled — use requestedRange as approximation).
-        return (assembled, requestedRange);
-    }
-
-    /// <summary>
-    /// Converts a <see cref="CachedSegment{TRange,TData}"/> to a
-    /// <see cref="RangeData{TRangeType,TDataType,TRangeDomain}"/> using a zero-copy
-    /// <see cref="ReadOnlyMemoryEnumerable{T}"/> wrapper — no array allocation or data copy occurs.
-    /// </summary>
-    private static RangeData<TRange, TData, TDomain> SegmentToRangeData(
-        CachedSegment<TRange, TData> segment,
-        TDomain domain
-    ) => new ReadOnlyMemoryEnumerable<TData>(segment.Data).ToRangeData(segment.Range, domain);
-
-    private static ReadOnlyMemory<TData> MaterialiseData(IEnumerable<TData> data)
-        => new(data.ToArray());
-
-    private static ReadOnlyMemory<TData> ConcatenateMemory(
-        IEnumerable<ReadOnlyMemory<TData>> pieces,
-        int totalLength)
-    {
-        using var enumerator = pieces.GetEnumerator();
-
-        if (!enumerator.MoveNext())
-        {
-            return ReadOnlyMemory<TData>.Empty;
-        }
-
-        var first = enumerator.Current;
-
-        if (!enumerator.MoveNext())
-        {
-            return first;
-        }
-
+        // Pass 2: allocate one result array, enumerate each slice directly into it at its offset.
+        // No intermediate arrays, no redundant copies.
         var result = new TData[totalLength];
         var offset = 0;
 
-        first.Span.CopyTo(result.AsSpan(offset));
-        offset += first.Length;
-
-        do
+        foreach (var piece in pieces)
         {
-            var piece = enumerator.Current;
-            piece.Span.CopyTo(result.AsSpan(offset));
-            offset += piece.Length;
-        } while (enumerator.MoveNext());
+            foreach (var item in piece.Data)
+            {
+                result[offset++] = item;
+            }
+        }
 
-        return result;
+        return (result, requestedRange);
     }
 }
