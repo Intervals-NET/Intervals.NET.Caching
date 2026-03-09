@@ -2,9 +2,11 @@ using Intervals.NET.Extensions;
 using Intervals.NET.Domain.Abstractions;
 using Intervals.NET.Caching.Dto;
 using Intervals.NET.Caching.Extensions;
+using Intervals.NET.Caching.Infrastructure;
 using Intervals.NET.Caching.Infrastructure.Scheduling;
 using Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 using Intervals.NET.Caching.VisitedPlaces.Public.Instrumentation;
+using Intervals.NET.Data;
 using Intervals.NET.Data.Extensions;
 
 namespace Intervals.NET.Caching.VisitedPlaces.Core.UserPath;
@@ -75,11 +77,12 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     /// <para><strong>Algorithm:</strong></para>
     /// <list type="number">
     /// <item><description>Find intersecting segments via <c>storage.FindIntersecting</c></description></item>
+    /// <item><description>Map segments to <see cref="RangeData{TRangeType,TDataType,TRangeDomain}"/> (zero-copy via <see cref="ReadOnlyMemoryEnumerable{T}"/>)</description></item>
     /// <item><description>Compute gaps (sub-ranges not covered by any hitting segment)</description></item>
     /// <item><description>Determine scenario: FullHit (no gaps), FullMiss (no segments hit), or PartialHit (some gaps)</description></item>
     /// <item><description>Fetch gap data from IDataSource (FullMiss / PartialHit)</description></item>
-    /// <item><description>Assemble result data from segments and/or fetched chunks</description></item>
-    /// <item><description>Increment activity counter (S.H.1), publish CacheNormalizationRequest (fire-and-forget)</description></item>
+    /// <item><description>Assemble result data from <see cref="RangeData{TRangeType,TDataType,TRangeDomain}"/> sources</description></item>
+    /// <item><description>Publish CacheNormalizationRequest (fire-and-forget)</description></item>
     /// <item><description>Return RangeResult immediately</description></item>
     /// </list>
     /// </remarks>
@@ -97,7 +100,12 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
         // Step 1: Read intersecting segments (read-only, Invariant VPC.A.10).
         var hittingSegments = _storage.FindIntersecting(requestedRange);
 
-        // Step 2: Compute coverage gaps.
+        // Step 2: Map segments to RangeData — zero-copy via ReadOnlyMemoryEnumerable.
+        var hittingRangeData = hittingSegments
+            .Select(s => SegmentToRangeData(s, _domain))
+            .ToList();
+
+        // Step 3: Compute coverage gaps.
         var gaps = ComputeGaps(requestedRange, hittingSegments);
 
         CacheInteraction cacheInteraction;
@@ -105,17 +113,16 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
         ReadOnlyMemory<TData> resultData;
         Range<TRange>? actualRange;
 
-        if (gaps.Count == 0 && hittingSegments.Count > 0)
+        if (gaps.Count == 0 && hittingRangeData.Count > 0)
         {
             // Full Hit: entire requested range is covered by cached segments.
             cacheInteraction = CacheInteraction.FullHit;
             _diagnostics.UserRequestFullCacheHit();
 
-            resultData = AssembleFromSegments(requestedRange, hittingSegments, _domain);
-            actualRange = requestedRange;
+            (resultData, actualRange) = Assemble(requestedRange, hittingRangeData);
             fetchedChunks = null; // Signal to background: no new data to store
         }
-        else if (hittingSegments.Count == 0)
+        else if (hittingRangeData.Count == 0)
         {
             // Full Miss: no cached data at all for this range.
             cacheInteraction = CacheInteraction.FullMiss;
@@ -150,11 +157,16 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
                 _diagnostics.DataSourceFetchGap();
             }
 
-            // Assemble result from cached segments + fetched chunks.
-            (resultData, actualRange) = AssembleMixed(requestedRange, hittingSegments, fetchedChunks, _domain);
+            // Map fetched chunks to RangeData and merge with hitting segments.
+            var chunkRangeData = fetchedChunks
+                .Where(c => c.Range.HasValue)
+                .Select(c => c.Data.ToRangeData(c.Range!.Value, _domain));
+
+            // Assemble result from all RangeData sources (segments + fetched chunks).
+            (resultData, actualRange) = Assemble(requestedRange, [.. hittingRangeData, .. chunkRangeData]);
         }
 
-        // Step 6: Publish CacheNormalizationRequest and await the enqueue (preserves activity counter correctness).
+        // Step 7: Publish CacheNormalizationRequest and await the enqueue (preserves activity counter correctness).
         // Awaiting PublishWorkItemAsync only waits for the channel enqueue — not background processing —
         // so fire-and-forget semantics are preserved. The background loop handles processing asynchronously.
         var request = new CacheNormalizationRequest<TRange, TData>(
@@ -216,78 +228,37 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     }
 
     /// <summary>
-    /// Assembles result data for a full-hit scenario from the hitting segments.
+    /// Assembles result data from a list of <see cref="RangeData{TRangeType,TDataType,TRangeDomain}"/>
+    /// sources (cached segments and/or fetched chunks) clipped to <paramref name="requestedRange"/>.
     /// </summary>
-    private static ReadOnlyMemory<TData> AssembleFromSegments(
+    /// <param name="requestedRange">The range to assemble data for.</param>
+    /// <param name="sources">Domain-aware data sources, in any order.</param>
+    /// <returns>
+    /// The assembled <see cref="ReadOnlyMemory{T}"/> and the actual available range
+    /// (<see langword="null"/> when no source intersects <paramref name="requestedRange"/>).
+    /// </returns>
+    /// <remarks>
+    /// Each source is intersected with <paramref name="requestedRange"/>, sliced lazily in domain
+    /// space via the <see cref="RangeData{TRangeType,TDataType,TRangeDomain}"/> indexer, and then
+    /// materialized. Only the intersection portion is ever allocated — no oversized backing arrays.
+    /// </remarks>
+    private static (ReadOnlyMemory<TData> Data, Range<TRange>? ActualRange) Assemble(
         Range<TRange> requestedRange,
-        IReadOnlyList<CachedSegment<TRange, TData>> segments,
-        TDomain domain)
+        IReadOnlyList<RangeData<TRange, TData, TDomain>> sources)
     {
-        // Collect all data pieces within the requested range.
-        var pieces = new List<ReadOnlyMemory<TData>>();
-        var totalLength = 0;
+        var pieces = new List<(TRange Start, ReadOnlyMemory<TData> Data)>(sources.Count);
 
-        var sorted = segments.OrderBy(s => s.Range.Start.Value);
-
-        foreach (var seg in sorted)
+        foreach (var source in sources)
         {
-            // Compute intersection of this segment with the requested range.
-            var intersection = seg.Range.Intersect(requestedRange);
-            if (!intersection.HasValue)
+            var intersectionRange = source.Range.Intersect(requestedRange);
+            if (!intersectionRange.HasValue)
             {
                 continue;
             }
 
-            // Slice the segment data to the intersection.
-            var slice = SliceSegment(seg, intersection.Value, domain);
-            pieces.Add(slice);
-            totalLength += slice.Length;
-        }
-
-        return ConcatenateMemory(pieces, totalLength);
-    }
-
-    /// <summary>
-    /// Assembles result data for a partial-hit scenario from segments and fetched chunks.
-    /// Returns the assembled data and the actual available range.
-    /// </summary>
-    /// TODO: looks like this method is redundant and actually does the same as AssembleFromSegments, think about getting rid of it
-    private static (ReadOnlyMemory<TData> Data, Range<TRange>? ActualRange) AssembleMixed(
-        Range<TRange> requestedRange,
-        IReadOnlyList<CachedSegment<TRange, TData>> segments,
-        IReadOnlyList<RangeChunk<TRange, TData>> fetchedChunks,
-        TDomain domain)
-    {
-        // Build a list of (rangeStart, data) pairs covering what we have.
-        var pieces = new List<(TRange Start, ReadOnlyMemory<TData> Data)>();
-
-        foreach (var seg in segments)
-        {
-            var intersection = seg.Range.Intersect(requestedRange);
-            if (!intersection.HasValue)
-            {
-                continue;
-            }
-
-            var slice = SliceSegment(seg, intersection.Value, domain);
-            pieces.Add((intersection.Value.Start.Value, slice));
-        }
-
-        foreach (var chunk in fetchedChunks)
-        {
-            var intersection = chunk.Range?.Intersect(requestedRange);
-            if (!intersection.HasValue)
-            {
-                continue;
-            }
-
-            // Wrap as lazy RangeData, slice in domain space, then materialize only the needed portion.
-            // This avoids allocating a full-size backing array and immediately narrowing it —
-            // the materialized array is exactly the size of the intersection.
-            var rangeData = chunk.Data.ToRangeData(chunk.Range!.Value, domain);
-            var sliced = rangeData[intersection.Value];
-            var slicedChunkData = MaterialiseData(sliced.Data);
-            pieces.Add((intersection.Value.Start.Value, slicedChunkData));
+            // Slice lazily in domain space, then materialize only the intersection portion.
+            var slicedData = MaterialiseData(source[intersectionRange.Value].Data);
+            pieces.Add((intersectionRange.Value.Start.Value, slicedData));
         }
 
         if (pieces.Count == 0)
@@ -307,42 +278,14 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     }
 
     /// <summary>
-    /// Slices a cached segment's data to the specified intersection range using domain-aware span computation.
+    /// Converts a <see cref="CachedSegment{TRange,TData}"/> to a
+    /// <see cref="RangeData{TRangeType,TDataType,TRangeDomain}"/> using a zero-copy
+    /// <see cref="ReadOnlyMemoryEnumerable{T}"/> wrapper — no array allocation or data copy occurs.
     /// </summary>
-    private static ReadOnlyMemory<TData> SliceSegment(
+    private static RangeData<TRange, TData, TDomain> SegmentToRangeData(
         CachedSegment<TRange, TData> segment,
-        Range<TRange> intersection,
-        TDomain domain)
-    {
-        // Compute element offset from segment start to intersection start.
-        var offsetInSegment = (int)ComputeSpan(segment.Range.Start.Value, intersection.Start.Value, domain);
-        // Compute the number of elements in the intersection.
-        var sliceLength = (int)intersection.Span(domain).Value;
-
-        // Guard against out-of-range slicing (defensive).
-        var availableLength = segment.Data.Length - offsetInSegment;
-        if (offsetInSegment >= segment.Data.Length || availableLength <= 0)
-        {
-            return ReadOnlyMemory<TData>.Empty;
-        }
-
-        return segment.Data.Slice(offsetInSegment, Math.Min(sliceLength, availableLength));
-    }
-
-    /// <summary>
-    /// Computes the number of discrete domain elements between <paramref name="from"/> (inclusive)
-    /// and <paramref name="to"/> (exclusive) using <see cref="IRangeDomain{T}.Distance"/>.
-    /// Returns 0 when <paramref name="from"/> equals <paramref name="to"/>.
-    /// </summary>
-    private static long ComputeSpan(TRange from, TRange to, TDomain domain)
-    {
-        if (from.CompareTo(to) == 0)
-        {
-            return 0;
-        }
-
-        return domain.Distance(from, to);
-    }
+        TDomain domain
+    ) => new ReadOnlyMemoryEnumerable<TData>(segment.Data).ToRangeData(segment.Range, domain);
 
     private static ReadOnlyMemory<TData> MaterialiseData(IEnumerable<TData> data)
         => new(data.ToArray());
@@ -376,8 +319,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
             var piece = enumerator.Current;
             piece.Span.CopyTo(result.AsSpan(offset));
             offset += piece.Length;
-        }
-        while (enumerator.MoveNext());
+        } while (enumerator.MoveNext());
 
         return result;
     }
