@@ -485,6 +485,75 @@ public sealed class VisitedPlacesCacheInvariantTests : IAsyncDisposable
     }
 
     // ============================================================
+    // VPC.T.1 — TTL Expiration Is Idempotent
+    // ============================================================
+
+    /// <summary>
+    /// Invariant VPC.T.1 [Behavioral]: TTL expiration is idempotent.
+    /// A segment that has already been evicted by the eviction policy before its TTL fires
+    /// must not be double-removed or cause any error.
+    /// </summary>
+    [Fact]
+    public async Task Invariant_VPC_T_1_TtlExpirationIsIdempotent()
+    {
+        // ARRANGE — MaxSegmentCount(1): second request evicts first; first segment's TTL fires later
+        var options = new VisitedPlacesCacheOptions<int, int>(
+            eventChannelCapacity: 128,
+            segmentTtl: TimeSpan.FromMilliseconds(150));
+        var cache = TrackCache(TestHelpers.CreateCacheWithSimpleSource(_domain, _diagnostics, options, maxSegmentCount: 1));
+
+        // ACT — store segment A, then B (B evicts A); then wait for A's TTL to fire
+        await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(0, 9));
+        await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(20, 29));
+
+        Assert.Equal(2, _diagnostics.BackgroundSegmentStored);
+        Assert.Equal(1, _diagnostics.EvictionTriggered);
+
+        // Wait for both TTL work items to fire (one is a no-op because segment was already evicted)
+        await Task.Delay(500);
+
+        // ASSERT — two TTL expirations fired, zero background failures
+        Assert.Equal(2, _diagnostics.TtlSegmentExpired);
+        Assert.Equal(0, _diagnostics.BackgroundOperationFailed);
+    }
+
+    // ============================================================
+    // VPC.T.2 — TTL Does Not Block User Path
+    // ============================================================
+
+    /// <summary>
+    /// Invariant VPC.T.2 [Behavioral]: The TTL background actor never blocks user requests.
+    /// Even when TTL is configured with a very short value, user-facing GetDataAsync returns
+    /// promptly (no deadlock or starvation from TTL processing).
+    /// </summary>
+    [Fact]
+    public async Task Invariant_VPC_T_2_TtlDoesNotBlockUserPath()
+    {
+        // ARRANGE — very short TTL (1 ms); many requests in quick succession
+        var options = new VisitedPlacesCacheOptions<int, int>(
+            eventChannelCapacity: 128,
+            segmentTtl: TimeSpan.FromMilliseconds(1));
+        var cache = TrackCache(TestHelpers.CreateCacheWithSimpleSource(_domain, _diagnostics, options));
+
+        var ranges = Enumerable.Range(0, 10)
+            .Select(i => TestHelpers.CreateRange(i * 10, i * 10 + 9))
+            .ToArray();
+
+        // ACT — issue all requests; each should complete quickly without blocking on TTL
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        foreach (var range in ranges)
+        {
+            await cache.GetDataAsync(range, CancellationToken.None);
+        }
+        sw.Stop();
+
+        // ASSERT — all 10 requests completed well within 2 seconds (TTL doesn't block them)
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2),
+            $"User path was blocked: elapsed={sw.Elapsed.TotalMilliseconds:F0}ms");
+        Assert.Equal(0, _diagnostics.BackgroundOperationFailed);
+    }
+
+    // ============================================================
     // TEST DOUBLES
     // ============================================================
 

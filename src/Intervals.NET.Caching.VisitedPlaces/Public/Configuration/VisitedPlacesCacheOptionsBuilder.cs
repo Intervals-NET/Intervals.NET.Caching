@@ -15,6 +15,7 @@ public sealed class VisitedPlacesCacheOptionsBuilder<TRange, TData>
     private StorageStrategyOptions<TRange, TData> _storageStrategy =
         SnapshotAppendBufferStorageOptions<TRange, TData>.Default;
     private int _eventChannelCapacity = 128;
+    private TimeSpan? _segmentTtl;
 
     /// <summary>
     /// Sets the storage strategy by supplying a typed options object.
@@ -47,10 +48,34 @@ public sealed class VisitedPlacesCacheOptionsBuilder<TRange, TData>
     }
 
     /// <summary>
+    /// Sets the time-to-live for each cached segment.
+    /// When set, segments are automatically removed after this duration from the time they are stored.
+    /// Defaults to <see langword="null"/> (no TTL — segments are only removed via eviction policies).
+    /// </summary>
+    /// <param name="ttl">
+    /// The TTL duration. Must be &gt; <see cref="TimeSpan.Zero"/>.
+    /// </param>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="ttl"/> is &lt;= <see cref="TimeSpan.Zero"/>.
+    /// </exception>
+    public VisitedPlacesCacheOptionsBuilder<TRange, TData> WithSegmentTtl(TimeSpan ttl)
+    {
+        if (ttl <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(ttl),
+                "SegmentTtl must be greater than TimeSpan.Zero.");
+        }
+
+        _segmentTtl = ttl;
+        return this;
+    }
+
+    /// <summary>
     /// Builds and returns a <see cref="VisitedPlacesCacheOptions{TRange,TData}"/> with the configured values.
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">
     /// Thrown when any value fails validation.
     /// </exception>
-    public VisitedPlacesCacheOptions<TRange, TData> Build() => new(_storageStrategy, _eventChannelCapacity);
+    public VisitedPlacesCacheOptions<TRange, TData> Build() => new(_storageStrategy, _eventChannelCapacity, _segmentTtl);
 }

@@ -35,12 +35,12 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Policies;
 ///   <see cref="OnSegmentRemoved"/> subtracts the segment's span from <c>_totalSpan</c>.
 /// </description></item>
 /// </list>
-/// <para>
-/// Both lifecycle hooks are called by <see cref="EvictionPolicyEvaluator{TRange,TData}"/>
-/// on the Background Path (single writer), so <c>_totalSpan</c> is always current when
-/// <see cref="Evaluate"/> is called. <c>Evaluate</c> simply reads <c>_totalSpan</c> and
-/// compares it against <c>MaxTotalSpan</c> — O(1).
-/// </para>
+ /// <para>
+ /// Both lifecycle hooks are called by <see cref="EvictionPolicyEvaluator{TRange,TData}"/>
+ /// and may also be called by the TTL actor concurrently. <c>_totalSpan</c> is updated via
+ /// <see cref="Interlocked.Add(ref long, long)"/> so it is always thread-safe.
+ /// <see cref="Evaluate"/> reads it via <see cref="Volatile.Read"/> for an acquire fence.
+ /// </para>
 /// <para><strong>Key improvement over the old stateless design:</strong></para>
 /// <para>
 /// The old implementation iterated <c>allSegments</c> in every <c>Evaluate</c> call and called
@@ -97,40 +97,43 @@ internal sealed class MaxTotalSpanPolicy<TRange, TData, TDomain> : IStatefulEvic
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Adds <c>segment.Range.Span(domain).Value</c> to the running total.
-    /// Called by <see cref="EvictionPolicyEvaluator{TRange,TData}"/> immediately after each
-    /// segment is added to storage. Background Path only.
+    /// Adds <c>segment.Range.Span(domain).Value</c> to the running total atomically via
+    /// <see cref="Interlocked.Add(ref long, long)"/>. Safe to call concurrently from the
+    /// Background Storage Loop and the TTL actor.
     /// </remarks>
     public void OnSegmentAdded(CachedSegment<TRange, TData> segment)
     {
-        _totalSpan += segment.Range.Span(_domain).Value;
+        Interlocked.Add(ref _totalSpan, segment.Range.Span(_domain).Value);
     }
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Subtracts <c>segment.Range.Span(domain).Value</c> from the running total.
-    /// Called by <see cref="EvictionPolicyEvaluator{TRange,TData}"/> immediately after each
-    /// segment is removed from storage. Background Path only.
+    /// Subtracts <c>segment.Range.Span(domain).Value</c> from the running total atomically via
+    /// <see cref="Interlocked.Add(ref long, long)"/> with a negated value. Safe to call
+    /// concurrently from the Background Storage Loop and the TTL actor.
     /// </remarks>
     public void OnSegmentRemoved(CachedSegment<TRange, TData> segment)
     {
-        _totalSpan -= segment.Range.Span(_domain).Value;
+        Interlocked.Add(ref _totalSpan, -segment.Range.Span(_domain).Value);
     }
 
     /// <inheritdoc/>
     /// <remarks>
-    /// O(1): compares the cached <c>_totalSpan</c> against <c>MaxTotalSpan</c>.
+    /// O(1): reads the cached <c>_totalSpan</c> via <see cref="Volatile.Read"/> and compares
+    /// it against <c>MaxTotalSpan</c>.
     /// The <paramref name="allSegments"/> parameter is not used; the running total maintained
     /// via <see cref="OnSegmentAdded"/> and <see cref="OnSegmentRemoved"/> is always current.
     /// </remarks>
     public IEvictionPressure<TRange, TData> Evaluate(IReadOnlyList<CachedSegment<TRange, TData>> allSegments)
     {
-        if (_totalSpan <= MaxTotalSpan)
+        var currentSpan = Volatile.Read(ref _totalSpan);
+
+        if (currentSpan <= MaxTotalSpan)
         {
             return NoPressure<TRange, TData>.Instance;
         }
 
-        return new TotalSpanPressure(_totalSpan, MaxTotalSpan, _domain);
+        return new TotalSpanPressure(currentSpan, MaxTotalSpan, _domain);
     }
 
     /// <summary>

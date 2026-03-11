@@ -92,4 +92,25 @@ public interface IVisitedPlacesCacheDiagnostics : ICacheDiagnostics
     /// Related: Invariant VPC.E.6
     /// </summary>
     void EvictionSegmentRemoved();
+
+    // ============================================================================
+    // TTL COUNTERS
+    // ============================================================================
+
+    /// <summary>
+    /// Records a segment that was successfully expired and removed by the TTL actor.
+    /// Called once per segment removed due to TTL expiration (idempotent removal is a no-op
+    /// and does NOT fire this event — only actual removals are counted).
+    /// Location: TtlExpirationExecutor.ExecuteAsync
+    /// Related: Invariant VPC.T.1
+    /// </summary>
+    void TtlSegmentExpired();
+
+    /// <summary>
+    /// Records a TTL expiration work item that was scheduled for a newly stored segment.
+    /// Called once per segment stored when TTL is enabled.
+    /// Location: CacheNormalizationExecutor.ExecuteAsync (step 2, after storage)
+    /// Related: Invariant VPC.T.2
+    /// </summary>
+    void TtlWorkItemScheduled();
 }

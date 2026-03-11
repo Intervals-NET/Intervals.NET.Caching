@@ -6,7 +6,7 @@ VisitedPlaces-specific system invariants. Shared invariant groups — **S.H** (a
 
 ## Understanding This Document
 
-This document lists **VisitedPlaces-specific invariants** across groups VPC.A–VPC.F.
+This document lists **VisitedPlaces-specific invariants** across groups VPC.A–VPC.T.
 
 ### Invariant Categories
 
@@ -218,18 +218,20 @@ Assert.Equal(expectedCount, cache.SegmentCount);
 
 ### VPC.C.3 Segment Freshness
 
-**VPC.C.6** [Conceptual] Segments are **not invalidated or refreshed** by VPC itself.
+**VPC.C.6** [Conceptual] Segments support **TTL-based expiration** via `VisitedPlacesCacheOptions.SegmentTtl`.
 
-- VPC does not have a TTL-based expiration mechanism; segments are evicted by the configured eviction policies and selector, not by age alone
-- Freshness is the responsibility of the caller or of a higher-layer eviction strategy
+- When `SegmentTtl` is non-null, a `TtlExpirationWorkItem` is scheduled immediately after each segment is stored.
+- The TTL actor awaits the expiration delay fire-and-forget on the thread pool and then removes the segment directly via `ISegmentStorage`.
+- When `SegmentTtl` is null (default), no TTL work items are scheduled and segments are only evicted by the configured eviction policies.
 
 ---
 
 ## VPC.D. Concurrency Invariants
 
-**VPC.D.1** [Architectural] The **two-thread model** is strictly enforced: User Thread and Background Storage Loop are the only execution contexts.
+**VPC.D.1** [Architectural] The execution model includes three execution contexts: User Thread, Background Storage Loop, and TTL Loop.
 
 - No other threads may access cache-internal mutable state
+- The TTL Loop accesses storage directly via `ISegmentStorage` and uses `CachedSegment.MarkAsRemoved()` for atomic, idempotent removal coordination
 
 **VPC.D.2** [Architectural] User Path read operations on `CachedSegments` are **safe under concurrent access** from multiple user threads.
 
@@ -344,6 +346,28 @@ Assert.Equal(expectedCount, cache.SegmentCount);
 
 ---
 
+## VPC.T. TTL (Time-To-Live) Invariants
+
+**VPC.T.1** [Architectural] TTL expiration is **idempotent**: if a segment has already been evicted by a capacity policy when its TTL fires, the removal is a no-op.
+
+- `TtlExpirationExecutor` calls `segment.MarkAsRemoved()` (an `Interlocked.CompareExchange` on the segment's `_isRemoved` field) before performing any storage mutation.
+- If `MarkAsRemoved()` returns `false` (another caller already set the flag), the TTL actor skips `storage.Remove` entirely.
+- This ensures that concurrent eviction and TTL expiration cannot produce a double-remove or corrupt storage state.
+
+**VPC.T.2** [Architectural] The TTL actor **never blocks the User Path**: it runs fire-and-forget on the thread pool via a dedicated `FireAndForgetWorkScheduler`.
+
+- `TtlExpirationExecutor` awaits `Task.Delay(ttl - elapsed)` independently on the thread pool; each TTL work item runs concurrently with others.
+- The User Path and the Background Storage Loop are never touched by TTL work items.
+- TTL work items use their own `AsyncActivityCounter` so that `WaitForIdleAsync` does not wait for long-running TTL delays.
+
+**VPC.T.3** [Conceptual] Pending TTL delays are **cancelled on disposal**.
+
+- When `VisitedPlacesCache.DisposeAsync` is called, the TTL scheduler is disposed after the normalization scheduler has been drained.
+- The `FireAndForgetWorkScheduler`'s `CancellationToken` is cancelled, aborting any in-progress `Task.Delay` calls via `OperationCanceledException`.
+- No TTL work item outlives the cache instance.
+
+---
+
 ## VPC.F. Data Source & I/O Invariants
 
 **VPC.F.1** [Architectural] `IDataSource.FetchAsync` is called **only for true gaps** — sub-ranges of `RequestedRange` not covered by any segment in `CachedSegments`.
@@ -381,6 +405,7 @@ VPC invariant groups:
 | VPC.D  | Concurrency                               | 5     |
 | VPC.E  | Eviction                                  | 13    |
 | VPC.F  | Data Source & I/O                         | 4     |
+| VPC.T  | TTL (Time-To-Live)                        | 3     |
 
 Shared invariants (S.H, S.J) are in `docs/shared/invariants.md`.
 

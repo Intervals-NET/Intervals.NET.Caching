@@ -57,7 +57,7 @@ Both strategies are designed around VPC's two-thread model:
 - **Background Path** writes are exclusive: only one background thread ever writes (single-writer guarantee)
 - **RCU semantics** (Read-Copy-Update): reads operate on a stable snapshot; the background thread builds a new snapshot and publishes it atomically via `Volatile.Write`
 
-**Soft delete** is used by both MVP strategies as an internal optimization: segments marked for eviction are logically removed immediately (invisible to reads) but physically removed during the next normalization pass. This allows the background thread to batch physical removal work rather than doing it inline during eviction.
+**Logical removal** is used by both MVP strategies as an internal optimization: a removed segment is marked via `CachedSegment.IsRemoved` (set atomically with `Interlocked.CompareExchange`) so it is immediately invisible to reads, but its node/slot is only physically removed during the next normalization pass. This allows the background thread to batch physical removal work rather than doing it inline during eviction.
 
 **Append buffer** is used by both MVP strategies: new segments are written to a small fixed-size buffer rather than immediately integrated into the main sorted structure. The main structure is rebuilt ("normalized") when the buffer becomes full. This amortizes the cost of maintaining sort order. The buffer size is configurable via `AppendBufferSize` on each options object (default: 8).
 
@@ -87,9 +87,10 @@ Controls the number of segments accumulated in the append buffer before a normal
 SnapshotAppendBufferStorage
 ├── _snapshot: Segment[]             (sorted by range start; read via Volatile.Read)
 ├── _appendBuffer: Segment[N]        (fixed-size N = AppendBufferSize; new segments written here)
-├── _appendCount: int                (count of valid entries in append buffer)
-└── _softDeleteMask: bool[*]         (marks deleted segments; cleared on normalization)
+└── _appendCount: int                (count of valid entries in append buffer)
 ```
+
+> Logical removal is tracked via `CachedSegment.IsRemoved` (an `int` field on each segment, set atomically via `Interlocked.CompareExchange`). No separate mask array is maintained; all reads filter out segments where `IsRemoved == true`.
 
 ### Read Path (User Thread)
 
@@ -111,16 +112,15 @@ SnapshotAppendBufferStorage
 2. Increment `_appendCount`
 3. If `_appendCount == N` (buffer full): **normalize** (see below)
 
-**Remove segment (soft delete):**
-1. Mark the segment's slot in `_softDeleteMask` as `true`
-2. No immediate structural change
+**Remove segment (logical removal):**
+1. Call `segment.MarkAsRemoved()` — sets `segment.IsRemoved = true` atomically (Interlocked.CompareExchange)
+2. No immediate structural change to snapshot or append buffer
 
 **Normalize:**
-1. Allocate a new `Segment[]` of size `(_snapshot.Length - softDeleteCount + _appendCount)`
-2. Merge `_snapshot` (excluding soft-deleted entries) and `_appendBuffer[0.._appendCount]` into the new array via merge-sort
-3. Reset `_softDeleteMask` (all `false`)
-4. Reset `_appendCount = 0`
-5. `Volatile.Write(_snapshot, newArray)` — atomically publish the new snapshot
+1. Allocate a new `Segment[]` of size `(_snapshot.Length - removedCount + _appendCount)`
+2. Merge `_snapshot` (excluding `IsRemoved` segments) and `_appendBuffer[0.._appendCount]` into the new array via merge-sort
+3. Reset `_appendCount = 0`
+4. `Volatile.Write(_snapshot, newArray)` — atomically publish the new snapshot
 
 **Normalization cost**: O(n log n) where n = total segment count (or O(n + m) with merge-sort since both inputs are sorted)
 
@@ -179,9 +179,10 @@ LinkedListStrideIndexStorage
 ├── _list: DoublyLinkedList<Segment>     (sorted by range start; single-writer)
 ├── _strideIndex: Segment[]              (array of every Nth node = "stride anchors")
 ├── _strideAppendBuffer: Segment[M]      (M = AppendBufferSize; new stride anchors before normalization)
-├── _strideAppendCount: int
-└── _softDeleteMask: bool[*]             (marks deleted nodes across list + stride index)
+└── _strideAppendCount: int
 ```
+
+> Logical removal is tracked via `CachedSegment.IsRemoved` (an `int` field on each segment, set atomically via `Interlocked.CompareExchange`). No separate mask array is maintained; all reads and stride-index walks filter out segments where `IsRemoved == true`. Physical unlinking of removed nodes from `_list` happens during stride normalization.
 
 **Stride**: A configurable integer N (default N=16) defining how often a stride anchor is placed. A stride anchor is a reference to the Nth, 2Nth, 3Nth... node in the sorted linked list.
 
@@ -206,20 +207,19 @@ LinkedListStrideIndexStorage
 3. Increment `_strideAppendCount`
 4. If `_strideAppendCount == M` (stride buffer full): **normalize stride index** (see below)
 
-**Remove segment (soft delete):**
-1. Mark the segment's node in `_softDeleteMask` as `true`
+**Remove segment (logical removal):**
+1. Call `segment.MarkAsRemoved()` — sets `segment.IsRemoved = true` atomically (Interlocked.CompareExchange)
 2. No immediate structural change to the list or stride index
 
 **Normalize stride index:**
-1. Allocate a new `Segment[]` of size `ceil(nonDeletedListCount / N)`
-2. Walk `_list` from head to tail (excluding soft-deleted nodes), collecting every Nth node as a stride anchor
+1. Allocate a new `Segment[]` of size `ceil(nonRemovedListCount / N)`
+2. Walk `_list` from head to tail, physically unlinking nodes where `IsRemoved == true` and collecting every Nth surviving node as a stride anchor
 3. Reset `_strideAppendBuffer` (clear count)
-4. Reset all soft-delete bits for stride-index entries (physical removal of deleted nodes from `_list` also happens here)
-5. `Volatile.Write(_strideIndex, newArray)` — atomically publish the new stride index
+4. `Volatile.Write(_strideIndex, newArray)` — atomically publish the new stride index
 
 **Normalization cost**: O(n) list traversal + O(n/N) for new stride array allocation
 
-**Physical removal**: Soft-deleted nodes are physically unlinked from `_list` during stride normalization. Between normalizations, they remain in the list but are skipped during scans via the soft-delete mask.
+**Physical removal**: Logically-removed nodes are physically unlinked from `_list` during stride normalization. Between normalizations, they remain in the list but are skipped during scans via `segment.IsRemoved`.
 
 ### Memory Behavior
 
@@ -250,7 +250,7 @@ Same as Strategy 1: User Path threads read via `Volatile.Read(_strideIndex)`. Th
 | **Read cost**                   | O(log n + k + m)                | O(log(n/N) + k + N + m)           |
 | **Write cost (add)**            | O(1) amortized (to buffer)      | O(log(n/N) + N)                   |
 | **Normalization cost**          | O(n log n) or O(n+m)            | O(n)                              |
-| **Eviction cost (soft delete)** | O(1)                            | O(1)                              |
+| **Eviction cost (logical removal)** | O(1)                            | O(1)                              |
 | **Memory pattern**              | One sorted array per snapshot   | Linked list + small stride array  |
 | **LOH risk**                    | High for large n                | Low (no single large array)       |
 | **Best for**                    | Small caches, < 85KB total data | Large caches, high segment counts |
@@ -285,11 +285,15 @@ If unsure: start with **Snapshot + Append Buffer** (`SnapshotAppendBufferStorage
 
 ## Implementation Notes
 
-### Soft Delete: Internal Optimization Only
+### Thread-Safe Segment Count
 
-Soft delete is an implementation detail of both MVP strategies. It is NOT an architectural invariant. Future storage strategies (e.g., skip list, B+ tree) may use immediate physical removal instead. External code must never observe or depend on the soft-deleted-but-not-yet-removed state of a segment.
+Both strategies expose a `Count` property that is read by the `MaxSegmentCountPolicy` on the Background Storage Loop and may also be read by the TTL Loop (via `TtlExpirationExecutor`). To avoid torn reads, `_count` is maintained with `Interlocked.Increment`/`Decrement` for writes and `Volatile.Read` for reads. This ensures consistent count visibility across both execution contexts without a lock.
 
-From the User Path's perspective, a segment is either present (returned by `FindIntersecting`) or absent. Soft-deleted segments are filtered out during scans and are never returned to the User Path.
+### Logical Removal: Internal Optimization Only
+
+Logical removal (via `CachedSegment.IsRemoved`) is an implementation detail of both MVP strategies. It is NOT an architectural invariant. Future storage strategies (e.g., skip list, B+ tree) may use immediate physical removal instead. External code must never observe or depend on the logically-removed-but-not-yet-unlinked state of a segment.
+
+From the User Path's perspective, a segment is either present (returned by `FindIntersecting`) or absent. Logically-removed segments are filtered out during scans and are never returned to the User Path.
 
 ### Append Buffer: Internal Optimization Only
 

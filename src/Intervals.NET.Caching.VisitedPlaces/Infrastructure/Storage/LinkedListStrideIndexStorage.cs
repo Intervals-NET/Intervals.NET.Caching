@@ -16,8 +16,15 @@ namespace Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 /// <item><description><c>_list</c> — doubly-linked list sorted by segment range start; mutated on Background Path only</description></item>
 /// <item><description><c>_strideIndex</c> — array of every Nth node ("stride anchors"); published via <c>Volatile.Write</c></description></item>
 /// <item><description><c>_strideAppendBuffer</c> — fixed-size buffer collecting newly-added segments before stride normalization</description></item>
-/// <item><description><c>_softDeleted</c> — set of logically-removed segments; physically unlinked during normalization</description></item>
 /// </list>
+/// <para><strong>Soft-delete via <see cref="CachedSegment{TRange,TData}.IsRemoved"/>:</strong></para>
+/// <para>
+/// Rather than maintaining a separate <c>_softDeleted</c> collection, this implementation uses
+/// <see cref="CachedSegment{TRange,TData}.IsRemoved"/> as the primary soft-delete filter.
+/// The flag is set atomically by <see cref="CachedSegment{TRange,TData}.MarkAsRemoved"/>.
+/// Removed nodes are physically unlinked from <c>_list</c> during <see cref="NormalizeStrideIndex"/>.
+/// All read paths skip segments whose <c>IsRemoved</c> flag is set without needing a shared collection.
+/// </para>
 /// <para><strong>RCU semantics (Invariant VPC.B.5):</strong>
 /// User Path threads read a stable stride index via <c>Volatile.Read</c>. New stride index arrays
 /// are published atomically via <c>Volatile.Write</c> during normalization.</para>
@@ -51,11 +58,9 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
     private readonly CachedSegment<TRange, TData>[] _strideAppendBuffer;
     private int _strideAppendCount;
 
-    // Soft-delete set: segments logically removed but not yet physically unlinked from _list.
-    private readonly HashSet<CachedSegment<TRange, TData>> _softDeleted =
-        new(ReferenceEqualityComparer.Instance);
-
-    // Total count of live (non-deleted) segments.
+    // Total count of live (non-removed) segments.
+    // Decremented by Remove (which may be called from the TTL thread) via Interlocked.Decrement.
+    // Incremented only on the Background Path via Interlocked.Increment.
     private int _count;
 
     /// <summary>
@@ -92,7 +97,7 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
     }
 
     /// <inheritdoc/>
-    public int Count => _count;
+    public int Count => Volatile.Read(ref _count);
 
     /// <inheritdoc/>
     /// <remarks>
@@ -100,17 +105,16 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
     /// <list type="number">
     /// <item><description>Acquire stable stride index via <c>Volatile.Read</c></description></item>
     /// <item><description>Binary-search stride index for the anchor just before <paramref name="range"/>.Start</description></item>
-    /// <item><description>Walk the list forward from the anchor, collecting intersecting non-soft-deleted segments</description></item>
-    /// <item><description>Linear-scan the stride append buffer for intersecting non-soft-deleted segments</description></item>
+    /// <item><description>Walk the list forward from the anchor, collecting intersecting non-removed segments (checked via <see cref="CachedSegment{TRange,TData}.IsRemoved"/>)</description></item>
     /// </list>
     /// </remarks>
     public IReadOnlyList<CachedSegment<TRange, TData>> FindIntersecting(Range<TRange> range)
     {
         var strideIndex = Volatile.Read(ref _strideIndex);
-        var softDeleted = _softDeleted; // Background Path only modifies; User Path only reads
 
         var results = new List<CachedSegment<TRange, TData>>();
 
+        // todo try to deduplicate search mechanism
         // Binary search stride index: find the last anchor whose Start <= range.End
         // (the anchor just before or at the query range).
         // We want the rightmost anchor whose Start.Value <= range.End.Value.
@@ -165,7 +169,8 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
                 break;
             }
 
-            if (!softDeleted.Contains(seg) && seg.Range.Overlaps(range))
+            // Use IsRemoved flag as the primary soft-delete filter (no shared collection needed).
+            if (!seg.IsRemoved && seg.Range.Overlaps(range))
             {
                 results.Add(seg);
             }
@@ -190,7 +195,7 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
         // Write to stride append buffer.
         _strideAppendBuffer[_strideAppendCount] = segment;
         _strideAppendCount++;
-        _count++;
+        Interlocked.Increment(ref _count);
 
         if (_strideAppendCount == _strideAppendBufferSize)
         {
@@ -199,10 +204,32 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
     }
 
     /// <inheritdoc/>
-    public void Remove(CachedSegment<TRange, TData> segment)
+    /// <remarks>
+    /// <para>
+    /// Calls <see cref="CachedSegment{TRange,TData}.MarkAsRemoved"/> to atomically transition
+    /// the segment to the removed state. If this is the first removal of the segment, <c>_count</c>
+    /// is decremented and <see langword="true"/> is returned. Subsequent calls are no-ops
+    /// (idempotent) and return <see langword="false"/>.
+    /// </para>
+    /// <para>
+    /// The node is NOT physically unlinked immediately; it remains in <c>_list</c> until the next
+    /// <see cref="NormalizeStrideIndex"/> pass. All read paths skip removed segments via the
+    /// <see cref="CachedSegment{TRange,TData}.IsRemoved"/> flag.
+    /// </para>
+    /// <para><strong>Thread safety:</strong> Safe to call concurrently from the Background Path
+    /// (eviction) and the TTL thread. <see cref="CachedSegment{TRange,TData}.MarkAsRemoved"/>
+    /// uses <c>Interlocked.CompareExchange</c>; <c>_count</c> uses <c>Interlocked.Decrement</c>.
+    /// </para>
+    /// </remarks>
+    public bool Remove(CachedSegment<TRange, TData> segment)
     {
-        _softDeleted.Add(segment);
-        _count--;
+        if (segment.MarkAsRemoved())
+        {
+            Interlocked.Decrement(ref _count);
+            return true;
+        }
+
+        return false;
     }
 
     /// <inheritdoc/>
@@ -213,10 +240,11 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
         var node = _list.First;
         while (node != null)
         {
-            if (!_softDeleted.Contains(node.Value))
+            if (!node.Value.IsRemoved)
             {
                 results.Add(node.Value);
             }
+
             node = node.Next;
         }
 
@@ -313,28 +341,34 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
     }
 
     /// <summary>
-    /// Rebuilds the stride index by walking the live linked list, collecting every Nth node
-    /// as a stride anchor, physically removing soft-deleted nodes, and atomically publishing
-    /// the new stride index via <c>Volatile.Write</c>.
+    /// Rebuilds the stride index by walking the live linked list, physically removing nodes
+    /// whose <see cref="CachedSegment{TRange,TData}.IsRemoved"/> flag is set, collecting every
+    /// Nth live node as a stride anchor, and atomically publishing the new stride index via
+    /// <c>Volatile.Write</c>.
     /// </summary>
     /// <remarks>
     /// <para><strong>Algorithm:</strong> O(n) list traversal + O(n/N) stride array allocation.</para>
-    /// <para>Clears <c>_softDeleted</c>, resets <c>_strideAppendCount</c> to 0, physically unlinks
-    /// soft-deleted nodes, and publishes the new stride index atomically.</para>
+    /// <para>
+    /// Resets <c>_strideAppendCount</c> to 0 and publishes the new stride index atomically.
+    /// Removed segments are physically unlinked from <c>_list</c> and evicted from <c>_nodeMap</c>
+    /// during this pass, reclaiming memory.
+    /// </para>
     /// </remarks>
     private void NormalizeStrideIndex()
     {
-        // First pass: physically unlink soft-deleted nodes and compute live count.
-        foreach (var seg in _softDeleted)
+        // First pass: physically unlink removed nodes from the list.
+        var node = _list.First;
+        while (node != null)
         {
-            if (_nodeMap.TryGetValue(seg, out var node))
+            var next = node.Next;
+            if (node.Value.IsRemoved)
             {
+                _nodeMap.Remove(node.Value);
                 _list.Remove(node);
-                _nodeMap.Remove(seg);
             }
-        }
 
-        _softDeleted.Clear();
+            node = next;
+        }
 
         // Second pass: walk live list and collect every Nth node as a stride anchor.
         var liveCount = _list.Count;

@@ -60,12 +60,19 @@ internal interface ISegmentStorage<TRange, TData>
     /// Removes a segment from the storage.
     /// </summary>
     /// <param name="segment">The segment to remove.</param>
+    /// <returns>
+    /// <see langword="true"/> if this call was the first to remove the segment
+    /// (i.e., <see cref="CachedSegment{TRange,TData}.MarkAsRemoved"/> returned <see langword="true"/>
+    /// for this call); <see langword="false"/> if the segment was already removed by a concurrent
+    /// caller (idempotent no-op).
+    /// </returns>
     /// <remarks>
-    /// <para><strong>Execution Context:</strong> Background Path (single writer)</para>
+    /// <para><strong>Execution Context:</strong> Background Path (single writer) or TTL</para>
     /// <para>Implementations may use soft-delete internally; the segment
-    /// becomes immediately invisible to <see cref="FindIntersecting"/> after this call.</para>
+    /// becomes immediately invisible to all read operations after this call.</para>
+    /// <para>The call is idempotent. Safe to call several times.</para>
     /// </remarks>
-    void Remove(CachedSegment<TRange, TData> segment);
+    bool Remove(CachedSegment<TRange, TData> segment);
 
     /// <summary>
     /// Returns all currently stored (non-deleted) segments.

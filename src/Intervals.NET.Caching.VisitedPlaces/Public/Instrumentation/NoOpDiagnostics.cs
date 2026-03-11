@@ -40,4 +40,10 @@ public sealed class NoOpDiagnostics : NoOpCacheDiagnostics, IVisitedPlacesCacheD
 
     /// <inheritdoc/>
     public void EvictionSegmentRemoved() { }
+
+    /// <inheritdoc/>
+    public void TtlSegmentExpired() { }
+
+    /// <inheritdoc/>
+    public void TtlWorkItemScheduled() { }
 }

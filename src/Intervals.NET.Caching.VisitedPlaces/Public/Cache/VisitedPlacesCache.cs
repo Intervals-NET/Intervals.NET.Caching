@@ -5,6 +5,7 @@ using Intervals.NET.Caching.Infrastructure.Scheduling;
 using Intervals.NET.Caching.VisitedPlaces.Core;
 using Intervals.NET.Caching.VisitedPlaces.Core.Background;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
+using Intervals.NET.Caching.VisitedPlaces.Core.Ttl;
 using Intervals.NET.Caching.VisitedPlaces.Core.UserPath;
 using Intervals.NET.Caching.VisitedPlaces.Infrastructure.Adapters;
 using Intervals.NET.Caching.VisitedPlaces.Public.Configuration;
@@ -25,14 +26,17 @@ namespace Intervals.NET.Caching.VisitedPlaces.Public.Cache;
 /// <para><strong>Internal Actors:</strong></para>
 /// <list type="bullet">
 /// <item><description><strong>UserRequestHandler</strong> — User Path (read-only, fires events)</description></item>
-/// <item><description><strong>CacheNormalizationExecutor</strong> — Background Storage Loop (single writer)</description></item>
+/// <item><description><strong>CacheNormalizationExecutor</strong> — Background Storage Loop (single writer for Add)</description></item>
 /// <item><description><strong>TaskBasedWorkScheduler / ChannelBasedWorkScheduler</strong> — serializes background events, manages activity</description></item>
+/// <item><description><strong>FireAndForgetWorkScheduler</strong> — TTL expiration path (concurrent, fire-and-forget)</description></item>
 /// </list>
 /// <para><strong>Threading Model:</strong></para>
 /// <para>
 /// Two logical threads: the User Thread (serves requests) and the Background Storage Loop
-/// (processes events, mutates storage, executes eviction). The User Path is strictly read-only
-/// (Invariant VPC.A.10).
+/// (processes events, adds to storage, executes eviction). The User Path is strictly read-only
+/// (Invariant VPC.A.10). TTL expirations run concurrently on the ThreadPool and use atomic
+/// operations (<see cref="CachedSegment{TRange,TData}.MarkAsRemoved()"/>) to coordinate
+/// removal with the Background Storage Loop.
 /// </para>
 /// <para><strong>Consistency Modes:</strong></para>
 /// <list type="bullet">
@@ -45,6 +49,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Public.Cache;
 /// the processing loop to drain gracefully.
 /// </para>
 /// </remarks>
+/// TODO: think about moving some part of the logic into the Intervals.NET, maybe we can move out the collection of not overlapped disjoint data ranges
 public sealed class VisitedPlacesCache<TRange, TData, TDomain>
     : IVisitedPlacesCache<TRange, TData, TDomain>
     where TRange : IComparable<TRange>
@@ -52,6 +57,7 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
 {
     private readonly UserRequestHandler<TRange, TData, TDomain> _userRequestHandler;
     private readonly AsyncActivityCounter _activityCounter;
+    private readonly IWorkScheduler<TtlExpirationWorkItem<TRange, TData>>? _ttlScheduler;
 
     // Disposal state: 0 = active, 1 = disposing, 2 = disposed (three-state for idempotency)
     private int _disposeState;
@@ -101,11 +107,32 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
         // and eviction-specific diagnostics. Storage mutations remain in the processor.
         var evictionEngine = new EvictionEngine<TRange, TData>(policies, selector, cacheDiagnostics);
 
-        // Cache normalization executor: single writer, executes the four-step Background Path.
+        // TTL scheduler: constructed only when SegmentTtl is configured.
+        // Uses FireAndForgetWorkScheduler — each TTL work item awaits Task.Delay independently
+        // on the ThreadPool, so items do not serialize behind each other's delays.
+        // Thread safety is provided by CachedSegment.MarkAsRemoved() (Interlocked.CompareExchange)
+        // and EvictionEngine.OnSegmentsRemoved (Interlocked.Add in MaxTotalSpanPolicy).
+        IWorkScheduler<TtlExpirationWorkItem<TRange, TData>>? ttlScheduler = null;
+        if (options.SegmentTtl.HasValue)
+        {
+            var ttlActivityCounter = new AsyncActivityCounter();
+            var ttlExecutor = new TtlExpirationExecutor<TRange, TData>(storage, evictionEngine, cacheDiagnostics);
+            ttlScheduler = new FireAndForgetWorkScheduler<TtlExpirationWorkItem<TRange, TData>>(
+                executor: (workItem, ct) => ttlExecutor.ExecuteAsync(workItem, ct),
+                debounceProvider: static () => TimeSpan.Zero,
+                diagnostics: NoOpWorkSchedulerDiagnostics.Instance,
+                activityCounter: ttlActivityCounter);
+        }
+
+        _ttlScheduler = ttlScheduler;
+
+        // Cache normalization executor: single writer for Add, executes the four-step Background Path.
         var executor = new CacheNormalizationExecutor<TRange, TData, TDomain>(
             storage,
             evictionEngine,
-            cacheDiagnostics);
+            cacheDiagnostics,
+            ttlScheduler,
+            options.SegmentTtl);
 
         // Diagnostics adapter: maps IWorkSchedulerDiagnostics → IVisitedPlacesCacheDiagnostics.
         var schedulerDiagnostics = new VisitedPlacesWorkSchedulerDiagnostics(cacheDiagnostics);
@@ -193,7 +220,8 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
     /// <para><strong>Disposal sequence:</strong></para>
     /// <list type="number">
     /// <item><description>Transition state 0→1</description></item>
-    /// <item><description>Dispose <see cref="UserRequestHandler{TRange,TData,TDomain}"/> (cascades to scheduler)</description></item>
+    /// <item><description>Dispose <see cref="UserRequestHandler{TRange,TData,TDomain}"/> (cascades to normalization scheduler)</description></item>
+    /// <item><description>Dispose TTL scheduler (if TTL is enabled) — cancels the last-published TTL work item</description></item>
     /// <item><description>Transition state →2</description></item>
     /// </list>
     /// </remarks>
@@ -210,6 +238,14 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
             try
             {
                 await _userRequestHandler.DisposeAsync().ConfigureAwait(false);
+
+                // Dispose TTL scheduler (cancels the last-published TTL work item's CancellationToken,
+                // which causes any pending Task.Delay to throw OperationCanceledException).
+                if (_ttlScheduler != null)
+                {
+                    await _ttlScheduler.DisposeAsync().ConfigureAwait(false);
+                }
+
                 tcs.TrySetResult();
             }
             catch (Exception ex)

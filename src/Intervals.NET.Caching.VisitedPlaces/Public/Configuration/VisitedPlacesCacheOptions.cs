@@ -45,6 +45,24 @@ public sealed class VisitedPlacesCacheOptions<TRange, TData> : IEquatable<Visite
     public int? EventChannelCapacity { get; }
 
     /// <summary>
+    /// The time-to-live for each cached segment after it is stored, or <see langword="null"/>
+    /// to disable TTL-based expiration (the default).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+        /// When set, each segment is scheduled for removal after this duration elapses from the
+        /// moment the segment is stored. The TTL actor fires an independent background removal via
+        /// <c>TtlExpirationExecutor</c>, dispatched fire-and-forget on the thread pool.
+    /// </para>
+    /// <para>
+    /// Removal is idempotent: if the segment was already evicted before the TTL fires, the
+    /// removal is a no-op (guarded by <see cref="Core.CachedSegment{TRange,TData}.IsRemoved"/>).
+    /// </para>
+    /// <para>Must be &gt; <see cref="TimeSpan.Zero"/> when non-null.</para>
+    /// </remarks>
+    public TimeSpan? SegmentTtl { get; }
+
+    /// <summary>
     /// Initializes a new <see cref="VisitedPlacesCacheOptions{TRange,TData}"/> with the specified values.
     /// </summary>
     /// <param name="storageStrategy">
@@ -55,12 +73,18 @@ public sealed class VisitedPlacesCacheOptions<TRange, TData> : IEquatable<Visite
     /// The background event channel capacity, or <see langword="null"/> (default) to use
     /// unbounded task-chaining scheduling. Must be &gt;= 1 when non-null.
     /// </param>
+    /// <param name="segmentTtl">
+    /// The time-to-live for each cached segment, or <see langword="null"/> (default) to disable
+    /// TTL expiration. Must be &gt; <see cref="TimeSpan.Zero"/> when non-null.
+    /// </param>
     /// <exception cref="ArgumentOutOfRangeException">
-    /// Thrown when <paramref name="eventChannelCapacity"/> is non-null and less than 1.
+    /// Thrown when <paramref name="eventChannelCapacity"/> is non-null and less than 1,
+    /// or when <paramref name="segmentTtl"/> is non-null and &lt;= <see cref="TimeSpan.Zero"/>.
     /// </exception>
     public VisitedPlacesCacheOptions(
         StorageStrategyOptions<TRange, TData>? storageStrategy = null,
-        int? eventChannelCapacity = null)
+        int? eventChannelCapacity = null,
+        TimeSpan? segmentTtl = null)
     {
         if (eventChannelCapacity is < 1)
         {
@@ -69,8 +93,16 @@ public sealed class VisitedPlacesCacheOptions<TRange, TData> : IEquatable<Visite
                 "EventChannelCapacity must be greater than or equal to 1 when specified.");
         }
 
+        if (segmentTtl is { } ttl && ttl <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(segmentTtl),
+                "SegmentTtl must be greater than TimeSpan.Zero when specified.");
+        }
+
         StorageStrategy = storageStrategy ?? SnapshotAppendBufferStorageOptions<TRange, TData>.Default;
         EventChannelCapacity = eventChannelCapacity;
+        SegmentTtl = segmentTtl;
     }
 
     /// <inheritdoc/>
@@ -87,7 +119,8 @@ public sealed class VisitedPlacesCacheOptions<TRange, TData> : IEquatable<Visite
         }
 
         return StorageStrategy.Equals(other.StorageStrategy)
-               && EventChannelCapacity == other.EventChannelCapacity;
+               && EventChannelCapacity == other.EventChannelCapacity
+               && SegmentTtl == other.SegmentTtl;
     }
 
     /// <inheritdoc/>
@@ -95,7 +128,7 @@ public sealed class VisitedPlacesCacheOptions<TRange, TData> : IEquatable<Visite
         obj is VisitedPlacesCacheOptions<TRange, TData> other && Equals(other);
 
     /// <inheritdoc/>
-    public override int GetHashCode() => HashCode.Combine(StorageStrategy, EventChannelCapacity);
+    public override int GetHashCode() => HashCode.Combine(StorageStrategy, EventChannelCapacity, SegmentTtl);
 
     /// <summary>Returns <c>true</c> if the two instances are equal.</summary>
     public static bool operator ==(

@@ -37,6 +37,57 @@ public sealed class CachedSegment<TRange, TData>
     /// </remarks>
     public IEvictionMetadata? EvictionMetadata { get; internal set; }
 
+    // Removal state: 0 = live, 1 = removed.
+    // Accessed atomically via Interlocked.CompareExchange (MarkAsRemoved) and Volatile.Read (IsRemoved).
+    private int _isRemoved;
+
+    /// <summary>
+    /// Indicates whether this segment has been logically removed from the cache.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This flag is <strong>monotonic</strong>: once set to <see langword="true"/> by
+    /// <see cref="MarkAsRemoved"/> it is never reset to <see langword="false"/>.
+    /// It lives on the segment object itself, so it survives storage compaction
+    /// (normalization passes that rebuild the snapshot / stride index).
+    /// </para>
+    /// <para>
+    /// Storage implementations use this flag as the primary soft-delete filter:
+    /// <see cref="ISegmentStorage{TRange,TData}.FindIntersecting"/> and
+    /// <c>GetAllSegments</c> check <see cref="IsRemoved"/> instead of consulting a
+    /// separate <c>_softDeleted</c> collection, which eliminates any shared mutable
+    /// collection between the Background Path and the TTL thread.
+    /// </para>
+    /// <para><strong>Thread safety:</strong> Read via <c>Volatile.Read</c> (acquire fence).
+    /// Written atomically by <see cref="MarkAsRemoved"/> via
+    /// <c>Interlocked.CompareExchange</c>.</para>
+    /// </remarks>
+    internal bool IsRemoved => Volatile.Read(ref _isRemoved) != 0;
+
+    /// <summary>
+    /// Attempts to transition this segment from live to removed.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> if this call performed the transition (segment was live);
+    /// <see langword="false"/> if the segment was already removed (idempotent no-op).
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// Uses <c>Interlocked.CompareExchange</c> to guarantee that exactly one caller
+    /// wins the transition even when called concurrently from the Background Path
+    /// (eviction) and the TTL thread. The winning caller is responsible for
+    /// decrementing any reference counts or aggregates; losing callers are no-ops.
+    /// </para>
+    /// <para>
+    /// This method is called by storage implementations inside
+    /// <see cref="ISegmentStorage{TRange,TData}.Remove"/> — callers do not set the flag
+    /// directly. This centralises the one-way transition logic and makes the contract
+    /// explicit.
+    /// </para>
+    /// </remarks>
+    internal bool MarkAsRemoved() =>
+        Interlocked.CompareExchange(ref _isRemoved, 1, 0) == 0;
+
     /// <summary>
     /// Initializes a new <see cref="CachedSegment{TRange,TData}"/>.
     /// </summary>

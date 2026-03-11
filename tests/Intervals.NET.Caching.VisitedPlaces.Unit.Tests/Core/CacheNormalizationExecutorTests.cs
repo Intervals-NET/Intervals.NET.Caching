@@ -373,10 +373,12 @@ public sealed class CacheNormalizationExecutorTests
             new LruEvictionSelector<int, int>(),
             _diagnostics);
 
-        return new CacheNormalizationExecutor<int, int, IntegerFixedStepDomain>(
+        var executor = new CacheNormalizationExecutor<int, int, IntegerFixedStepDomain>(
             _storage,
             evictionEngine,
             _diagnostics);
+
+        return executor;
     }
 
     private static CacheNormalizationRequest<int, int> CreateRequest(
@@ -438,7 +440,7 @@ public sealed class CacheNormalizationExecutorTests
         public void Add(CachedSegment<int, int> segment) =>
             throw new InvalidOperationException("Simulated storage failure.");
 
-        public void Remove(CachedSegment<int, int> segment) { }
+        public bool Remove(CachedSegment<int, int> segment) => false;
 
         public IReadOnlyList<CachedSegment<int, int>> GetAllSegments() => [];
     }

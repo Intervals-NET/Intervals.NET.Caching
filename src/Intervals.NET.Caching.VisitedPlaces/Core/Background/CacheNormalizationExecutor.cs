@@ -1,5 +1,7 @@
 using Intervals.NET.Domain.Abstractions;
+using Intervals.NET.Caching.Infrastructure.Scheduling;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
+using Intervals.NET.Caching.VisitedPlaces.Core.Ttl;
 using Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 using Intervals.NET.Caching.VisitedPlaces.Public.Instrumentation;
 
@@ -15,11 +17,14 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Background;
 /// <typeparam name="TDomain">The range domain type; used by domain-aware eviction policies.</typeparam>
 /// <remarks>
 /// <para><strong>Execution Context:</strong> Background Storage Loop (single writer thread)</para>
-/// <para><strong>Critical Contract — Background Path is the SINGLE WRITER (Invariant VPC.A.10):</strong></para>
+/// <para><strong>Critical Contract — Background Path is the SINGLE WRITER for <c>Add</c> (Invariant VPC.A.10):</strong></para>
 /// <para>
-/// All mutations to <see cref="ISegmentStorage{TRange,TData}"/> (<c>Add</c> and <c>Remove</c>)
-/// are made exclusively here. Neither the User Path nor the
-/// <see cref="EvictionEngine{TRange,TData}"/> touches storage.
+/// All <see cref="ISegmentStorage{TRange,TData}.Add"/> calls are made exclusively here.
+/// <see cref="ISegmentStorage{TRange,TData}.Remove"/> may also be called concurrently by the
+/// TTL actor; thread safety is guaranteed by <see cref="CachedSegment{TRange,TData}.MarkAsRemoved()"/>
+/// (Interlocked.CompareExchange) and <see cref="EvictionEngine{TRange,TData}.OnSegmentsRemoved"/>
+/// using atomic operations internally.
+/// Neither the User Path nor the <see cref="EvictionEngine{TRange,TData}"/> touches storage directly.
 /// </para>
 /// <para><strong>Four-step sequence per request (Invariant VPC.B.3):</strong></para>
 /// <list type="number">
@@ -40,9 +45,12 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Background;
 ///   Returns the list of segments to remove. Only runs when step 2 stored at least one segment.
 /// </description></item>
 /// <item><description>
-///   Remove evicted segments — the executor removes each returned segment from storage and
-///   calls <see cref="EvictionEngine{TRange,TData}.OnSegmentsRemoved"/> to notify stateful
-///   policies in bulk.
+///   Remove evicted segments — calls <see cref="ISegmentStorage{TRange,TData}.Remove"/> for
+///   each candidate, which atomically claims ownership via
+///   <see cref="CachedSegment{TRange,TData}.MarkAsRemoved()"/> internally and returns
+///   <see langword="true"/> only for the first caller. Only segments where
+///   <see cref="ISegmentStorage{TRange,TData}.Remove"/> returns <see langword="true"/> are
+///   forwarded to <see cref="EvictionEngine{TRange,TData}.OnSegmentsRemoved"/> in one batch.
 /// </description></item>
 /// </list>
 /// <para><strong>Activity counter (Invariant S.H.1):</strong></para>
@@ -64,24 +72,37 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
     private readonly ISegmentStorage<TRange, TData> _storage;
     private readonly EvictionEngine<TRange, TData> _evictionEngine;
     private readonly IVisitedPlacesCacheDiagnostics _diagnostics;
+    private readonly IWorkScheduler<TtlExpirationWorkItem<TRange, TData>>? _ttlScheduler;
+    private readonly TimeSpan? _segmentTtl;
 
     /// <summary>
     /// Initializes a new <see cref="CacheNormalizationExecutor{TRange,TData,TDomain}"/>.
     /// </summary>
-    /// <param name="storage">The segment storage (single writer — only mutated here).</param>
+    /// <param name="storage">The segment storage (single writer for Add — only mutated here).</param>
     /// <param name="evictionEngine">
     /// The eviction engine facade; encapsulates selector metadata, policy evaluation,
     /// execution, and eviction diagnostics.
     /// </param>
     /// <param name="diagnostics">Diagnostics sink; must never throw.</param>
+    /// <param name="ttlScheduler">
+    /// Optional TTL work item scheduler. When non-null, a <see cref="TtlExpirationWorkItem{TRange,TData}"/>
+    /// is scheduled for each stored segment immediately after storage. When null, TTL is disabled.
+    /// </param>
+    /// <param name="segmentTtl">
+    /// The time-to-live per segment. Must be non-null when <paramref name="ttlScheduler"/> is non-null.
+    /// </param>
     public CacheNormalizationExecutor(
         ISegmentStorage<TRange, TData> storage,
         EvictionEngine<TRange, TData> evictionEngine,
-        IVisitedPlacesCacheDiagnostics diagnostics)
+        IVisitedPlacesCacheDiagnostics diagnostics,
+        IWorkScheduler<TtlExpirationWorkItem<TRange, TData>>? ttlScheduler = null,
+        TimeSpan? segmentTtl = null)
     {
         _storage = storage;
         _evictionEngine = evictionEngine;
         _diagnostics = diagnostics;
+        _ttlScheduler = ttlScheduler;
+        _segmentTtl = segmentTtl;
     }
 
     /// <summary>
@@ -101,7 +122,7 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
     /// (<c>VisitedPlacesWorkSchedulerDiagnostics.WorkStarted()</c>) before this method is invoked.
     /// </para>
     /// </remarks>
-    public Task ExecuteAsync(CacheNormalizationRequest<TRange, TData> request, CancellationToken _)
+    public async Task ExecuteAsync(CacheNormalizationRequest<TRange, TData> request, CancellationToken _)
     {
         try
         {
@@ -122,12 +143,34 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
                         continue;
                     }
 
+                    // VPC.C.3: Enforce no-overlap invariant before storing. If a segment covering
+                    // any part of this chunk's range already exists (e.g., from a concurrent
+                    // in-flight request for the same range), skip storing to prevent duplicates.
+                    var overlapping = _storage.FindIntersecting(chunk.Range.Value);
+                    if (overlapping.Count > 0)
+                    {
+                        continue;
+                    }
+
                     var data = new ReadOnlyMemory<TData>(chunk.Data.ToArray());
                     var segment = new CachedSegment<TRange, TData>(chunk.Range.Value, data);
 
                     _storage.Add(segment);
                     _evictionEngine.InitializeSegment(segment);
                     _diagnostics.BackgroundSegmentStored();
+
+                    // TTL: if enabled, schedule expiration for this segment immediately after storing.
+                    if (_ttlScheduler != null && _segmentTtl.HasValue)
+                    {
+                        var workItem = new TtlExpirationWorkItem<TRange, TData>(
+                            segment,
+                            expiresAt: DateTimeOffset.UtcNow + _segmentTtl.Value);
+
+                        await _ttlScheduler.PublishWorkItemAsync(workItem, CancellationToken.None)
+                            .ConfigureAwait(false);
+
+                        _diagnostics.TtlWorkItemScheduled();
+                    }
 
                     justStoredSegments.Add(segment);
                 }
@@ -142,13 +185,31 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
                 var allSegments = _storage.GetAllSegments();
                 var toRemove = _evictionEngine.EvaluateAndExecute(allSegments, justStoredSegments);
 
-                // Step 4 (storage): Remove evicted segments; executor is the sole storage writer.
-                foreach (var segment in toRemove)
+                // Step 4 (storage): For each eviction candidate, delegate removal to storage.
+                // ISegmentStorage.Remove atomically claims ownership via MarkAsRemoved() and
+                // returns true only for the first caller. Concurrent TTL expirations may race
+                // here; the atomic flag inside storage ensures each segment is removed at most once.
+                if (toRemove.Count > 0)
                 {
-                    _storage.Remove(segment);
-                }
+                    List<CachedSegment<TRange, TData>>? actuallyRemoved = null;
 
-                _evictionEngine.OnSegmentsRemoved(toRemove);
+                    foreach (var segment in toRemove)
+                    {
+                        if (!_storage.Remove(segment))
+                        {
+                            continue; // TTL actor already claimed this segment — skip.
+                        }
+
+                        actuallyRemoved ??= new List<CachedSegment<TRange, TData>>(toRemove.Count);
+                        actuallyRemoved.Add(segment);
+                    }
+
+                    if (actuallyRemoved != null)
+                    {
+                        // todo: get rid of this call, we must not to allocate a separate temp trashy list - implement a mthod that allows to pass a single segment and use it in the loop
+                        _evictionEngine.OnSegmentsRemoved(actuallyRemoved);
+                    }
+                }
             }
 
             _diagnostics.NormalizationRequestProcessed();
@@ -158,7 +219,5 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
             _diagnostics.BackgroundOperationFailed(ex);
             // Swallow: the background loop must survive individual request failures.
         }
-
-        return Task.CompletedTask;
     }
 }

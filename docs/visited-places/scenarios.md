@@ -35,6 +35,7 @@ Scenarios are grouped by path:
 2. **Background Path** (background storage loop)
 3. **Eviction**
 4. **Concurrency**
+5. **TTL**
 
 ---
 
@@ -428,6 +429,73 @@ Scenarios are grouped by path:
 
 ---
 
+---
+
+## V. TTL Scenarios
+
+**Core principle**: When `VisitedPlacesCacheOptions.SegmentTtl` is non-null, each stored segment has a `TtlExpirationWorkItem` scheduled immediately after storage. The TTL actor awaits the delay fire-and-forget on the thread pool, then calls `segment.MarkAsRemoved()` — if it returns `true` (first caller), it removes the segment directly from storage and notifies the eviction engine. TTL expiration is idempotent: if the segment was already evicted by a capacity policy, `MarkAsRemoved()` returns `false` and the removal is a no-op.
+
+---
+
+### T1 — TTL Expiration (Segment Expires Before Eviction)
+
+**Configuration**:
+- `SegmentTtl = TimeSpan.FromSeconds(30)`
+- Capacity policies: not exceeded at expiry time
+
+**Preconditions**:
+- Segment `S₁` was stored at `t=0`; a `TtlExpirationWorkItem` was scheduled for `t=30s`
+
+**Sequence**:
+1. TTL actor dequeues the work item at `t=0` and fires `Task.Delay(30s)` independently on the thread pool
+2. At `t=30s`, the delay completes
+3. TTL actor calls `S₁.MarkAsRemoved()` — returns `true` (first caller; segment is still present)
+4. TTL actor calls `_storage.Remove(S₁)` — segment physically removed from storage
+5. TTL actor calls `_engine.OnSegmentsRemoved([S₁])` — notifies stateful policies
+6. `_diagnostics.TtlSegmentExpired()` is fired
+7. `S₁` is no longer returned by `FindIntersecting`; subsequent user requests for its range incur a cache miss
+
+**Note**: The User Path sees the removal atomically — `S₁` is either present or absent; no partial state is visible. The Background Storage Loop is unaffected; it continues processing normalization events in parallel.
+
+---
+
+### T2 — TTL Fires After Eviction (Idempotency)
+
+**Configuration**:
+- `SegmentTtl = TimeSpan.FromSeconds(60)`
+- A capacity policy evicts `S₁` at `t=5s` (before its TTL)
+
+**Sequence**:
+1. At `t=5s`, eviction removes `S₁` via `CacheNormalizationExecutor`:
+   - `S₁.MarkAsRemoved()` called — sets `_isRemoved = 1`, returns `true`
+   - `_storage.Remove(S₁)` called; `engine.OnSegmentsRemoved([S₁])` notified
+2. At `t=60s`, the TTL work item fires and calls `S₁.MarkAsRemoved()`:
+   - Returns `false` (another caller already set the flag)
+   - TTL actor skips `storage.Remove` and `engine.OnSegmentsRemoved` entirely
+3. `_diagnostics.TtlSegmentExpired()` is still fired (diagnostic is always fired on TTL expiry)
+
+**Invariant enforced**: VPC.T.1 — TTL expiration is idempotent.
+
+---
+
+### T3 — Disposal Cancels Pending TTL Delays
+
+**Situation**:
+- Cache has 3 segments `S₁, S₂, S₃` with `SegmentTtl = 10 minutes`; all TTL work items are mid-delay
+- `DisposeAsync` is called
+
+**Sequence**:
+1. `DisposeAsync` drains the normalization scheduler (`await _userRequestHandler.DisposeAsync()`)
+2. `DisposeAsync` disposes the TTL scheduler (`await _ttlScheduler.DisposeAsync()`):
+   - TTL scheduler cancels its `CancellationToken`
+   - All pending `Task.Delay` calls throw `OperationCanceledException`
+   - `TtlExpirationExecutor` catches the cancellation and exits cleanly (no unhandled exception)
+3. `DisposeAsync` returns; no TTL work items are left running
+
+**Invariant enforced**: VPC.T.3 — pending TTL delays are cancelled on disposal.
+
+---
+
 ## Invariants
 
 Scenarios must be consistent with:
@@ -436,6 +504,7 @@ Scenarios must be consistent with:
 - Background Path invariants: `docs/visited-places/invariants.md` (Section VPC.B)
 - Storage invariants: `docs/visited-places/invariants.md` (Section VPC.C)
 - Eviction invariants: `docs/visited-places/invariants.md` (Section VPC.E)
+- TTL invariants: `docs/visited-places/invariants.md` (Section VPC.T)
 - Shared activity tracking invariants: `docs/shared/invariants.md` (Section S.H)
 
 ---
