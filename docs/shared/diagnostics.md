@@ -85,6 +85,61 @@ void ICacheDiagnostics.BackgroundOperationFailed(Exception ex)
 
 ---
 
+## Execution Context & Threading
+
+### Where hooks execute
+
+Diagnostic hooks are invoked **synchronously** on the library's internal threads. The calling thread depends on the event:
+
+| Thread                | Description                                                           | Which events                                                                                     |
+|-----------------------|-----------------------------------------------------------------------|--------------------------------------------------------------------------------------------------|
+| **User Thread**       | The thread calling `GetDataAsync` / `GetDataAndWaitForIdleAsync` etc. | `UserRequest*`, `DataSourceFetch*`, `CacheExpanded`, `CacheReplaced`, `RebalanceIntentPublished` |
+| **Background Thread** | Internal background loops (rebalance execution, normalization, TTL)   | All other events                                                                                 |
+
+> Each event's XML doc (and the package-specific diagnostics docs) includes a `Context:` annotation with the exact thread.
+
+### Rules for implementations
+
+> ⚠️ **Warning:** Diagnostic hooks execute synchronously inside library threads. Any long-running or blocking code inside a hook will stall that thread and directly slow down the cache.
+
+**Lightweight operations are fine:**
+- Logging calls (e.g., `_logger.LogInformation(...)`)
+- Incrementing atomic counters (`Interlocked.Increment`)
+- Updating metrics/telemetry spans
+
+**For heavy work, dispatch yourself:**
+```csharp
+void ISlidingWindowCacheDiagnostics.RebalanceExecutionCompleted()
+{
+    // Don't do heavy work here — dispatch to ThreadPool instead
+    _ = Task.Run(() => NotifyExternalSystem());
+}
+```
+
+**Never throw from a hook.** An exception propagates directly into a library thread and will crash background loops or corrupt user request handling. Wrap the entire implementation body in try/catch:
+```csharp
+void ICacheDiagnostics.BackgroundOperationFailed(Exception ex)
+{
+    try
+    {
+        _logger.LogError(ex, "Cache background operation failed.");
+    }
+    catch { /* silently ignore — never let diagnostics crash the cache */ }
+}
+```
+
+### ExecutionContext flows correctly
+
+Hooks execute with the `ExecutionContext` captured from the thread that triggered the event. This means:
+
+- `AsyncLocal<T>` values (e.g., request IDs, tenant IDs) are available
+- `Activity` / OpenTelemetry tracing context is propagated
+- `CultureInfo.CurrentCulture` and `CultureInfo.CurrentUICulture` are preserved
+
+You do not need to manually capture or restore context — it flows automatically into every hook invocation.
+
+---
+
 ## Custom Implementations
 
 Implement the package-specific diagnostics interface for custom observability:

@@ -12,6 +12,33 @@ namespace Intervals.NET.Caching.SlidingWindow.Public.Instrumentation;
 /// For testing and observability, use <see cref="EventCounterCacheDiagnostics"/> or
 /// provide a custom implementation.
 /// </para>
+/// <para><strong>Execution Context Summary</strong></para>
+/// <para>
+/// Each method fires synchronously on the thread that triggers the event.
+/// See the individual method's <c>Context:</c> annotation for details.
+/// </para>
+/// <list type="table">
+/// <listheader><term>Method</term><term>Thread Context</term></listheader>
+/// <item><term><see cref="CacheExpanded"/></term><term>User Thread or Background Thread (Rebalance Execution)</term></item>
+/// <item><term><see cref="CacheReplaced"/></term><term>User Thread or Background Thread (Rebalance Execution)</term></item>
+/// <item><term><see cref="DataSourceFetchSingleRange"/></term><term>User Thread</term></item>
+/// <item><term><see cref="DataSourceFetchMissingSegments"/></term><term>User Thread or Background Thread (Rebalance Execution)</term></item>
+/// <item><term><see cref="DataSegmentUnavailable"/></term><term>User Thread or Background Thread (Rebalance Execution)</term></item>
+/// <item><term><see cref="RebalanceIntentPublished"/></term><term>User Thread</term></item>
+/// <item><term><see cref="RebalanceExecutionStarted"/></term><term>Background Thread (Rebalance Execution)</term></item>
+/// <item><term><see cref="RebalanceExecutionCompleted"/></term><term>Background Thread (Rebalance Execution)</term></item>
+/// <item><term><see cref="RebalanceExecutionCancelled"/></term><term>Background Thread (Rebalance Execution)</term></item>
+/// <item><term><see cref="RebalanceSkippedCurrentNoRebalanceRange"/></term><term>Background Thread (Intent Processing Loop)</term></item>
+/// <item><term><see cref="RebalanceSkippedPendingNoRebalanceRange"/></term><term>Background Thread (Intent Processing Loop)</term></item>
+/// <item><term><see cref="RebalanceSkippedSameRange"/></term><term>Background Thread (Rebalance Execution)</term></item>
+/// <item><term><see cref="RebalanceScheduled"/></term><term>Background Thread (Intent Processing Loop)</term></item>
+/// </list>
+/// <para>
+/// Inherited from <see cref="ICacheDiagnostics"/>: <c>UserRequestServed</c>,
+/// <c>UserRequestFullCacheHit</c>, <c>UserRequestPartialCacheHit</c>,
+/// <c>UserRequestFullCacheMiss</c> — all User Thread.
+/// <c>BackgroundOperationFailed</c> — Background Thread (Intent Processing Loop or Rebalance Execution).
+/// </para>
 /// </remarks>
 public interface ISlidingWindowCacheDiagnostics : ICacheDiagnostics
 {
@@ -28,6 +55,9 @@ public interface ISlidingWindowCacheDiagnostics : ICacheDiagnostics
     /// Location: CacheDataExtensionService.CalculateMissingRanges (when intersection exists)
     /// Related: Invariant SWC.A.12b (Cache Contiguity Rule)
     /// </summary>
+    /// <remarks>
+    /// <para><strong>Context:</strong> User Thread (Partial Cache Hit — Scenario U4) or Background Thread (Rebalance Execution)</para>
+    /// </remarks>
     void CacheExpanded();
 
     /// <summary>
@@ -39,6 +69,9 @@ public interface ISlidingWindowCacheDiagnostics : ICacheDiagnostics
     /// Location: CacheDataExtensionService.CalculateMissingRanges (when no intersection exists)
     /// Related: Invariant SWC.A.12b (Cache Contiguity Rule - forbids gaps)
     /// </summary>
+    /// <remarks>
+    /// <para><strong>Context:</strong> User Thread (Full Cache Miss — Scenario U5) or Background Thread (Rebalance Execution)</para>
+    /// </remarks>
     void CacheReplaced();
 
     // ============================================================================
@@ -52,6 +85,9 @@ public interface ISlidingWindowCacheDiagnostics : ICacheDiagnostics
     /// Location: UserRequestHandler.HandleRequestAsync (Scenarios 1 and 4: Cold Start and Non-intersecting Jump)
     /// Related: User Path direct fetch operations
     /// </summary>
+    /// <remarks>
+    /// <para><strong>Context:</strong> User Thread</para>
+    /// </remarks>
     void DataSourceFetchSingleRange();
 
     /// <summary>
@@ -61,6 +97,9 @@ public interface ISlidingWindowCacheDiagnostics : ICacheDiagnostics
     /// Location: CacheDataExtensionService.ExtendCacheAsync (partial cache hit optimization)
     /// Related: User Scenario U4 and Rebalance Execution cache extension operations
     /// </summary>
+    /// <remarks>
+    /// <para><strong>Context:</strong> User Thread (Partial Cache Hit — Scenario U4) or Background Thread (Rebalance Execution)</para>
+    /// </remarks>
     void DataSourceFetchMissingSegments();
 
     /// <summary>
@@ -103,6 +142,9 @@ public interface ISlidingWindowCacheDiagnostics : ICacheDiagnostics
     /// Related: Invariant SWC.A.5 (User Path is sole source of rebalance intent), Invariant SWC.C.8e (Intent must contain delivered data)
     /// Note: Intent publication does NOT guarantee execution (opportunistic behavior)
     /// </summary>
+    /// <remarks>
+    /// <para><strong>Context:</strong> User Thread</para>
+    /// </remarks>
     void RebalanceIntentPublished();
 
     // ============================================================================
@@ -116,6 +158,9 @@ public interface ISlidingWindowCacheDiagnostics : ICacheDiagnostics
     /// Location: TaskBasedRebalanceExecutionController.ExecuteRequestAsync / ChannelBasedRebalanceExecutionController.ProcessExecutionRequestsAsync (before executor invocation)
     /// Related: Invariant SWC.D.5 (Rebalance triggered only if confirmed necessary)
     /// </summary>
+    /// <remarks>
+    /// <para><strong>Context:</strong> Background Thread (Rebalance Execution)</para>
+    /// </remarks>
     void RebalanceExecutionStarted();
 
     /// <summary>
@@ -125,6 +170,9 @@ public interface ISlidingWindowCacheDiagnostics : ICacheDiagnostics
     /// Location: RebalanceExecutor.ExecuteAsync (final step after UpdateCacheState)
     /// Related: Invariant SWC.F.2 (Only Rebalance Execution writes to cache), Invariant SWC.B.2 (Changes to CacheData and CurrentCacheRange are performed atomically)
     /// </summary>
+    /// <remarks>
+    /// <para><strong>Context:</strong> Background Thread (Rebalance Execution)</para>
+    /// </remarks>
     void RebalanceExecutionCompleted();
 
     /// <summary>
@@ -134,6 +182,9 @@ public interface ISlidingWindowCacheDiagnostics : ICacheDiagnostics
     /// Location: TaskBasedRebalanceExecutionController.ExecuteRequestAsync / ChannelBasedRebalanceExecutionController.ProcessExecutionRequestsAsync (catch OperationCanceledException during execution)
     /// Related: Invariant SWC.F.1a (Rebalance Execution must yield to User Path immediately)
     /// </summary>
+    /// <remarks>
+    /// <para><strong>Context:</strong> Background Thread (Rebalance Execution)</para>
+    /// </remarks>
     void RebalanceExecutionCancelled();
 
     // ============================================================================
@@ -148,6 +199,7 @@ public interface ISlidingWindowCacheDiagnostics : ICacheDiagnostics
     /// </summary>
     /// <remarks>
     /// <para><strong>Decision Pipeline Stage:</strong> Stage 1 - Current Cache Stability Check</para>
+    /// <para><strong>Context:</strong> Background Thread (Intent Processing Loop)</para>
     /// <para><strong>Location:</strong> IntentController.RecordReason (RebalanceReason.WithinCurrentNoRebalanceRange)</para>
     /// <para><strong>Related Invariants:</strong></para>
     /// <list type="bullet">
@@ -165,6 +217,7 @@ public interface ISlidingWindowCacheDiagnostics : ICacheDiagnostics
     /// </summary>
     /// <remarks>
     /// <para><strong>Decision Pipeline Stage:</strong> Stage 2 - Pending Rebalance Stability Check (Anti-Thrashing)</para>
+    /// <para><strong>Context:</strong> Background Thread (Intent Processing Loop)</para>
     /// <para><strong>Location:</strong> IntentController.RecordReason (RebalanceReason.WithinPendingNoRebalanceRange)</para>
     /// <para><strong>Related Invariants:</strong></para>
     /// <list type="bullet">
@@ -182,6 +235,9 @@ public interface ISlidingWindowCacheDiagnostics : ICacheDiagnostics
     /// Location: RebalanceExecutor.ExecuteAsync (before expensive I/O operations)
     /// Related: Invariant SWC.D.4 (No rebalance if DesiredCacheRange == CurrentCacheRange), Invariant SWC.C.8c (RebalanceSkippedSameRange counter semantics)
     /// </summary>
+    /// <remarks>
+    /// <para><strong>Context:</strong> Background Thread (Rebalance Execution)</para>
+    /// </remarks>
     void RebalanceSkippedSameRange();
 
     /// <summary>
@@ -192,6 +248,7 @@ public interface ISlidingWindowCacheDiagnostics : ICacheDiagnostics
     /// </summary>
     /// <remarks>
     /// <para><strong>Decision Pipeline Stage:</strong> Stage 5 - Rebalance Required (Scheduling)</para>
+    /// <para><strong>Context:</strong> Background Thread (Intent Processing Loop)</para>
     /// <para><strong>Location:</strong> IntentController.RecordReason (RebalanceReason.RebalanceRequired)</para>
     /// <para><strong>Lifecycle Position:</strong></para>
     /// <list type="number">

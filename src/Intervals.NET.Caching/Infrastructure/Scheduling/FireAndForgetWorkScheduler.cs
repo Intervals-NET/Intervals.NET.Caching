@@ -16,7 +16,7 @@ namespace Intervals.NET.Caching.Infrastructure.Scheduling;
 /// <para>
 /// The primary consumer of this scheduler is the TTL expiration path. Each TTL work item
 /// does <c>await Task.Delay(remaining)</c> before removing its segment, meaning it holds a
-/// ThreadPool continuation for the duration of the TTL window. If a serialized scheduler
+/// continuation for the duration of the TTL window. If a serialized scheduler
 /// (e.g. <see cref="TaskBasedWorkScheduler{TWorkItem}"/>) were used, every pending
 /// <c>Task.Delay</c> would block all subsequent TTL items from starting — the second item
 /// would wait for the first delay to finish, the third would wait for the first two, and so
@@ -27,9 +27,9 @@ namespace Intervals.NET.Caching.Infrastructure.Scheduling;
 /// Unlike <see cref="TaskBasedWorkScheduler{TWorkItem}"/> (which chains tasks to ensure
 /// sequential execution) or <see cref="ChannelBasedWorkScheduler{TWorkItem}"/> (which uses a
 /// bounded channel), this scheduler makes no ordering or exclusion guarantees between items.
-/// Each work item executes independently on the ThreadPool. For TTL removals this is correct:
-/// <c>CachedSegment.MarkAsRemoved()</c> is atomic (Interlocked) and idempotent, and
-/// <c>EvictionEngine.OnSegmentsRemoved</c> uses <c>Interlocked.Add</c> for
+/// Each work item executes independently via <see cref="ThreadPool.QueueUserWorkItem"/>. For TTL removals this is
+/// correct: <c>CachedSegment.MarkAsRemoved()</c> is atomic (Interlocked) and idempotent, and
+/// <c>EvictionEngine.OnSegmentRemoved</c> uses <c>Interlocked.Add</c> for
 /// <c>_totalSpan</c> — so concurrent removals are safe.
 /// </para>
 /// <para><strong>Disposal:</strong></para>
@@ -43,8 +43,9 @@ namespace Intervals.NET.Caching.Infrastructure.Scheduling;
 /// </para>
 /// <para><strong>Activity Counter:</strong></para>
 /// <para>
-/// The activity counter is incremented before each <c>Task.Run</c> and decremented in the
-/// base <see cref="WorkSchedulerBase{TWorkItem}.ExecuteWorkItemCoreAsync"/> <c>finally</c>
+/// The activity counter is incremented in <see cref="PublishWorkItemAsync"/> before dispatching
+/// to the ThreadPool and decremented in the base
+/// <see cref="WorkSchedulerBase{TWorkItem}.ExecuteWorkItemCoreAsync"/> <c>finally</c>
 /// block, matching the contract of all other scheduler implementations.
 /// </para>
 /// <para><strong>Trade-offs:</strong></para>
@@ -52,6 +53,7 @@ namespace Intervals.NET.Caching.Infrastructure.Scheduling;
 /// <item><description>✅ No inter-item serialization (TTL delays run concurrently)</description></item>
 /// <item><description>✅ Simple implementation — thinner than task-chaining or channel-based</description></item>
 /// <item><description>✅ Fire-and-forget: <see cref="PublishWorkItemAsync"/> always returns synchronously</description></item>
+/// <item><description>✅ WASM compatible: uses <see cref="ThreadPool.QueueUserWorkItem"/> instead of <c>Task.Run</c></description></item>
 /// <item><description>⚠️ No ordering guarantees — callers must not rely on sequential execution</description></item>
 /// <item><description>⚠️ Unbounded concurrency — use only for work items whose concurrent execution is safe</description></item>
 /// </list>
@@ -84,7 +86,7 @@ internal sealed class FireAndForgetWorkScheduler<TWorkItem> : WorkSchedulerBase<
     }
 
     /// <summary>
-    /// Publishes a work item by launching it independently on the ThreadPool.
+    /// Publishes a work item by yielding to the scheduler and then executing it independently.
     /// Returns immediately (fire-and-forget). No serialization with previously published items.
     /// </summary>
     /// <param name="workItem">The work item to schedule.</param>
@@ -94,8 +96,9 @@ internal sealed class FireAndForgetWorkScheduler<TWorkItem> : WorkSchedulerBase<
     /// <returns><see cref="ValueTask.CompletedTask"/> — always completes synchronously.</returns>
     /// <remarks>
     /// <para>
-    /// Each call increments the activity counter and dispatches a <c>Task.Run</c> to the
-    /// ThreadPool. The base pipeline (<see cref="WorkSchedulerBase{TWorkItem}.ExecuteWorkItemCoreAsync"/>)
+    /// Each call increments the activity counter and posts the work item to the ThreadPool via
+    /// <see cref="ThreadPool.QueueUserWorkItem"/>. The base pipeline
+    /// (<see cref="WorkSchedulerBase{TWorkItem}.ExecuteWorkItemCoreAsync"/>)
     /// decrements the counter in its <c>finally</c> block, preserving the
     /// increment-before / decrement-after contract of all scheduler implementations.
     /// </para>
@@ -116,9 +119,20 @@ internal sealed class FireAndForgetWorkScheduler<TWorkItem> : WorkSchedulerBase<
         // Store as last work item (for cancellation coordination during disposal).
         StoreLastWorkItem(workItem);
 
-        // Launch independently — no chaining to previous items.
-        // todo: consider using Task.Yield instead of this call. The behavior is the same, but Yield is WASM friendly
-        _ = Task.Run(() => ExecuteWorkItemCoreAsync(workItem));
+        // Launch independently via ThreadPool.QueueUserWorkItem.
+        // This is used instead of Task.Run / Task.Factory.StartNew for three reasons:
+        // 1. It always posts to the ThreadPool (ignores any caller SynchronizationContext),
+        //    preserving the concurrent execution guarantee even inside test harnesses that
+        //    install a custom SynchronizationContext (e.g. xUnit v2).
+        // 2. Unlike ThreadPool.UnsafeQueueUserWorkItem, it captures and flows ExecutionContext,
+        //    so diagnostic hooks executing inside the work item have access to AsyncLocal<T>
+        //    values — tracing context, culture, activity IDs, etc. — from the publishing caller.
+        // 3. It is available on net8.0-browser / WebAssembly, where Task.Run is not suitable
+        //    in single-threaded environments.
+        ThreadPool.QueueUserWorkItem(
+            static state => _ = state.scheduler.ExecuteWorkItemCoreAsync(state.workItem),
+            state: (scheduler: this, workItem),
+            preferLocal: false);
 
         return ValueTask.CompletedTask;
     }

@@ -18,8 +18,9 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 /// </description></item>
 /// <item><description>
 ///   Notifies the <see cref="EvictionPolicyEvaluator{TRange,TData}"/> of segment lifecycle
-///   events via <see cref="InitializeSegment"/> and <see cref="OnSegmentsRemoved"/>, keeping
-///   stateful policy aggregates consistent with storage state.
+///   events via <see cref="InitializeSegment"/>, <see cref="OnSegmentRemoved"/>, and
+///   <see cref="OnSegmentsRemoved"/>, keeping stateful policy aggregates consistent with
+///   storage state.
 /// </description></item>
 /// <item><description>
 ///   Evaluates all policies and executes the constraint satisfaction loop via
@@ -173,5 +174,22 @@ internal sealed class EvictionEngine<TRange, TData>
         {
             _policyEvaluator.OnSegmentRemoved(segment);
         }
+    }
+
+    /// <summary>
+    /// Notifies stateful policies that a single segment has been removed from storage.
+    /// Prefer this overload over <see cref="OnSegmentsRemoved"/> when only one segment is
+    /// removed per call site to avoid allocating a temporary collection.
+    /// </summary>
+    /// <param name="segment">The segment that was just removed from storage.</param>
+    /// <remarks>
+    /// Called by <c>TtlExpirationExecutor</c> after a single TTL expiration, and by
+    /// <c>CacheNormalizationExecutor</c> inside the per-segment eviction loop (Step 4).
+    /// Using this overload eliminates the intermediate <c>List&lt;CachedSegment&gt;</c>
+    /// allocation that the batch variant would require in those call sites.
+    /// </remarks>
+    public void OnSegmentRemoved(CachedSegment<TRange, TData> segment)
+    {
+        _policyEvaluator.OnSegmentRemoved(segment);
     }
 }

@@ -110,6 +110,7 @@ public class PrometheusMetricsDiagnostics : ICacheDiagnostics
 #### `UserRequestServed()`
 **Tracks:** Completion of user request (data returned to caller)  
 **Location:** `UserRequestHandler.HandleRequestAsync` (final step, inside `!exceptionOccurred` block)  
+**Context:** User Thread  
 **Scenarios:** All user scenarios (U1–U5) and physical boundary miss (full vacuum)  
 **Fires when:** No exception occurred — regardless of whether a rebalance intent was published  
 **Does NOT fire when:** An exception propagated out of `HandleRequestAsync`  
@@ -125,6 +126,7 @@ Assert.Equal(1, diagnostics.UserRequestServed);
 #### `CacheExpanded()`
 **Tracks:** Cache expansion during partial cache hit  
 **Location:** `CacheDataExtensionService.CalculateMissingRanges` (intersection path)  
+**Context:** User Thread (Partial Cache Hit — Scenario U4) or Background Thread (Rebalance Execution)  
 **Scenarios:** U4 (partial cache hit)  
 **Invariant:** SWC.A.12b (Cache Contiguity Rule — preserves contiguity)
 
@@ -139,6 +141,7 @@ Assert.Equal(1, diagnostics.CacheExpanded);
 #### `CacheReplaced()`
 **Tracks:** Cache replacement during non-intersecting jump  
 **Location:** `CacheDataExtensionService.CalculateMissingRanges` (no intersection path)  
+**Context:** User Thread (Full Cache Miss — Scenario U5) or Background Thread (Rebalance Execution)  
 **Scenarios:** U5 (full cache miss — jump)  
 **Invariant:** SWC.A.12b (Cache Contiguity Rule — prevents gaps)
 
@@ -153,6 +156,7 @@ Assert.Equal(1, diagnostics.CacheReplaced);
 #### `UserRequestFullCacheHit()`
 **Tracks:** Request served entirely from cache (no data source access)  
 **Location:** `UserRequestHandler.HandleRequestAsync` (Scenario 2)  
+**Context:** User Thread  
 **Scenarios:** U2, U3 (full cache hit)
 
 **Per-request programmatic alternative:** `result.CacheInteraction == CacheInteraction.FullHit` on the returned `RangeResult`. `ICacheDiagnostics` callbacks are aggregate counters; `CacheInteraction` is the per-call value for branching logic (e.g., `GetDataAndWaitOnMissAsync` uses it to skip `WaitForIdleAsync` on full hits).
@@ -168,6 +172,7 @@ Assert.Equal(1, diagnostics.UserRequestFullCacheHit);
 #### `UserRequestPartialCacheHit()`
 **Tracks:** Request with partial cache overlap (fetch missing segments)  
 **Location:** `UserRequestHandler.HandleRequestAsync` (Scenario 3)  
+**Context:** User Thread  
 **Scenarios:** U4 (partial cache hit)
 
 **Per-request programmatic alternative:** `result.CacheInteraction == CacheInteraction.PartialHit`
@@ -183,6 +188,7 @@ Assert.Equal(1, diagnostics.UserRequestPartialCacheHit);
 #### `UserRequestFullCacheMiss()`
 **Tracks:** Request requiring complete fetch from data source  
 **Location:** `UserRequestHandler.HandleRequestAsync` (Scenarios 1 and 4)  
+**Context:** User Thread  
 **Scenarios:** U1 (cold start), U5 (non-intersecting jump)
 
 **Per-request programmatic alternative:** `result.CacheInteraction == CacheInteraction.FullMiss`
@@ -201,6 +207,7 @@ Assert.Equal(2, diagnostics.UserRequestFullCacheMiss);
 #### `DataSourceFetchSingleRange()`
 **Tracks:** Single contiguous range fetch from `IDataSource`  
 **Location:** `UserRequestHandler.HandleRequestAsync` (cold start or jump)  
+**Context:** User Thread  
 **API Called:** `IDataSource.FetchAsync(Range<TRange>, CancellationToken)`
 
 ```csharp
@@ -213,6 +220,7 @@ Assert.Equal(1, diagnostics.DataSourceFetchSingleRange);
 #### `DataSourceFetchMissingSegments()`
 **Tracks:** Missing segments fetch (gap filling optimization)  
 **Location:** `CacheDataExtensionService.ExtendCacheAsync`  
+**Context:** User Thread (Partial Cache Hit — Scenario U4) or Background Thread (Rebalance Execution)  
 **API Called:** `IDataSource.FetchAsync(IEnumerable<Range<TRange>>, CancellationToken)`
 
 ```csharp
@@ -250,6 +258,7 @@ Assert.Equal(Range.Closed(1000, 1500), result.Range);
 #### `RebalanceIntentPublished()`
 **Tracks:** Rebalance intent publication by User Path  
 **Location:** `IntentController.PublishIntent` (after scheduler receives intent)  
+**Context:** User Thread  
 **Invariants:** SWC.A.5 (User Path is sole source of intent), SWC.C.8e (Intent contains delivered data)  
 **Note:** Intent publication does NOT guarantee execution (opportunistic)
 
@@ -263,6 +272,7 @@ Assert.Equal(1, diagnostics.RebalanceIntentPublished);
 #### `RebalanceIntentCancelled()`
 **Tracks:** Intent cancellation before or during execution  
 **Location:** `IntentController.ProcessIntentsAsync` (background loop — when new intent supersedes pending intent)  
+**Context:** Background Thread (Intent Processing Loop)  
 **Invariants:** SWC.A.2 (User Path priority), SWC.A.2a (User cancels rebalance), SWC.C.4 (Obsolete intent doesn't start)
 
 ```csharp
@@ -284,6 +294,7 @@ Assert.True(diagnostics.RebalanceIntentCancelled >= 1);
 #### `RebalanceExecutionStarted()`
 **Tracks:** Rebalance execution start after decision approval  
 **Location:** `IntentController.ProcessIntentsAsync` (after `RebalanceDecisionEngine` approves execution)  
+**Context:** Background Thread (Rebalance Execution)  
 **Scenarios:** D3 (rebalance required)  
 **Invariant:** SWC.D.5 (Rebalance triggered only if confirmed necessary)
 
@@ -298,6 +309,7 @@ Assert.Equal(1, diagnostics.RebalanceExecutionStarted);
 #### `RebalanceExecutionCompleted()`
 **Tracks:** Successful rebalance completion  
 **Location:** `RebalanceExecutor.ExecuteAsync` (after `UpdateCacheState`)  
+**Context:** Background Thread (Rebalance Execution)  
 **Scenarios:** R1, R2 (build from scratch, expand cache)  
 **Invariants:** SWC.F.2 (Only Rebalance writes to cache), SWC.B.2 (Cache updates are atomic)
 
@@ -312,6 +324,7 @@ Assert.Equal(1, diagnostics.RebalanceExecutionCompleted);
 #### `RebalanceExecutionCancelled()`
 **Tracks:** Rebalance cancellation mid-flight  
 **Location:** `RebalanceExecutor.ExecuteAsync` (catch `OperationCanceledException`)  
+**Context:** Background Thread (Rebalance Execution)  
 **Invariant:** SWC.F.1a (Rebalance yields to User Path immediately)
 
 ```csharp
@@ -353,6 +366,7 @@ Recommended: log with full context, track metrics, alert on consecutive failures
 #### `RebalanceSkippedCurrentNoRebalanceRange()`
 **Tracks:** Rebalance skipped — last requested position is within the current `NoRebalanceRange`  
 **Location:** `RebalanceDecisionEngine.Evaluate` (Stage 1 early exit)  
+**Context:** Background Thread (Intent Processing Loop)  
 **Scenarios:** D1 (inside current no-rebalance threshold)  
 **Invariants:** SWC.D.3, SWC.C.8b
 
@@ -370,6 +384,7 @@ Assert.True(diagnostics.RebalanceSkippedCurrentNoRebalanceRange >= 1);
 #### `RebalanceSkippedPendingNoRebalanceRange()`
 **Tracks:** Rebalance skipped — last requested position is within the *pending* (desired) `NoRebalanceRange` of an already-scheduled execution  
 **Location:** `RebalanceDecisionEngine.Evaluate` (Stage 2 early exit)  
+**Context:** Background Thread (Intent Processing Loop)  
 **Scenarios:** D1b (pending rebalance covers the request — anti-thrashing)  
 **Invariants:** SWC.D.2a
 
@@ -385,6 +400,7 @@ Assert.True(diagnostics.RebalanceSkippedPendingNoRebalanceRange >= 1);
 #### `RebalanceSkippedSameRange()`
 **Tracks:** Rebalance skipped because desired cache range equals current cache range  
 **Location:** `RebalanceDecisionEngine.Evaluate` (Stage 4 early exit)  
+**Context:** Background Thread (Rebalance Execution)  
 **Scenarios:** D2 (`DesiredCacheRange == CurrentCacheRange`)  
 **Invariants:** SWC.D.4, SWC.C.8c
 

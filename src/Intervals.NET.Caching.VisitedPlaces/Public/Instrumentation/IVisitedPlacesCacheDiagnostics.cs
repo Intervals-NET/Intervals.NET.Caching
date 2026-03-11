@@ -12,6 +12,31 @@ namespace Intervals.NET.Caching.VisitedPlaces.Public.Instrumentation;
 /// For testing and observability, provide a custom implementation or use
 /// <c>EventCounterCacheDiagnostics</c> from the test infrastructure package.
 /// </para>
+/// <para><strong>Execution Context Summary</strong></para>
+/// <para>
+/// Each method fires synchronously on the thread that triggers the event.
+/// See the individual method's <c>Context:</c> annotation for details.
+/// </para>
+/// <list type="table">
+/// <listheader><term>Method</term><term>Thread Context</term></listheader>
+/// <item><term><see cref="DataSourceFetchGap"/></term><term>User Thread</term></item>
+/// <item><term><see cref="NormalizationRequestReceived"/></term><term>Background Thread (Normalization Loop)</term></item>
+/// <item><term><see cref="NormalizationRequestProcessed"/></term><term>Background Thread (Normalization Loop)</term></item>
+/// <item><term><see cref="BackgroundStatisticsUpdated"/></term><term>Background Thread (Normalization Loop)</term></item>
+/// <item><term><see cref="BackgroundSegmentStored"/></term><term>Background Thread (Normalization Loop)</term></item>
+/// <item><term><see cref="EvictionEvaluated"/></term><term>Background Thread (Normalization Loop)</term></item>
+/// <item><term><see cref="EvictionTriggered"/></term><term>Background Thread (Normalization Loop)</term></item>
+/// <item><term><see cref="EvictionExecuted"/></term><term>Background Thread (Normalization Loop)</term></item>
+/// <item><term><see cref="EvictionSegmentRemoved"/></term><term>Background Thread (Normalization Loop)</term></item>
+/// <item><term><see cref="TtlSegmentExpired"/></term><term>Background Thread (TTL / Fire-and-forget)</term></item>
+/// <item><term><see cref="TtlWorkItemScheduled"/></term><term>Background Thread (Normalization Loop)</term></item>
+/// </list>
+/// <para>
+/// Inherited from <see cref="ICacheDiagnostics"/>: <c>UserRequestServed</c>,
+/// <c>UserRequestFullCacheHit</c>, <c>UserRequestPartialCacheHit</c>,
+/// <c>UserRequestFullCacheMiss</c> — all User Thread.
+/// <c>BackgroundOperationFailed</c> — Background Thread (Normalization Loop).
+/// </para>
 /// </remarks>
 public interface IVisitedPlacesCacheDiagnostics : ICacheDiagnostics
 {
@@ -25,6 +50,9 @@ public interface IVisitedPlacesCacheDiagnostics : ICacheDiagnostics
     /// Location: UserRequestHandler.HandleRequestAsync
     /// Related: Invariant VPC.F.1
     /// </summary>
+    /// <remarks>
+    /// <para><strong>Context:</strong> User Thread</para>
+    /// </remarks>
     void DataSourceFetchGap();
 
     // ============================================================================
@@ -36,6 +64,9 @@ public interface IVisitedPlacesCacheDiagnostics : ICacheDiagnostics
     /// Location: CacheNormalizationExecutor.ExecuteAsync (entry)
     /// Related: Invariant VPC.B.2
     /// </summary>
+    /// <remarks>
+    /// <para><strong>Context:</strong> Background Thread (Normalization Loop)</para>
+    /// </remarks>
     void NormalizationRequestReceived();
 
     /// <summary>
@@ -43,6 +74,9 @@ public interface IVisitedPlacesCacheDiagnostics : ICacheDiagnostics
     /// Location: CacheNormalizationExecutor.ExecuteAsync (exit)
     /// Related: Invariant VPC.B.3
     /// </summary>
+    /// <remarks>
+    /// <para><strong>Context:</strong> Background Thread (Normalization Loop)</para>
+    /// </remarks>
     void NormalizationRequestProcessed();
 
     /// <summary>
@@ -50,6 +84,9 @@ public interface IVisitedPlacesCacheDiagnostics : ICacheDiagnostics
     /// Location: CacheNormalizationExecutor.ExecuteAsync (step 1)
     /// Related: Invariant VPC.E.4b
     /// </summary>
+    /// <remarks>
+    /// <para><strong>Context:</strong> Background Thread (Normalization Loop)</para>
+    /// </remarks>
     void BackgroundStatisticsUpdated();
 
     /// <summary>
@@ -57,6 +94,9 @@ public interface IVisitedPlacesCacheDiagnostics : ICacheDiagnostics
     /// Location: CacheNormalizationExecutor.ExecuteAsync (step 2)
     /// Related: Invariant VPC.B.3, VPC.C.1
     /// </summary>
+    /// <remarks>
+    /// <para><strong>Context:</strong> Background Thread (Normalization Loop)</para>
+    /// </remarks>
     void BackgroundSegmentStored();
 
     // ============================================================================
@@ -69,6 +109,9 @@ public interface IVisitedPlacesCacheDiagnostics : ICacheDiagnostics
     /// Location: CacheNormalizationExecutor.ExecuteAsync (step 3)
     /// Related: Invariant VPC.E.1a
     /// </summary>
+    /// <remarks>
+    /// <para><strong>Context:</strong> Background Thread (Normalization Loop)</para>
+    /// </remarks>
     void EvictionEvaluated();
 
     /// <summary>
@@ -76,6 +119,9 @@ public interface IVisitedPlacesCacheDiagnostics : ICacheDiagnostics
     /// Location: CacheNormalizationExecutor.ExecuteAsync (step 3, at least one evaluator fired)
     /// Related: Invariant VPC.E.1a, VPC.E.2a
     /// </summary>
+    /// <remarks>
+    /// <para><strong>Context:</strong> Background Thread (Normalization Loop)</para>
+    /// </remarks>
     void EvictionTriggered();
 
     /// <summary>
@@ -83,14 +129,20 @@ public interface IVisitedPlacesCacheDiagnostics : ICacheDiagnostics
     /// Location: CacheNormalizationExecutor.ExecuteAsync (step 4)
     /// Related: Invariant VPC.E.2a
     /// </summary>
+    /// <remarks>
+    /// <para><strong>Context:</strong> Background Thread (Normalization Loop)</para>
+    /// </remarks>
     void EvictionExecuted();
 
     /// <summary>
     /// Records a single segment removed from the cache during eviction.
-    /// Called once per segment actually removed.
-    /// Location: Eviction executor during step 4
+    /// Called once per segment actually removed (segments already claimed by the TTL actor are skipped).
+    /// Location: CacheNormalizationExecutor.ExecuteAsync (step 4 — per-segment removal loop)
     /// Related: Invariant VPC.E.6
     /// </summary>
+    /// <remarks>
+    /// <para><strong>Context:</strong> Background Thread (Normalization Loop)</para>
+    /// </remarks>
     void EvictionSegmentRemoved();
 
     // ============================================================================
@@ -104,6 +156,13 @@ public interface IVisitedPlacesCacheDiagnostics : ICacheDiagnostics
     /// Location: TtlExpirationExecutor.ExecuteAsync
     /// Related: Invariant VPC.T.1
     /// </summary>
+    /// <remarks>
+    /// <para><strong>Context:</strong> Background Thread (TTL / Fire-and-forget)</para>
+    /// <para>
+    /// TTL work items are executed on ThreadPool threads via <see cref="M:System.Threading.ThreadPool.QueueUserWorkItem"/>
+    /// (fire-and-forget, without serialization). Multiple TTL work items may execute concurrently.
+    /// </para>
+    /// </remarks>
     void TtlSegmentExpired();
 
     /// <summary>
@@ -112,5 +171,8 @@ public interface IVisitedPlacesCacheDiagnostics : ICacheDiagnostics
     /// Location: CacheNormalizationExecutor.ExecuteAsync (step 2, after storage)
     /// Related: Invariant VPC.T.2
     /// </summary>
+    /// <remarks>
+    /// <para><strong>Context:</strong> Background Thread (Normalization Loop)</para>
+    /// </remarks>
     void TtlWorkItemScheduled();
 }

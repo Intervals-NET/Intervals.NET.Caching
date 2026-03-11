@@ -354,24 +354,28 @@ The snapshot is immutable. Subsequent calls to `UpdateRuntimeOptions` do not aff
 - Calling `CurrentRuntimeOptions` on a disposed cache throws `ObjectDisposedException`.
 ## Diagnostics
 
-⚠️ **CRITICAL: You MUST handle `RebalanceExecutionFailed` in production.** Rebalance operations run in background tasks. Without handling this event, failures are silently swallowed and the cache stops rebalancing with no indication.
+⚠️ **CRITICAL: You MUST handle `BackgroundOperationFailed` in production.** Rebalance operations run in background tasks. Without handling this event, failures are silently swallowed and the cache stops rebalancing with no indication.
 
 ```csharp
-public class LoggingCacheDiagnostics : ICacheDiagnostics
+public class LoggingCacheDiagnostics : ISlidingWindowCacheDiagnostics
 {
     private readonly ILogger _logger;
 
     public LoggingCacheDiagnostics(ILogger logger) => _logger = logger;
 
-    public void RebalanceExecutionFailed(Exception ex)
+    public void BackgroundOperationFailed(Exception ex)
     {
-        // CRITICAL: always log rebalance failures
-        _logger.LogError(ex, "Cache rebalance failed. Cache may not be optimally sized.");
+        // CRITICAL: always log background failures
+        _logger.LogError(ex, "Cache background operation failed. Cache may not be optimally sized.");
     }
 
     // Other methods can be no-op if you only care about failures
 }
 ```
+
+**Threading:** All diagnostic hooks are called **synchronously** on the thread that triggers the event (User Thread or a Background Thread — see `docs/shared/diagnostics.md` for the full thread-context table).
+
+`ExecutionContext` (including `AsyncLocal<T>` values, `Activity`, and ambient culture) flows from the publishing thread into each hook. You can safely read ambient context in hooks.
 
 If no diagnostics instance is provided, the cache uses `NoOpDiagnostics` — zero overhead, JIT-optimized away completely.
 

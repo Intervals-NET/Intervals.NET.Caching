@@ -48,9 +48,10 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Background;
 ///   Remove evicted segments — calls <see cref="ISegmentStorage{TRange,TData}.Remove"/> for
 ///   each candidate, which atomically claims ownership via
 ///   <see cref="CachedSegment{TRange,TData}.MarkAsRemoved()"/> internally and returns
-///   <see langword="true"/> only for the first caller. Only segments where
-///   <see cref="ISegmentStorage{TRange,TData}.Remove"/> returns <see langword="true"/> are
-///   forwarded to <see cref="EvictionEngine{TRange,TData}.OnSegmentsRemoved"/> in one batch.
+///   <see langword="true"/> only for the first caller. For each segment this caller wins,
+///   <see cref="EvictionEngine{TRange,TData}.OnSegmentRemoved"/> is called immediately
+///   (single-value overload — no intermediate list allocation), followed by
+///   <see cref="IVisitedPlacesCacheDiagnostics.EvictionSegmentRemoved"/>.
 /// </description></item>
 /// </list>
 /// <para><strong>Activity counter (Invariant S.H.1):</strong></para>
@@ -189,10 +190,10 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
                 // ISegmentStorage.Remove atomically claims ownership via MarkAsRemoved() and
                 // returns true only for the first caller. Concurrent TTL expirations may race
                 // here; the atomic flag inside storage ensures each segment is removed at most once.
+                // OnSegmentRemoved is called per-segment (single-value overload) to avoid
+                // allocating a temporary collection for the batch variant.
                 if (toRemove.Count > 0)
                 {
-                    List<CachedSegment<TRange, TData>>? actuallyRemoved = null;
-
                     foreach (var segment in toRemove)
                     {
                         if (!_storage.Remove(segment))
@@ -200,14 +201,8 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
                             continue; // TTL actor already claimed this segment — skip.
                         }
 
-                        actuallyRemoved ??= new List<CachedSegment<TRange, TData>>(toRemove.Count);
-                        actuallyRemoved.Add(segment);
-                    }
-
-                    if (actuallyRemoved != null)
-                    {
-                        // todo: get rid of this call, we must not to allocate a separate temp trashy list - implement a mthod that allows to pass a single segment and use it in the loop
-                        _evictionEngine.OnSegmentsRemoved(actuallyRemoved);
+                        _evictionEngine.OnSegmentRemoved(segment);
+                        _diagnostics.EvictionSegmentRemoved();
                     }
                 }
             }

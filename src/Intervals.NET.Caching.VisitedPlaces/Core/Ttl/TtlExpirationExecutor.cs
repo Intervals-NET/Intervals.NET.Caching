@@ -35,9 +35,10 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Ttl;
 ///   (idempotent no-op for storage and engine).
 /// </description></item>
 /// <item><description>
-///   Call <see cref="EvictionEngine{TRange,TData}.OnSegmentsRemoved"/> to update stateful
+///   Call <see cref="EvictionEngine{TRange,TData}.OnSegmentRemoved"/> to update stateful
 ///   policy aggregates (e.g. <c>MaxTotalSpanPolicy._totalSpan</c> via
 ///   <see cref="System.Threading.Interlocked.Add(ref long, long)"/>).
+///   The single-segment overload is used to avoid allocating a temporary collection.
 /// </description></item>
 /// <item><description>Fire <see cref="IVisitedPlacesCacheDiagnostics.TtlSegmentExpired"/>.</description></item>
 /// </list>
@@ -56,7 +57,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Ttl;
 ///   <see langword="false"/> and becomes a no-op.
 /// </description></item>
 /// <item><description>
-///   <see cref="EvictionEngine{TRange,TData}.OnSegmentsRemoved"/> is only reached by the winner
+///   <see cref="EvictionEngine{TRange,TData}.OnSegmentRemoved"/> is only reached by the winner
 ///   of <c>Remove</c>, so double-notification is impossible.
 /// </description></item>
 /// <item><description>
@@ -137,8 +138,8 @@ internal sealed class TtlExpirationExecutor<TRange, TData>
         }
 
         // Notify stateful policies (e.g. decrements MaxTotalSpanPolicy._totalSpan atomically).
-        // todo make an overload of this method that accepts single value
-        _evictionEngine.OnSegmentsRemoved([workItem.Segment]);
+        // Single-segment overload avoids any intermediate collection allocation.
+        _evictionEngine.OnSegmentRemoved(workItem.Segment);
 
         _diagnostics.TtlSegmentExpired();
     }
