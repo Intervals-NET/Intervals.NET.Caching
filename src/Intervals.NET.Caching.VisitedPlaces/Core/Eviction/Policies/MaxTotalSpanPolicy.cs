@@ -51,7 +51,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Policies;
 /// segment's span in the lifecycle hooks. The domain is captured at construction and also passed
 /// to the pressure object for use during <see cref="IEvictionPressure{TRange,TData}.Reduce"/>.</para>
 /// </remarks>
-internal sealed class MaxTotalSpanPolicy<TRange, TData, TDomain> : IEvictionPolicy<TRange, TData>
+public sealed class MaxTotalSpanPolicy<TRange, TData, TDomain> : IEvictionPolicy<TRange, TData>
     where TRange : IComparable<TRange>
     where TDomain : IRangeDomain<TRange>
 {

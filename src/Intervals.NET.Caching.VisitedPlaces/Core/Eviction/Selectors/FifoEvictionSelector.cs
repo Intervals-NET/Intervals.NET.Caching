@@ -31,7 +31,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Selectors;
 /// no collection copying. SampleSize defaults to
 /// <see cref="EvictionSamplingOptions.DefaultSampleSize"/> (32).</para>
 /// </remarks>
-internal sealed class FifoEvictionSelector<TRange, TData> : SamplingEvictionSelector<TRange, TData>
+public sealed class FifoEvictionSelector<TRange, TData> : SamplingEvictionSelector<TRange, TData>
     where TRange : IComparable<TRange>
 {
     /// <summary>

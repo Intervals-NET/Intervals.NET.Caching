@@ -34,7 +34,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Selectors;
 /// no collection copying. SampleSize defaults to
 /// <see cref="EvictionSamplingOptions.DefaultSampleSize"/> (32).</para>
 /// </remarks>
-internal sealed class SmallestFirstEvictionSelector<TRange, TData, TDomain>
+public sealed class SmallestFirstEvictionSelector<TRange, TData, TDomain>
     : SamplingEvictionSelector<TRange, TData>
     where TRange : IComparable<TRange>
     where TDomain : IRangeDomain<TRange>

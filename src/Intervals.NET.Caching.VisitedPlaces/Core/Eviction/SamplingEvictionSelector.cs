@@ -44,7 +44,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 /// </para>
 /// <para><strong>Execution Context:</strong> Background Path (single writer thread)</para>
 /// </remarks>
-internal abstract class SamplingEvictionSelector<TRange, TData>
+public abstract class SamplingEvictionSelector<TRange, TData>
     : IEvictionSelector<TRange, TData>, IStorageAwareEvictionSelector<TRange, TData>
     where TRange : IComparable<TRange>
 {
@@ -82,7 +82,7 @@ internal abstract class SamplingEvictionSelector<TRange, TData>
     }
 
     /// <inheritdoc/>
-    public void Initialize(ISegmentStorage<TRange, TData> storage)
+    void IStorageAwareEvictionSelector<TRange, TData>.Initialize(ISegmentStorage<TRange, TData> storage)
     {
         _storage = storage;
     }

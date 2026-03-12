@@ -4,11 +4,11 @@ This document provides essential information for AI coding agents working on the
 
 ## Project Overview
 
-**Intervals.NET.Caching** is a C# .NET 8.0 library implementing a read-only, range-based, sequential-optimized cache with decision-driven background rebalancing. It is organized into multiple packages:
+**Intervals.NET.Caching** is a C# .NET 8.0 library implementing read-only, range-based caches with decision-driven background maintenance. It is organized into multiple packages:
 
 - **`Intervals.NET.Caching`** — shared foundation: interfaces, DTOs, layered cache infrastructure, concurrency primitives
 - **`Intervals.NET.Caching.SlidingWindow`** — sliding window cache implementation (sequential-access optimized)
-- **`Intervals.NET.Caching.VisitedPlaces`** — scaffold only (random-access optimized, not yet implemented)
+- **`Intervals.NET.Caching.VisitedPlaces`** — visited places cache implementation (random-access optimized, with eviction and TTL)
 
 This is a production-ready concurrent systems project with extensive architectural documentation.
 
@@ -68,7 +68,7 @@ dotnet test --collect:"XPlat Code Coverage" --results-directory ./TestResults
 **Test Projects:**
 - **Unit Tests**: Individual component testing with Moq 4.20.70
 - **Integration Tests**: Component interaction, concurrency, data source interaction
-- **Invariants Tests**: 90 automated tests validating architectural contracts via public API
+- **Invariants Tests**: Automated tests validating architectural contracts via public API
 
 ## Linting & Formatting
 
@@ -384,19 +384,39 @@ refactor: AsyncActivityCounter lock has been removed and replaced with lock-free
 - `src/Intervals.NET.Caching.SlidingWindow/Infrastructure/Concurrency/` - Async coordination
 - `src/Intervals.NET.Caching/Infrastructure/Concurrency/AsyncActivityCounter.cs` - Shared lock-free activity counter (internal, visible to SWC via InternalsVisibleTo)
 
-**WebAssembly Validation:**
-- `src/Intervals.NET.Caching.WasmValidation/` - Validates all packages compile for `net8.0-browser`
+**Public API (VisitedPlaces):**
+- `src/Intervals.NET.Caching.VisitedPlaces/Public/IVisitedPlacesCache.cs` - VisitedPlaces-specific interface
+- `src/Intervals.NET.Caching.VisitedPlaces/Public/Cache/VisitedPlacesCache.cs` - Main cache facade
+- `src/Intervals.NET.Caching.VisitedPlaces/Public/Cache/VisitedPlacesCacheBuilder.cs` - Builder (includes `Layered()`)
+- `src/Intervals.NET.Caching.VisitedPlaces/Public/Configuration/` - Configuration classes (`VisitedPlacesCacheOptions`, storage strategies, eviction sampling)
+- `src/Intervals.NET.Caching.VisitedPlaces/Public/Instrumentation/` - Diagnostics
+- `src/Intervals.NET.Caching.VisitedPlaces/Public/Extensions/` - `VisitedPlacesLayerExtensions`
+- `src/Intervals.NET.Caching.VisitedPlaces/Core/Eviction/IEvictionPolicy.cs` - Public eviction policy interface
+- `src/Intervals.NET.Caching.VisitedPlaces/Core/Eviction/IEvictionSelector.cs` - Public eviction selector interface (also exposes `SamplingEvictionSelector<TRange,TData>` abstract base)
+- `src/Intervals.NET.Caching.VisitedPlaces/Core/Eviction/Policies/` - Public concrete policies: `MaxSegmentCountPolicy`, `MaxTotalSpanPolicy`
+- `src/Intervals.NET.Caching.VisitedPlaces/Core/Eviction/Selectors/` - Public concrete selectors: `LruEvictionSelector`, `FifoEvictionSelector`, `SmallestFirstEvictionSelector`
 
-**Scaffold (not yet implemented):**
-- `src/Intervals.NET.Caching.VisitedPlaces/` - VisitedPlacesCache scaffold (random-access optimized)
+**WebAssembly Validation:**
+- `src/Intervals.NET.Caching.WasmValidation/` - Validates Core + SlidingWindow compile for `net8.0-browser`
+- `src/Intervals.NET.Caching.VisitedPlaces.WasmValidation/` - Validates Core + VisitedPlaces compile for `net8.0-browser`
 
 ## CI/CD
 
-**GitHub Actions:** `.github/workflows/intervals-net-caching.yml`
-- Triggers: Push/PR to main/master, manual dispatch
-- Runs: Build, WebAssembly validation, all test suites with coverage
-- Coverage: Uploaded to Codecov
-- Publish: NuGet.org (on main/master push)
+**GitHub Actions — two package-specific workflows:**
+
+- **`.github/workflows/intervals-net-caching-swc.yml`** — SlidingWindow workflow
+  - Triggers: Push/PR to main/master (paths: Core, SlidingWindow, SWC WasmValidation, SWC tests), manual dispatch
+  - Runs: Build solution, SWC WebAssembly validation, SWC test suites (Unit/Integration/Invariants) with coverage
+  - Coverage: Uploaded to Codecov
+  - Publish: `Intervals.NET.Caching` + `Intervals.NET.Caching.SlidingWindow` to NuGet.org (on main/master push)
+
+- **`.github/workflows/intervals-net-caching-vpc.yml`** — VisitedPlaces workflow
+  - Triggers: Push/PR to main/master (paths: Core, VisitedPlaces, VPC WasmValidation, VPC tests), manual dispatch
+  - Runs: Build solution, VPC WebAssembly validation, VPC test suites (Unit/Integration/Invariants) with coverage
+  - Coverage: Uploaded to Codecov
+  - Publish: `Intervals.NET.Caching` + `Intervals.NET.Caching.VisitedPlaces` to NuGet.org (on main/master push)
+
+**Note:** Both workflows publish `Intervals.NET.Caching` (core). The `--skip-duplicate` flag on `dotnet nuget push` ensures no conflict if both run concurrently against the same core version.
 
 **Local CI Testing:**
 ```powershell

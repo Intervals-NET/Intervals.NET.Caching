@@ -29,7 +29,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Policies;
 /// because <see cref="OnSegmentRemoved"/> may be called concurrently from the Background Path
 /// and the TTL actor.</para>
 /// </remarks>
-internal sealed class MaxSegmentCountPolicy<TRange, TData> : IEvictionPolicy<TRange, TData>
+public sealed class MaxSegmentCountPolicy<TRange, TData> : IEvictionPolicy<TRange, TData>
     where TRange : IComparable<TRange>
 {
     private int _count;
