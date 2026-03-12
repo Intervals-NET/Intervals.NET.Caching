@@ -41,16 +41,14 @@ namespace Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 /// All other methods are Background-Path-only (single writer).</para>
 /// <para>Alignment: Invariants VPC.A.10, VPC.B.5, VPC.C.2, VPC.C.3, S.H.4.</para>
 /// </remarks>
-internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStorage<TRange, TData>
+internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStorageBase<TRange, TData>
     where TRange : IComparable<TRange>
 {
     private const int DefaultStride = 16;
     private const int DefaultAppendBufferSize = 8;
-    private const int RandomRetryLimit = 8;
 
     private readonly int _stride;
     private readonly int _appendBufferSize;
-    private readonly Random _random = new();
 
     // Sorted linked list — mutated on Background Path only.
     private readonly LinkedList<CachedSegment<TRange, TData>> _list = [];
@@ -63,11 +61,6 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
     // Counter of segments added since the last stride normalization.
     // Normalization is triggered when this reaches _appendBufferSize.
     private int _addsSinceLastNormalization;
-
-    // Total count of live (non-removed) segments.
-    // Decremented by Remove (which may be called from the TTL thread) via Interlocked.Decrement.
-    // Incremented only on the Background Path via Interlocked.Increment.
-    private int _count;
 
     /// <summary>
     /// Initializes a new <see cref="LinkedListStrideIndexStorage{TRange,TData}"/> with optional
@@ -102,9 +95,6 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
     }
 
     /// <inheritdoc/>
-    public int Count => Volatile.Read(ref _count);
-
-    /// <inheritdoc/>
     /// <remarks>
     /// <para><strong>Algorithm (O(log(n/N) + k + N)):</strong></para>
     /// <list type="number">
@@ -113,7 +103,7 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
     /// <item><description>Walk the list forward from the anchor node, collecting intersecting non-removed segments (checked via <see cref="CachedSegment{TRange,TData}.IsRemoved"/>)</description></item>
     /// </list>
     /// </remarks>
-    public IReadOnlyList<CachedSegment<TRange, TData>> FindIntersecting(Range<TRange> range)
+    public override IReadOnlyList<CachedSegment<TRange, TData>> FindIntersecting(Range<TRange> range)
     {
         var strideIndex = Volatile.Read(ref _strideIndex);
 
@@ -170,47 +160,18 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
     }
 
     /// <inheritdoc/>
-    public void Add(CachedSegment<TRange, TData> segment)
+    public override void Add(CachedSegment<TRange, TData> segment)
     {
         // Insert into sorted position in the linked list.
         InsertSorted(segment);
 
         _addsSinceLastNormalization++;
-        Interlocked.Increment(ref _count);
+        IncrementCount();
 
         if (_addsSinceLastNormalization == _appendBufferSize)
         {
             NormalizeStrideIndex();
         }
-    }
-
-    /// <inheritdoc/>
-    /// <remarks>
-    /// <para>
-    /// Calls <see cref="CachedSegment{TRange,TData}.TryMarkAsRemoved"/> to atomically transition
-    /// the segment to the removed state. If this is the first removal of the segment, <c>_count</c>
-    /// is decremented and <see langword="true"/> is returned. Subsequent calls are no-ops
-    /// (idempotent) and return <see langword="false"/>.
-    /// </para>
-    /// <para>
-    /// The node is NOT physically unlinked immediately; it remains in <c>_list</c> until the next
-    /// <see cref="NormalizeStrideIndex"/> pass. All read paths skip removed segments via the
-    /// <see cref="CachedSegment{TRange,TData}.IsRemoved"/> flag.
-    /// </para>
-    /// <para><strong>Thread safety:</strong> Safe to call concurrently from the Background Path
-    /// (eviction) and the TTL thread. <see cref="CachedSegment{TRange,TData}.TryMarkAsRemoved"/>
-    /// uses <c>Interlocked.CompareExchange</c>; <c>_count</c> uses <c>Interlocked.Decrement</c>.
-    /// </para>
-    /// </remarks>
-    public bool TryRemove(CachedSegment<TRange, TData> segment)
-    {
-        if (segment.TryMarkAsRemoved())
-        {
-            Interlocked.Decrement(ref _count);
-            return true;
-        }
-
-        return false;
     }
 
     /// <inheritdoc/>
@@ -231,7 +192,7 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
     /// </description></item>
     /// </list>
     /// </remarks>
-    public CachedSegment<TRange, TData>? TryGetRandomSegment()
+    public override CachedSegment<TRange, TData>? TryGetRandomSegment()
     {
         if (_list.Count == 0)
         {
@@ -248,7 +209,7 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
                 // Pick a random stride anchor index, then a random offset from 0 to stride-1
                 // (or to list-end for the last anchor, which may have more than _stride nodes
                 // when new segments have been appended after the last normalization).
-                var anchorIdx = _random.Next(strideIndex.Length);
+                var anchorIdx = Random.Next(strideIndex.Length);
                 var anchorNode = strideIndex[anchorIdx];
 
                 // Guard: node may have been physically unlinked since the old stride index was read.
@@ -275,7 +236,7 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
                         }
                     }
 
-                    var offset = _random.Next(maxOffset);
+                    var offset = Random.Next(maxOffset);
 
                     var node = anchorNode;
                     for (var i = 0; i < offset && node.Next != null; i++)
@@ -291,7 +252,7 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
                 // Stride index not yet built (all segments added but not yet normalized).
                 // Fall back: linear walk with a random skip count.
                 var listCount = _list.Count;
-                var skip = _random.Next(listCount);
+                var skip = Random.Next(listCount);
                 var node = _list.First;
 
                 for (var i = 0; i < skip && node != null; i++)

@@ -20,7 +20,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 /// Rather than maintaining a separate <c>_softDeleted</c> collection (which would require
 /// synchronization between the Background Path and the TTL thread), this implementation
 /// delegates soft-delete tracking entirely to <see cref="CachedSegment{TRange,TData}.IsRemoved"/>.
-/// The flag is set atomically by <see cref="CachedSegment{TRange,TData}.MarkAsRemoved"/> and
+/// The flag is set atomically by <see cref="CachedSegment{TRange,TData}.TryMarkAsRemoved"/> and
 /// never reset, so it is safe to read from any thread without a lock.
     /// All read paths (<see cref="FindIntersecting"/>, <see cref="TryGetRandomSegment"/>,
     /// <see cref="Normalize"/>) simply skip segments whose <c>IsRemoved</c> flag is set.
@@ -33,13 +33,10 @@ namespace Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 /// All other methods are Background-Path-only (single writer).</para>
 /// <para>Alignment: Invariants VPC.A.10, VPC.B.5, VPC.C.2, VPC.C.3, S.H.4.</para>
 /// </remarks>
-internal sealed class SnapshotAppendBufferStorage<TRange, TData> : ISegmentStorage<TRange, TData>
+internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorageBase<TRange, TData>
     where TRange : IComparable<TRange>
 {
-    private const int RandomRetryLimit = 8;
-
     private readonly int _appendBufferSize;
-    private readonly Random _random = new();
 
     // Sorted snapshot — published atomically via Volatile.Write on normalization.
     // User Path reads via Volatile.Read.
@@ -49,11 +46,6 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : ISegmentStora
     // Size is determined by the appendBufferSize constructor parameter.
     private readonly CachedSegment<TRange, TData>[] _appendBuffer;
     private int _appendCount;
-
-    // Total count of live (non-removed) segments.
-    // Decremented by Remove (which may be called from the TTL thread) via Interlocked.Decrement.
-    // Incremented only on the Background Path via Interlocked.Increment.
-    private int _count;
 
     /// <summary>
     /// Initializes a new <see cref="SnapshotAppendBufferStorage{TRange,TData}"/> with the
@@ -80,19 +72,7 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : ISegmentStora
     }
 
     /// <inheritdoc/>
-    public int Count => Volatile.Read(ref _count);
-
-    /// <inheritdoc/>
-    /// <remarks>
-    /// <para><strong>Algorithm (O(log n + k + m)):</strong></para>
-    /// <list type="number">
-    /// <item><description>Acquire stable snapshot via <c>Volatile.Read</c></description></item>
-    /// <item><description>Binary-search snapshot for first entry whose range end &gt;= <paramref name="range"/>.Start</description></item>
-    /// <item><description>Linear-scan forward collecting intersecting, non-removed entries (checked via <see cref="CachedSegment{TRange,TData}.IsRemoved"/>)</description></item>
-    /// <item><description>Linear-scan append buffer for intersecting, non-removed entries</description></item>
-    /// </list>
-    /// </remarks>
-    public IReadOnlyList<CachedSegment<TRange, TData>> FindIntersecting(Range<TRange> range)
+    public override IReadOnlyList<CachedSegment<TRange, TData>> FindIntersecting(Range<TRange> range)
     {
         var snapshot = Volatile.Read(ref _snapshot);
 
@@ -148,46 +128,16 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : ISegmentStora
     }
 
     /// <inheritdoc/>
-    public void Add(CachedSegment<TRange, TData> segment)
+    public override void Add(CachedSegment<TRange, TData> segment)
     {
         _appendBuffer[_appendCount] = segment;
         _appendCount++;
-        Interlocked.Increment(ref _count);
+        IncrementCount();
 
         if (_appendCount == _appendBufferSize)
         {
             Normalize();
         }
-    }
-
-    /// <inheritdoc/>
-    /// <remarks>
-    /// <para>
-    /// Calls <see cref="CachedSegment{TRange,TData}.TryMarkAsRemoved"/> to atomically transition
-    /// the segment to the removed state. If this is the first removal of the segment (the flag
-    /// was not already set), <c>_count</c> is decremented and <see langword="true"/> is returned.
-    /// Subsequent calls for the same segment are no-ops (idempotent) and return
-    /// <see langword="false"/>.
-    /// </para>
-    /// <para>
-    /// The segment remains physically present in the snapshot and append buffer until the next
-    /// <see cref="Normalize"/> pass. All read paths skip it immediately via the
-    /// <see cref="CachedSegment{TRange,TData}.IsRemoved"/> flag.
-    /// </para>
-    /// <para><strong>Thread safety:</strong> Safe to call concurrently from the Background Path
-    /// (eviction) and the TTL thread. <see cref="CachedSegment{TRange,TData}.TryMarkAsRemoved"/>
-    /// uses <c>Interlocked.CompareExchange</c>; <c>_count</c> uses <c>Interlocked.Decrement</c>.
-    /// </para>
-    /// </remarks>
-    public bool TryRemove(CachedSegment<TRange, TData> segment)
-    {
-        if (segment.TryMarkAsRemoved())
-        {
-            Interlocked.Decrement(ref _count);
-            return true;
-        }
-
-        return false;
     }
 
     /// <inheritdoc/>
@@ -200,7 +150,7 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : ISegmentStora
     /// <item><description>If the selected segment is soft-deleted, retry (bounded by <c>RandomRetryLimit</c>).</description></item>
     /// </list>
     /// </remarks>
-    public CachedSegment<TRange, TData>? TryGetRandomSegment()
+    public override CachedSegment<TRange, TData>? TryGetRandomSegment()
     {
         var snapshot = Volatile.Read(ref _snapshot);
         var pool = snapshot.Length + _appendCount;
@@ -212,7 +162,7 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : ISegmentStora
 
         for (var attempt = 0; attempt < RandomRetryLimit; attempt++)
         {
-            var index = _random.Next(pool);
+            var index = Random.Next(pool);
             CachedSegment<TRange, TData> seg;
 
             if (index < snapshot.Length)
