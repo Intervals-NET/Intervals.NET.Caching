@@ -1,4 +1,6 @@
+using Intervals.NET.Caching.Infrastructure.Diagnostics;
 using Intervals.NET.Caching.Infrastructure.Scheduling;
+using Intervals.NET.Caching.Infrastructure.Scheduling.Serial;
 using Intervals.NET.Caching.VisitedPlaces.Public.Instrumentation;
 
 namespace Intervals.NET.Caching.VisitedPlaces.Infrastructure.Adapters;

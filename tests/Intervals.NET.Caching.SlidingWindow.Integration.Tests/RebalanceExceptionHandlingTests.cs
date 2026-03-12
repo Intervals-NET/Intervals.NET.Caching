@@ -1,3 +1,4 @@
+using Intervals.NET.Caching.Infrastructure.Diagnostics;
 using Intervals.NET.Domain.Default.Numeric;
 using Intervals.NET.Caching.SlidingWindow.Tests.Infrastructure.DataSources;
 using Intervals.NET.Caching.SlidingWindow.Public.Cache;

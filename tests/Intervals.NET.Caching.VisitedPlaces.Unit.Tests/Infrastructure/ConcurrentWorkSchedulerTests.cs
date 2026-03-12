@@ -1,5 +1,7 @@
 using Intervals.NET.Caching.Infrastructure.Concurrency;
+using Intervals.NET.Caching.Infrastructure.Diagnostics;
 using Intervals.NET.Caching.Infrastructure.Scheduling;
+using Intervals.NET.Caching.Infrastructure.Scheduling.Concurrent;
 
 namespace Intervals.NET.Caching.VisitedPlaces.Unit.Tests.Infrastructure;
 

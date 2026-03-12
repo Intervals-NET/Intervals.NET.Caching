@@ -1,10 +1,13 @@
 using Intervals.NET.Caching.Infrastructure.Concurrency;
+using Intervals.NET.Caching.Infrastructure.Diagnostics;
+using Intervals.NET.Caching.Infrastructure.Scheduling.Base;
+using Intervals.NET.Caching.Infrastructure.Scheduling.Supersession;
 
-namespace Intervals.NET.Caching.Infrastructure.Scheduling;
+namespace Intervals.NET.Caching.Infrastructure.Scheduling.Serial;
 
 /// <summary>
 /// Serial work scheduler that serializes work item execution using task continuation chaining.
-/// Provides unbounded serialization with minimal memory overhead.
+/// Provides unbounded FIFO serialization with minimal memory overhead.
 /// </summary>
 /// <typeparam name="TWorkItem">
 /// The type of work item processed by this scheduler.
@@ -14,39 +17,41 @@ namespace Intervals.NET.Caching.Infrastructure.Scheduling;
 /// <para><strong>Serialization Mechanism — Lock-Free Task Chaining:</strong></para>
 /// <para>
 /// Each new work item is chained to await the previous execution's completion before starting
-/// its own. This ensures sequential processing with minimal memory overhead:
+/// its own. This ensures sequential FIFO processing with minimal memory overhead:
 /// </para>
 /// <code>
 /// // Conceptual model (simplified):
 /// var previousTask = _currentExecutionTask;
-/// var newTask = ChainExecutionAsync(previousTask, workItem, cancellationToken);
+/// var newTask = ChainExecutionAsync(previousTask, workItem);
 /// Volatile.Write(ref _currentExecutionTask, newTask);
 /// </code>
 /// <para>
 /// The task chain reference uses volatile write for visibility (single-writer context —
-/// only the intent processing loop calls <see cref="PublishWorkItemAsync"/>).
+/// only the intent processing loop calls <see cref="IWorkScheduler{TWorkItem}.PublishWorkItemAsync"/>).
 /// No locks are needed. Actual execution always happens asynchronously on the ThreadPool —
 /// guaranteed by <c>await Task.Yield()</c> at the very beginning of <see cref="ChainExecutionAsync"/>,
 /// which immediately frees the caller's thread so the entire method body (including
 /// <c>await previousTask</c> and the executor) runs on the ThreadPool.
 /// </para>
+/// <para><strong>FIFO Semantics:</strong></para>
+/// <para>
+/// All published work items are processed in order; none are cancelled or superseded.
+/// This makes the scheduler suitable for event queues where every item must be processed
+/// (e.g. VisitedPlaces cache normalization requests).
+/// For supersession semantics (latest item wins, previous cancelled), use
+/// <see cref="UnboundedSupersessionWorkScheduler{TWorkItem}"/> instead.
+/// </para>
 /// <para><strong>Single-Writer Guarantee:</strong></para>
 /// <para>
 /// Each task awaits the previous task's completion before starting, ensuring that NO TWO
 /// WORK ITEMS ever execute concurrently. This eliminates write-write race conditions for
-/// consumers that mutate shared state (e.g. <c>RebalanceExecutor</c>).
-/// </para>
-/// <para><strong>Cancellation:</strong></para>
-/// <para>
-/// When a new item is published, the previous item's
-/// <see cref="ISchedulableWorkItem.Cancel"/> is called (by the caller, before
-/// <see cref="PublishWorkItemAsync"/>). Each item's <see cref="CancellationToken"/>
-/// is checked after the debounce delay and during I/O, allowing early exit.
+/// consumers that mutate shared state (e.g. <c>CacheNormalizationExecutor</c>).
 /// </para>
 /// <para><strong>Fire-and-Forget Execution Model:</strong></para>
 /// <para>
-/// <see cref="PublishWorkItemAsync"/> returns <see cref="ValueTask.CompletedTask"/> immediately
-/// after chaining. Execution happens asynchronously on the ThreadPool. Exceptions are captured
+/// <see cref="IWorkScheduler{TWorkItem}.PublishWorkItemAsync"/> returns
+/// <see cref="ValueTask.CompletedTask"/> immediately after chaining.
+/// Execution happens asynchronously on the ThreadPool. Exceptions are captured
 /// and reported via <see cref="IWorkSchedulerDiagnostics.WorkFailed"/>.
 /// </para>
 /// <para><strong>Trade-offs:</strong></para>
@@ -64,9 +69,10 @@ namespace Intervals.NET.Caching.Infrastructure.Scheduling;
 /// <item><description>Background batch processing</description></item>
 /// <item><description>Any scenario where request bursts are temporary</description></item>
 /// </list>
-/// <para>See also: <see cref="BoundedSerialWorkScheduler{TWorkItem}"/> for the bounded alternative with backpressure.</para>
+/// <para>See also: <see cref="BoundedSerialWorkScheduler{TWorkItem}"/> for the bounded FIFO alternative with backpressure.</para>
+/// <para>See also: <see cref="UnboundedSupersessionWorkScheduler{TWorkItem}"/> for the unbounded supersession variant.</para>
 /// </remarks>
-internal sealed class UnboundedSerialWorkScheduler<TWorkItem> : WorkSchedulerBase<TWorkItem>
+internal class UnboundedSerialWorkScheduler<TWorkItem> : SerialWorkSchedulerBase<TWorkItem>
     where TWorkItem : class, ISchedulableWorkItem
 {
     // Task chaining state (volatile write for single-writer pattern)
@@ -96,7 +102,7 @@ internal sealed class UnboundedSerialWorkScheduler<TWorkItem> : WorkSchedulerBas
     /// <para>
     /// Unlike the channel-based approach, there is no background loop started at construction.
     /// Executions are scheduled on-demand via task chaining when
-    /// <see cref="PublishWorkItemAsync"/> is called.
+    /// <see cref="IWorkScheduler{TWorkItem}.PublishWorkItemAsync"/> is called.
     /// </para>
     /// </remarks>
     public UnboundedSerialWorkScheduler(
@@ -109,7 +115,7 @@ internal sealed class UnboundedSerialWorkScheduler<TWorkItem> : WorkSchedulerBas
     }
 
     /// <summary>
-    /// Publishes a work item by chaining it to the previous execution task.
+    /// Enqueues the work item by chaining it to the previous execution task.
     /// Returns immediately (fire-and-forget).
     /// </summary>
     /// <param name="workItem">The work item to schedule.</param>
@@ -125,27 +131,9 @@ internal sealed class UnboundedSerialWorkScheduler<TWorkItem> : WorkSchedulerBas
     /// Returns immediately after chaining — actual execution always happens asynchronously on the
     /// ThreadPool, guaranteed by <c>await Task.Yield()</c> in <see cref="ChainExecutionAsync"/>.
     /// </para>
-    /// <para><strong>Activity Counter:</strong></para>
-    /// <para>
-    /// Increments the activity counter before chaining; the base class pipeline decrements it
-    /// in the <c>finally</c> block after execution completes/cancels/fails.
-    /// </para>
     /// </remarks>
-    public override ValueTask PublishWorkItemAsync(TWorkItem workItem, CancellationToken loopCancellationToken)
+    private protected override ValueTask EnqueueWorkItemAsync(TWorkItem workItem, CancellationToken loopCancellationToken)
     {
-        if (IsDisposed)
-        {
-            throw new ObjectDisposedException(
-                nameof(UnboundedSerialWorkScheduler<TWorkItem>),
-                "Cannot publish a work item to a disposed scheduler.");
-        }
-
-        // Increment activity counter for the new work item
-        ActivityCounter.IncrementActivity();
-
-        // Store as last work item (for cancellation coordination and pending-state inspection)
-        StoreLastWorkItem(workItem);
-
         // Chain execution to previous task (lock-free using volatile write — single-writer context)
         var previousTask = Volatile.Read(ref _currentExecutionTask);
         var newTask = ChainExecutionAsync(previousTask, workItem);
@@ -165,7 +153,8 @@ internal sealed class UnboundedSerialWorkScheduler<TWorkItem> : WorkSchedulerBas
     /// <remarks>
     /// <para><strong>ThreadPool Guarantee — <c>await Task.Yield()</c>:</strong></para>
     /// <para>
-    /// <c>await Task.Yield()</c> is the very first statement. Because <see cref="PublishWorkItemAsync"/>
+    /// <c>await Task.Yield()</c> is the very first statement. Because
+    /// <see cref="IWorkScheduler{TWorkItem}.PublishWorkItemAsync"/>
     /// calls this method fire-and-forget (not awaited), the async state machine starts executing
     /// synchronously on the caller's thread until the first genuine yield point. By placing
     /// <c>Task.Yield()</c> first, the caller's thread is freed immediately and the entire method
@@ -220,7 +209,7 @@ internal sealed class UnboundedSerialWorkScheduler<TWorkItem> : WorkSchedulerBas
     }
 
     /// <inheritdoc/>
-    private protected override async ValueTask DisposeAsyncCore()
+    private protected override async ValueTask DisposeSerialAsyncCore()
     {
         // Capture current task chain reference (volatile read — no lock needed)
         var currentTask = Volatile.Read(ref _currentExecutionTask);

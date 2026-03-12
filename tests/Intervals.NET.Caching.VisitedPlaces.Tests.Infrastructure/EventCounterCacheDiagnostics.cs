@@ -1,3 +1,4 @@
+using Intervals.NET.Caching.Infrastructure.Diagnostics;
 using Intervals.NET.Caching.VisitedPlaces.Public.Instrumentation;
 
 namespace Intervals.NET.Caching.VisitedPlaces.Tests.Infrastructure;

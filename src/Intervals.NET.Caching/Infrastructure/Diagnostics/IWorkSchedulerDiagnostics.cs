@@ -1,4 +1,6 @@
-namespace Intervals.NET.Caching.Infrastructure.Scheduling;
+using Intervals.NET.Caching.Infrastructure.Scheduling.Base;
+
+namespace Intervals.NET.Caching.Infrastructure.Diagnostics;
 
 /// <summary>
 /// Diagnostics callbacks for a work scheduler's execution lifecycle.

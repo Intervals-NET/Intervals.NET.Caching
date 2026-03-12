@@ -1,6 +1,8 @@
 using Intervals.NET.Caching.Infrastructure.Concurrency;
+using Intervals.NET.Caching.Infrastructure.Diagnostics;
+using Intervals.NET.Caching.Infrastructure.Scheduling.Base;
 
-namespace Intervals.NET.Caching.Infrastructure.Scheduling;
+namespace Intervals.NET.Caching.Infrastructure.Scheduling.Concurrent;
 
 /// <summary>
 /// Concurrent work scheduler that launches each work item independently on the ThreadPool without
@@ -34,15 +36,14 @@ namespace Intervals.NET.Caching.Infrastructure.Scheduling;
 /// </para>
 /// <para><strong>Disposal:</strong></para>
 /// <para>
-/// <see cref="WorkSchedulerBase{TWorkItem}.DisposeAsync"/> cancels the last published work item's
-/// <see cref="ISchedulableWorkItem.CancellationToken"/> via <see cref="ISchedulableWorkItem.Cancel"/>.
-/// For TTL work items the cancellation token is a shared disposal token owned by the cache —
-/// cancelling it causes ALL pending <c>Task.Delay</c> calls to throw
+/// <see cref="WorkSchedulerBase{TWorkItem}.DisposeAsync"/> delegates to
+/// <see cref="DisposeAsyncCore"/>, which is a no-op for this scheduler.
+/// For TTL work items, the cancellation token passed into each work item at construction is a
+/// shared disposal token owned by the cache — the cache cancels it during its own
+/// <c>DisposeAsync</c>, causing ALL pending <c>Task.Delay</c> calls to throw
 /// <see cref="OperationCanceledException"/> and drain immediately. The caller (e.g.
 /// <c>VisitedPlacesCache.DisposeAsync</c>) awaits the TTL activity counter going idle to
 /// confirm all in-flight work items have completed before returning.
-/// <see cref="DisposeAsyncCore"/> itself is a no-op because the activity counter drain
-/// is owned by the caller.
 /// </para>
 /// <para><strong>Activity Counter:</strong></para>
 /// <para>
@@ -88,7 +89,7 @@ internal sealed class ConcurrentWorkScheduler<TWorkItem> : WorkSchedulerBase<TWo
     }
 
     /// <summary>
-    /// Publishes a work item by yielding to the scheduler and then executing it independently.
+    /// Publishes a work item by dispatching it to the ThreadPool independently.
     /// Returns immediately (fire-and-forget). No serialization with previously published items.
     /// </summary>
     /// <param name="workItem">The work item to schedule.</param>
@@ -116,9 +117,6 @@ internal sealed class ConcurrentWorkScheduler<TWorkItem> : WorkSchedulerBase<TWo
 
         // Increment activity counter before dispatching.
         ActivityCounter.IncrementActivity();
-
-        // Store as last work item (for cancellation coordination during disposal).
-        StoreLastWorkItem(workItem);
 
         // Launch independently via ThreadPool.QueueUserWorkItem.
         // This is used instead of Task.Run / Task.Factory.StartNew for three reasons:

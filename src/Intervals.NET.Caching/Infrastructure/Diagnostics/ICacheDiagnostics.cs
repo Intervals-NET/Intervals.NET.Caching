@@ -1,4 +1,4 @@
-namespace Intervals.NET.Caching;
+namespace Intervals.NET.Caching.Infrastructure.Diagnostics;
 
 /// <summary>
 /// Shared base diagnostics interface for all range cache implementations.

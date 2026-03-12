@@ -53,7 +53,7 @@ internal sealed class IntentController<TRange, TData, TDomain>
     where TDomain : IRangeDomain<TRange>
 {
     private readonly RebalanceDecisionEngine<TRange, TDomain> _decisionEngine;
-    private readonly IWorkScheduler<ExecutionRequest<TRange, TData, TDomain>> _scheduler;
+    private readonly ISupersessionWorkScheduler<ExecutionRequest<TRange, TData, TDomain>> _scheduler;
     private readonly CacheState<TRange, TData, TDomain> _state;
     private readonly ISlidingWindowCacheDiagnostics _cacheDiagnostics;
 
@@ -81,7 +81,7 @@ internal sealed class IntentController<TRange, TData, TDomain>
     /// </summary>
     /// <param name="state">The cache state.</param>
     /// <param name="decisionEngine">The decision engine for rebalance logic.</param>
-    /// <param name="scheduler">The work scheduler for serializing and executing rebalance work items.</param>
+    /// <param name="scheduler">The supersession work scheduler for serializing and executing rebalance work items, with automatic cancel-previous semantics.</param>
     /// <param name="cacheDiagnostics">The diagnostics interface for recording cache metrics and events related to rebalance intents.</param>
     /// <param name="activityCounter">Activity counter for tracking active operations.</param>
     /// <remarks>
@@ -91,7 +91,7 @@ internal sealed class IntentController<TRange, TData, TDomain>
     public IntentController(
         CacheState<TRange, TData, TDomain> state,
         RebalanceDecisionEngine<TRange, TDomain> decisionEngine,
-        IWorkScheduler<ExecutionRequest<TRange, TData, TDomain>> scheduler,
+        ISupersessionWorkScheduler<ExecutionRequest<TRange, TData, TDomain>> scheduler,
         ISlidingWindowCacheDiagnostics cacheDiagnostics,
         AsyncActivityCounter activityCounter
     )
@@ -211,7 +211,9 @@ internal sealed class IntentController<TRange, TData, TDomain>
                     // User thread returned immediately after PublishIntent() signaled the semaphore
                     // All decision evaluation (DecisionEngine, Planners, Policy) happens HERE in background
                     // Evaluate DecisionEngine INSIDE loop (avoids race conditions)
-                    var lastWorkItem = _scheduler.LastWorkItem;
+
+                    // Read the pending desired state from the last work item for anti-thrashing.
+                    // The scheduler owns cancellation of this item — we must NOT cancel it here.
                     // _state.Storage.Range and _state.NoRebalanceRange are read without explicit
                     // synchronization. This is intentional: the decision engine operates on an
                     // eventually-consistent snapshot of cache state. A slightly stale range or
@@ -224,7 +226,7 @@ internal sealed class IntentController<TRange, TData, TDomain>
                         requestedRange: intent.RequestedRange,
                         currentNoRebalanceRange: _state.NoRebalanceRange,
                         currentCacheRange: _state.Storage.Range,
-                        pendingNoRebalanceRange: lastWorkItem?.DesiredNoRebalanceRange
+                        pendingNoRebalanceRange: _scheduler.LastWorkItem?.DesiredNoRebalanceRange
                     );
 
                     // Record decision reason for observability
@@ -236,10 +238,9 @@ internal sealed class IntentController<TRange, TData, TDomain>
                         continue;
                     }
 
-                    // Cancel previous execution
-                    lastWorkItem?.Cancel();
-
-                    // Create execution request (work item) with a fresh CancellationTokenSource
+                    // Create execution request (work item) with a fresh CancellationTokenSource.
+                    // The scheduler will automatically cancel the previous work item on publish
+                    // (supersession semantics — no manual cancel needed here).
                     var request = new ExecutionRequest<TRange, TData, TDomain>(
                         intent,
                         decision.DesiredRange!.Value,

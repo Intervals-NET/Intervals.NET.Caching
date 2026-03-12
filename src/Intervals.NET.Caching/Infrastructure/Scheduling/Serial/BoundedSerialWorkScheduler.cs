@@ -1,11 +1,14 @@
 using System.Threading.Channels;
 using Intervals.NET.Caching.Infrastructure.Concurrency;
+using Intervals.NET.Caching.Infrastructure.Diagnostics;
+using Intervals.NET.Caching.Infrastructure.Scheduling.Base;
 
-namespace Intervals.NET.Caching.Infrastructure.Scheduling;
+namespace Intervals.NET.Caching.Infrastructure.Scheduling.Serial;
 
 /// <summary>
 /// Serial work scheduler that serializes work item execution using a bounded
 /// <see cref="Channel{T}"/> with backpressure support.
+/// Provides bounded FIFO serialization with predictable memory usage.
 /// </summary>
 /// <typeparam name="TWorkItem">
 /// The type of work item processed by this scheduler.
@@ -16,7 +19,8 @@ namespace Intervals.NET.Caching.Infrastructure.Scheduling;
 /// <para>
 /// Uses <see cref="Channel.CreateBounded{T}"/> with single-reader/single-writer semantics for
 /// optimal performance. The bounded capacity ensures predictable memory usage and prevents
-/// runaway queue growth. When capacity is reached, <see cref="PublishWorkItemAsync"/> blocks
+/// runaway queue growth. When capacity is reached,
+/// <see cref="IWorkScheduler{TWorkItem}.PublishWorkItemAsync"/> blocks
 /// (awaits <c>WriteAsync</c>) until space becomes available, creating backpressure that
 /// throttles the caller's processing loop.
 /// </para>
@@ -30,6 +34,14 @@ namespace Intervals.NET.Caching.Infrastructure.Scheduling;
 ///     await ExecuteWorkItemCoreAsync(item);  // One at a time
 /// }
 /// </code>
+/// <para><strong>FIFO Semantics:</strong></para>
+/// <para>
+/// All published work items are processed in order; none are cancelled or superseded.
+/// This makes the scheduler suitable for event queues where every item must be processed
+/// (e.g. VisitedPlaces cache normalization requests).
+/// For supersession semantics (latest item wins, previous cancelled), use
+/// <see cref="BoundedSupersessionWorkScheduler{TWorkItem}"/> instead.
+/// </para>
 /// <para><strong>Backpressure Behavior:</strong></para>
 /// <list type="bullet">
 /// <item><description>Caller's processing loop pauses until execution completes and frees channel space</description></item>
@@ -59,9 +71,10 @@ namespace Intervals.NET.Caching.Infrastructure.Scheduling;
 /// <item><description>Real-time dashboards with streaming data updates</description></item>
 /// <item><description>Scenarios where backpressure throttling is desired</description></item>
 /// </list>
-/// <para>See also: <see cref="UnboundedSerialWorkScheduler{TWorkItem}"/> for the unbounded alternative.</para>
+/// <para>See also: <see cref="UnboundedSerialWorkScheduler{TWorkItem}"/> for the unbounded FIFO alternative.</para>
+/// <para>See also: <see cref="BoundedSupersessionWorkScheduler{TWorkItem}"/> for the bounded supersession variant.</para>
 /// </remarks>
-internal sealed class BoundedSerialWorkScheduler<TWorkItem> : WorkSchedulerBase<TWorkItem>
+internal class BoundedSerialWorkScheduler<TWorkItem> : SerialWorkSchedulerBase<TWorkItem>
     where TWorkItem : class, ISchedulableWorkItem
 {
     private readonly Channel<TWorkItem> _workChannel;
@@ -86,8 +99,8 @@ internal sealed class BoundedSerialWorkScheduler<TWorkItem> : WorkSchedulerBase<
     /// <para><strong>Channel Configuration:</strong></para>
     /// <para>
     /// Creates a bounded channel with the specified capacity and single-reader/single-writer semantics.
-    /// When full, <see cref="PublishWorkItemAsync"/> will block (await <c>WriteAsync</c>) until space
-    /// becomes available, throttling the caller's processing loop.
+    /// When full, <see cref="IWorkScheduler{TWorkItem}.PublishWorkItemAsync"/> will block
+    /// (await <c>WriteAsync</c>) until space becomes available, throttling the caller's processing loop.
     /// </para>
     /// <para><strong>Execution Loop Lifecycle:</strong></para>
     /// <para>
@@ -127,7 +140,7 @@ internal sealed class BoundedSerialWorkScheduler<TWorkItem> : WorkSchedulerBase<
     }
 
     /// <summary>
-    /// Publishes a work item to the bounded channel for sequential processing.
+    /// Enqueues the work item to the bounded channel for sequential processing.
     /// Blocks if the channel is at capacity (backpressure).
     /// </summary>
     /// <param name="workItem">The work item to schedule.</param>
@@ -153,22 +166,15 @@ internal sealed class BoundedSerialWorkScheduler<TWorkItem> : WorkSchedulerBase<
     /// preventing disposal hangs. On cancellation the method cleans up resources and returns
     /// gracefully without throwing.
     /// </para>
+    /// <para><strong>Error Path:</strong></para>
+    /// <para>
+    /// On cancellation or write failure the item is disposed and the activity counter is
+    /// decremented here, because <see cref="WorkSchedulerBase{TWorkItem}.ExecuteWorkItemCoreAsync"/>
+    /// will never run for this item.
+    /// </para>
     /// </remarks>
-    public override async ValueTask PublishWorkItemAsync(TWorkItem workItem, CancellationToken loopCancellationToken)
+    private protected override async ValueTask EnqueueWorkItemAsync(TWorkItem workItem, CancellationToken loopCancellationToken)
     {
-        if (IsDisposed)
-        {
-            throw new ObjectDisposedException(
-                nameof(BoundedSerialWorkScheduler<TWorkItem>),
-                "Cannot publish a work item to a disposed scheduler.");
-        }
-
-        // Increment activity counter for new work item
-        ActivityCounter.IncrementActivity();
-
-        // Store as last work item (for cancellation coordination and pending-state inspection)
-        StoreLastWorkItem(workItem);
-
         // Enqueue work item to bounded channel.
         // BACKPRESSURE: Will await if channel is at capacity, throttling the caller's loop.
         // CANCELLATION: loopCancellationToken enables graceful shutdown during disposal.
@@ -205,8 +211,8 @@ internal sealed class BoundedSerialWorkScheduler<TWorkItem> : WorkSchedulerBase<
     /// <para><strong>Backpressure Effect:</strong></para>
     /// <para>
     /// When this loop processes an item, it frees space in the bounded channel, allowing
-    /// any blocked <see cref="PublishWorkItemAsync"/> calls to proceed. This creates natural
-    /// flow control.
+    /// any blocked <see cref="IWorkScheduler{TWorkItem}.PublishWorkItemAsync"/> calls to proceed.
+    /// This creates natural flow control.
     /// </para>
     /// </remarks>
     private async Task ProcessWorkItemsAsync()
@@ -218,7 +224,7 @@ internal sealed class BoundedSerialWorkScheduler<TWorkItem> : WorkSchedulerBase<
     }
 
     /// <inheritdoc/>
-    private protected override async ValueTask DisposeAsyncCore()
+    private protected override async ValueTask DisposeSerialAsyncCore()
     {
         // Complete the channel — signals execution loop to exit after current item
         _workChannel.Writer.Complete();

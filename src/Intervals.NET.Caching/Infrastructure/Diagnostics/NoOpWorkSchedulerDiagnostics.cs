@@ -1,4 +1,4 @@
-namespace Intervals.NET.Caching.Infrastructure.Scheduling;
+namespace Intervals.NET.Caching.Infrastructure.Diagnostics;
 
 /// <summary>
 /// A no-op implementation of <see cref="IWorkSchedulerDiagnostics"/> that silently discards all events.

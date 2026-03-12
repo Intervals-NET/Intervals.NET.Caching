@@ -2,6 +2,7 @@ using Intervals.NET.Domain.Abstractions;
 using Intervals.NET.Caching.Dto;
 using Intervals.NET.Caching.Infrastructure.Concurrency;
 using Intervals.NET.Caching.Infrastructure.Scheduling;
+using Intervals.NET.Caching.Infrastructure.Scheduling.Supersession;
 using Intervals.NET.Caching.SlidingWindow.Core.Planning;
 using Intervals.NET.Caching.SlidingWindow.Core.Rebalance.Decision;
 using Intervals.NET.Caching.SlidingWindow.Core.Rebalance.Execution;
@@ -140,7 +141,7 @@ public sealed class SlidingWindowCache<TRange, TData, TDomain>
     /// <summary>
     /// Creates the appropriate execution scheduler based on the specified rebalance queue capacity.
     /// </summary>
-    private static IWorkScheduler<ExecutionRequest<TRange, TData, TDomain>> CreateExecutionController(
+    private static ISupersessionWorkScheduler<ExecutionRequest<TRange, TData, TDomain>> CreateExecutionController(
         RebalanceExecutor<TRange, TData, TDomain> executor,
         RuntimeCacheOptionsHolder optionsHolder,
         int? rebalanceQueueCapacity,
@@ -163,8 +164,8 @@ public sealed class SlidingWindowCache<TRange, TData, TDomain>
 
         if (rebalanceQueueCapacity == null)
         {
-            // Unbounded strategy: serial task-chaining (default, recommended for most scenarios)
-            return new UnboundedSerialWorkScheduler<ExecutionRequest<TRange, TData, TDomain>>(
+            // Unbounded supersession strategy: task-chaining with cancel-previous (default)
+            return new UnboundedSupersessionWorkScheduler<ExecutionRequest<TRange, TData, TDomain>>(
                 executorDelegate,
                 debounceProvider,
                 schedulerDiagnostics,
@@ -172,8 +173,8 @@ public sealed class SlidingWindowCache<TRange, TData, TDomain>
             );
         }
 
-        // Bounded strategy: serial channel-based with backpressure support
-        return new BoundedSerialWorkScheduler<ExecutionRequest<TRange, TData, TDomain>>(
+        // Bounded supersession strategy: channel-based with backpressure and cancel-previous
+        return new BoundedSupersessionWorkScheduler<ExecutionRequest<TRange, TData, TDomain>>(
             executorDelegate,
             debounceProvider,
             schedulerDiagnostics,

@@ -1,7 +1,10 @@
 using Intervals.NET.Domain.Abstractions;
 using Intervals.NET.Caching.Dto;
 using Intervals.NET.Caching.Infrastructure.Concurrency;
+using Intervals.NET.Caching.Infrastructure.Diagnostics;
 using Intervals.NET.Caching.Infrastructure.Scheduling;
+using Intervals.NET.Caching.Infrastructure.Scheduling.Concurrent;
+using Intervals.NET.Caching.Infrastructure.Scheduling.Serial;
 using Intervals.NET.Caching.VisitedPlaces.Core;
 using Intervals.NET.Caching.VisitedPlaces.Core.Background;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
@@ -150,7 +153,7 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
         // Scheduler: serializes background events without delay (debounce = zero).
         // When EventChannelCapacity is null, use unbounded serial scheduler (default).
         // When EventChannelCapacity is set, use bounded serial scheduler with backpressure.
-        IWorkScheduler<CacheNormalizationRequest<TRange, TData>> scheduler = options.EventChannelCapacity is { } capacity
+        ISerialWorkScheduler<CacheNormalizationRequest<TRange, TData>> scheduler = options.EventChannelCapacity is { } capacity
             ? new BoundedSerialWorkScheduler<CacheNormalizationRequest<TRange, TData>>(
                 executor: (evt, ct) => executor.ExecuteAsync(evt, ct),
                 debounceProvider: static () => TimeSpan.Zero,

@@ -60,7 +60,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
 {
     private readonly ISegmentStorage<TRange, TData> _storage;
     private readonly IDataSource<TRange, TData> _dataSource;
-    private readonly IWorkScheduler<CacheNormalizationRequest<TRange, TData>> _scheduler;
+    private readonly ISerialWorkScheduler<CacheNormalizationRequest<TRange, TData>> _scheduler;
     private readonly IVisitedPlacesCacheDiagnostics _diagnostics;
     private readonly TDomain _domain;
 
@@ -81,7 +81,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     public UserRequestHandler(
         ISegmentStorage<TRange, TData> storage,
         IDataSource<TRange, TData> dataSource,
-        IWorkScheduler<CacheNormalizationRequest<TRange, TData>> scheduler,
+        ISerialWorkScheduler<CacheNormalizationRequest<TRange, TData>> scheduler,
         IVisitedPlacesCacheDiagnostics diagnostics,
         TDomain domain)
     {
