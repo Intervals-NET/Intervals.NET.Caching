@@ -1,6 +1,7 @@
 using Intervals.NET.Caching.VisitedPlaces.Core;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Selectors;
+using Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 using Intervals.NET.Caching.VisitedPlaces.Tests.Infrastructure.Helpers;
 
 namespace Intervals.NET.Caching.VisitedPlaces.Unit.Tests.Eviction.Selectors;
@@ -28,8 +29,10 @@ public sealed class LruEvictionSelectorTests
         var old = CreateSegmentWithLastAccess(0, 5, baseTime.AddHours(-2));
         var recent = CreateSegmentWithLastAccess(10, 15, baseTime);
 
+        InitializeStorage(_selector, [old, recent]);
+
         // ACT
-        var result = _selector.TrySelectCandidate([old, recent], NoImmune, out var candidate);
+        var result = _selector.TrySelectCandidate(NoImmune, out var candidate);
 
         // ASSERT — old (least recently used) is selected
         Assert.True(result);
@@ -39,15 +42,18 @@ public sealed class LruEvictionSelectorTests
     [Fact]
     public void TrySelectCandidate_WithReversedInput_StillSelectsLeastRecentlyUsed()
     {
-        // ARRANGE — input in reverse order (recent first)
+        // ARRANGE — storage in reverse order (recent first)
         var baseTime = DateTime.UtcNow;
         var old = CreateSegmentWithLastAccess(0, 5, baseTime.AddHours(-2));
         var recent = CreateSegmentWithLastAccess(10, 15, baseTime);
 
-        // ACT
-        var result = _selector.TrySelectCandidate([recent, old], NoImmune, out var candidate);
+        // Storage insertion order does not matter — sampling is random
+        InitializeStorage(_selector, [recent, old]);
 
-        // ASSERT — still selects the LRU regardless of input order
+        // ACT
+        var result = _selector.TrySelectCandidate(NoImmune, out var candidate);
+
+        // ASSERT — still selects the LRU regardless of insertion order
         Assert.True(result);
         Assert.Same(old, candidate);
     }
@@ -62,8 +68,10 @@ public sealed class LruEvictionSelectorTests
         var seg3 = CreateSegmentWithLastAccess(20, 25, baseTime.AddHours(2));
         var seg4 = CreateSegmentWithLastAccess(30, 35, baseTime.AddHours(3));    // most recent
 
+        InitializeStorage(_selector, [seg3, seg1, seg4, seg2]);
+
         // ACT
-        var result = _selector.TrySelectCandidate([seg3, seg1, seg4, seg2], NoImmune, out var candidate);
+        var result = _selector.TrySelectCandidate(NoImmune, out var candidate);
 
         // ASSERT — seg1 has oldest LastAccessedAt → selected by LRU
         Assert.True(result);
@@ -75,9 +83,10 @@ public sealed class LruEvictionSelectorTests
     {
         // ARRANGE
         var seg = CreateSegmentWithLastAccess(0, 5, DateTime.UtcNow);
+        InitializeStorage(_selector, [seg]);
 
         // ACT
-        var result = _selector.TrySelectCandidate([seg], NoImmune, out var candidate);
+        var result = _selector.TrySelectCandidate(NoImmune, out var candidate);
 
         // ASSERT
         Assert.True(result);
@@ -85,11 +94,13 @@ public sealed class LruEvictionSelectorTests
     }
 
     [Fact]
-    public void TrySelectCandidate_WithEmptyList_ReturnsFalse()
+    public void TrySelectCandidate_WithEmptyStorage_ReturnsFalse()
     {
-        // ARRANGE & ACT
-        var result = _selector.TrySelectCandidate(
-            new List<CachedSegment<int, int>>(), NoImmune, out var candidate);
+        // ARRANGE — initialize with empty storage
+        InitializeStorage(_selector, []);
+
+        // ACT
+        var result = _selector.TrySelectCandidate(NoImmune, out var candidate);
 
         // ASSERT
         Assert.False(result);
@@ -107,10 +118,12 @@ public sealed class LruEvictionSelectorTests
         var old = CreateSegmentWithLastAccess(0, 5, baseTime.AddHours(-2));      // LRU — immune
         var recent = CreateSegmentWithLastAccess(10, 15, baseTime);
 
+        InitializeStorage(_selector, [old, recent]);
+
         var immune = new HashSet<CachedSegment<int, int>> { old };
 
         // ACT
-        var result = _selector.TrySelectCandidate([old, recent], immune, out var candidate);
+        var result = _selector.TrySelectCandidate(immune, out var candidate);
 
         // ASSERT — old is immune, so next LRU (recent) is selected
         Assert.True(result);
@@ -122,10 +135,11 @@ public sealed class LruEvictionSelectorTests
     {
         // ARRANGE
         var seg = CreateSegmentWithLastAccess(0, 5, DateTime.UtcNow);
+        InitializeStorage(_selector, [seg]);
         var immune = new HashSet<CachedSegment<int, int>> { seg };
 
         // ACT
-        var result = _selector.TrySelectCandidate([seg], immune, out _);
+        var result = _selector.TrySelectCandidate(immune, out _);
 
         // ASSERT
         Assert.False(result);
@@ -193,6 +207,27 @@ public sealed class LruEvictionSelectorTests
     #endregion
 
     #region Helpers
+
+    /// <summary>
+    /// Creates a <see cref="SnapshotAppendBufferStorage{TRange,TData}"/> populated with
+    /// <paramref name="segments"/> and injects it into <paramref name="selector"/> via
+    /// <see cref="IStorageAwareEvictionSelector{TRange,TData}"/>.
+    /// </summary>
+    private static void InitializeStorage(
+        IEvictionSelector<int, int> selector,
+        IEnumerable<CachedSegment<int, int>> segments)
+    {
+        var storage = new SnapshotAppendBufferStorage<int, int>();
+        foreach (var seg in segments)
+        {
+            storage.Add(seg);
+        }
+
+        if (selector is IStorageAwareEvictionSelector<int, int> storageAware)
+        {
+            storageAware.Initialize(storage);
+        }
+    }
 
     private static CachedSegment<int, int> CreateSegmentWithLastAccess(int start, int end, DateTime lastAccess)
     {

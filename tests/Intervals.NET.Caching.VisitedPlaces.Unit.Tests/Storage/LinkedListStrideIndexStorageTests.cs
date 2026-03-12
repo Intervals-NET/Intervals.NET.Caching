@@ -6,10 +6,18 @@ namespace Intervals.NET.Caching.VisitedPlaces.Unit.Tests.Storage;
 
 /// <summary>
 /// Unit tests for <see cref="LinkedListStrideIndexStorage{TRange,TData}"/>.
-/// Covers Count, Add, Remove, GetAllSegments, FindIntersecting, stride normalization.
+/// Covers Count, Add, Remove, GetRandomSegment, FindIntersecting, stride normalization.
 /// </summary>
 public sealed class LinkedListStrideIndexStorageTests
 {
+    /// <summary>
+    /// Number of <see cref="ISegmentStorage{TRange,TData}.GetRandomSegment"/> calls used in
+    /// statistical coverage assertions. With N segments and this many draws, the probability
+    /// that any specific segment is never selected is (1 - 1/N)^Trials ≈ e^(-Trials/N).
+    /// For N=10, Trials=1000: p(miss) ≈ e^(-100) ≈ 0 — effectively impossible.
+    /// </summary>
+    private const int StatisticalTrials = 1000;
+
     #region Constructor Tests
 
     [Fact]
@@ -122,34 +130,42 @@ public sealed class LinkedListStrideIndexStorageTests
 
     #endregion
 
-    #region Add / GetAllSegments Tests
+    #region Add / GetRandomSegment Tests
 
     [Fact]
-    public void GetAllSegments_WhenEmpty_ReturnsEmptyList()
+    public void GetRandomSegment_WhenEmpty_ReturnsNull()
     {
         // ARRANGE
         var storage = new LinkedListStrideIndexStorage<int, int>();
 
-        // ASSERT
-        Assert.Empty(storage.GetAllSegments());
+        // ASSERT — empty storage must return null every time
+        for (var i = 0; i < 10; i++)
+        {
+            Assert.Null(storage.GetRandomSegment());
+        }
     }
 
     [Fact]
-    public void GetAllSegments_AfterAdding_ContainsAddedSegment()
+    public void GetRandomSegment_AfterAdding_EventuallyReturnsAddedSegment()
     {
         // ARRANGE
         var storage = new LinkedListStrideIndexStorage<int, int>();
         var seg = AddSegment(storage, 0, 9);
 
-        // ACT
-        var all = storage.GetAllSegments();
+        // ACT — with a single live segment, every non-null result must be that segment
+        CachedSegment<int, int>? found = null;
+        for (var i = 0; i < StatisticalTrials && found is null; i++)
+        {
+            found = storage.GetRandomSegment();
+        }
 
         // ASSERT
-        Assert.Contains(seg, all);
+        Assert.NotNull(found);
+        Assert.Same(seg, found);
     }
 
     [Fact]
-    public void GetAllSegments_AfterRemove_DoesNotContainRemovedSegment()
+    public void GetRandomSegment_AfterRemove_NeverReturnsRemovedSegment()
     {
         // ARRANGE
         var storage = new LinkedListStrideIndexStorage<int, int>();
@@ -158,34 +174,24 @@ public sealed class LinkedListStrideIndexStorageTests
 
         // ACT
         storage.Remove(seg1);
-        var all = storage.GetAllSegments();
 
-        // ASSERT
-        Assert.DoesNotContain(seg1, all);
-        Assert.Contains(seg2, all);
+        // ASSERT — seg1 must never be returned; seg2 must eventually be returned
+        var foundSeg2 = false;
+        for (var i = 0; i < StatisticalTrials; i++)
+        {
+            var result = storage.GetRandomSegment();
+            Assert.NotSame(seg1, result); // removed segment must never appear
+            if (result is not null && ReferenceEquals(result, seg2))
+            {
+                foundSeg2 = true;
+            }
+        }
+
+        Assert.True(foundSeg2, "seg2 should have been returned at least once in 1000 trials");
     }
 
     [Fact]
-    public void GetAllSegments_ReturnsSortedByRangeStart()
-    {
-        // ARRANGE — add segments out of order
-        var storage = new LinkedListStrideIndexStorage<int, int>();
-        var seg3 = AddSegment(storage, 40, 49);
-        var seg1 = AddSegment(storage, 0, 9);
-        var seg2 = AddSegment(storage, 20, 29);
-
-        // ACT
-        var all = storage.GetAllSegments();
-
-        // ASSERT — list is sorted by Start
-        Assert.Equal(3, all.Count);
-        Assert.Equal(0, (int)all[0].Range.Start);
-        Assert.Equal(20, (int)all[1].Range.Start);
-        Assert.Equal(40, (int)all[2].Range.Start);
-    }
-
-    [Fact]
-    public void GetAllSegments_AfterAddingMoreThanStrideAppendBufferSize_ContainsAll()
+    public void GetRandomSegment_AfterAddingMoreThanStrideAppendBufferSize_EventuallyReturnsAllSegments()
     {
         // ARRANGE — default AppendBufferSize is 8; add 10 to trigger normalization
         var storage = new LinkedListStrideIndexStorage<int, int>(appendBufferSize: 8, stride: 4);
@@ -196,14 +202,22 @@ public sealed class LinkedListStrideIndexStorageTests
             segments.Add(AddSegment(storage, i * 10, i * 10 + 5));
         }
 
-        // ACT
-        var all = storage.GetAllSegments();
+        // ACT — sample enough times for every segment to be returned at least once
+        var seen = new HashSet<CachedSegment<int, int>>(ReferenceEqualityComparer.Instance);
+        for (var i = 0; i < StatisticalTrials; i++)
+        {
+            var result = storage.GetRandomSegment();
+            if (result is not null)
+            {
+                seen.Add(result);
+            }
+        }
 
-        // ASSERT
-        Assert.Equal(10, all.Count);
+        // ASSERT — every added segment must have been returned at least once
+        Assert.Equal(10, seen.Count);
         foreach (var seg in segments)
         {
-            Assert.Contains(seg, all);
+            Assert.Contains(seg, seen);
         }
     }
 
@@ -387,9 +401,12 @@ public sealed class LinkedListStrideIndexStorageTests
             AddSegment(storage, i * 10, i * 10 + 5);
         }
 
-        // ASSERT — toRemove no longer in GetAllSegments after second normalization
-        var all = storage.GetAllSegments();
-        Assert.DoesNotContain(toRemove, all);
+        // ASSERT — toRemove's range is no longer findable via FindIntersecting after normalization
+        var found = storage.FindIntersecting(TestHelpers.CreateRange(200, 205));
+        Assert.Empty(found);
+
+        // ASSERT — Count reflects the correct live count (7 original + 8 new = 15)
+        Assert.Equal(15, storage.Count);
     }
 
     [Fact]
@@ -410,19 +427,40 @@ public sealed class LinkedListStrideIndexStorageTests
             storage.Remove(added[i]);
         }
 
-        // ASSERT
+        // ASSERT — Count is correct
         Assert.Equal(10, storage.Count);
-        var all = storage.GetAllSegments();
-        Assert.Equal(10, all.Count);
 
+        // ASSERT — removed segments are not findable
         for (var i = 0; i < 10; i++)
         {
-            Assert.DoesNotContain(added[i], all);
+            var start = i * 10;
+            var found = storage.FindIntersecting(TestHelpers.CreateRange(start, start + 5));
+            Assert.Empty(found);
         }
 
+        // ASSERT — remaining segments are still findable
         for (var i = 10; i < 20; i++)
         {
-            Assert.Contains(added[i], all);
+            var start = i * 10;
+            var found = storage.FindIntersecting(TestHelpers.CreateRange(start, start + 5));
+            Assert.NotEmpty(found);
+        }
+
+        // ASSERT — statistical sampling covers all surviving segments
+        var seen = new HashSet<CachedSegment<int, int>>(ReferenceEqualityComparer.Instance);
+        for (var i = 0; i < StatisticalTrials; i++)
+        {
+            var result = storage.GetRandomSegment();
+            if (result is not null)
+            {
+                seen.Add(result);
+            }
+        }
+
+        Assert.Equal(10, seen.Count);
+        for (var i = 10; i < 20; i++)
+        {
+            Assert.Contains(added[i], seen);
         }
     }
 

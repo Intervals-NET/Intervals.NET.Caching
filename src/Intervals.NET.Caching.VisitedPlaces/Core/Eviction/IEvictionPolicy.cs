@@ -10,7 +10,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 /// <para><strong>Execution Context:</strong> Background Path (single writer thread)</para>
 /// <para><strong>Responsibilities:</strong></para>
 /// <list type="bullet">
-/// <item><description>Inspects the current segment collection after each storage step</description></item>
+/// <item><description>Maintains incremental internal state via <see cref="OnSegmentAdded"/> and <see cref="OnSegmentRemoved"/></description></item>
 /// <item><description>Returns an <see cref="IEvictionPressure{TRange,TData}"/> that tracks constraint satisfaction</description></item>
 /// <item><description>Returns <see cref="Pressure.NoPressure{TRange,TData}.Instance"/> when the constraint is not violated</description></item>
 /// </list>
@@ -26,19 +26,57 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 /// produces a pressure with <see cref="IEvictionPressure{TRange,TData}.IsExceeded"/> = <c>true</c>.
 /// The executor removes segments until ALL pressures are satisfied (Invariant VPC.E.2a).
 /// </para>
+/// <para><strong>Lifecycle contract:</strong></para>
+/// <para>
+/// <see cref="OnSegmentAdded"/> and <see cref="OnSegmentRemoved"/> are called by
+/// <see cref="EvictionPolicyEvaluator{TRange,TData}"/> on the Background Path. Implementations
+/// use these to maintain a running aggregate so that <see cref="Evaluate"/> runs in O(1).
+/// Both methods may also be called from the TTL actor concurrently;
+/// implementations must use atomic operations (e.g., <see cref="System.Threading.Interlocked"/>)
+/// where cross-thread safety is required.
+/// </para>
 /// </remarks>
 public interface IEvictionPolicy<TRange, TData>
     where TRange : IComparable<TRange>
 {
     /// <summary>
+    /// Notifies this policy that a new segment has been added to storage.
+    /// Implementations should update their internal running aggregate to include
+    /// the contribution of <paramref name="segment"/>.
+    /// </summary>
+    /// <param name="segment">The segment that was just added to storage.</param>
+    /// <remarks>
+    /// Called by <see cref="EvictionPolicyEvaluator{TRange,TData}"/> immediately after each
+    /// segment is added to storage. Runs on the Background Path; may also be called from the
+    /// TTL actor concurrently. Must be allocation-free and lightweight.
+    /// </remarks>
+    void OnSegmentAdded(CachedSegment<TRange, TData> segment);
+
+    /// <summary>
+    /// Notifies this policy that a segment has been removed from storage.
+    /// Implementations should update their internal running aggregate to exclude
+    /// the contribution of <paramref name="segment"/>.
+    /// </summary>
+    /// <param name="segment">The segment that was just removed from storage.</param>
+    /// <remarks>
+    /// Called by <see cref="EvictionPolicyEvaluator{TRange,TData}"/> immediately after each
+    /// segment is removed from storage. Runs on the Background Path or TTL thread.
+    /// Must be allocation-free and lightweight.
+    /// </remarks>
+    void OnSegmentRemoved(CachedSegment<TRange, TData> segment);
+
+    /// <summary>
     /// Evaluates whether the configured constraint is violated and returns a pressure object
     /// that tracks constraint satisfaction as segments are removed.
     /// </summary>
-    /// <param name="allSegments">All currently stored segments.</param>
     /// <returns>
     /// An <see cref="IEvictionPressure{TRange,TData}"/> whose <see cref="IEvictionPressure{TRange,TData}.IsExceeded"/>
     /// indicates whether eviction is needed. Returns <see cref="Pressure.NoPressure{TRange,TData}.Instance"/>
     /// when the constraint is not violated.
     /// </returns>
-    IEvictionPressure<TRange, TData> Evaluate(IReadOnlyList<CachedSegment<TRange, TData>> allSegments);
+    /// <remarks>
+    /// O(1): implementations read their internally maintained running aggregate rather than
+    /// iterating the segment collection.
+    /// </remarks>
+    IEvictionPressure<TRange, TData> Evaluate();
 }

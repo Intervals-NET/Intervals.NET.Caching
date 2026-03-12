@@ -1,3 +1,4 @@
+using Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 using Intervals.NET.Caching.VisitedPlaces.Public.Configuration;
 
 namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
@@ -5,7 +6,8 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 /// <summary>
 /// Abstract base class for sampling-based eviction selectors.
 /// Implements the <see cref="IEvictionSelector{TRange,TData}.TrySelectCandidate"/> contract
-/// using random sampling, delegating only the comparison logic to derived classes.
+/// using random sampling via <see cref="ISegmentStorage{TRange,TData}.GetRandomSegment"/>,
+/// delegating only the comparison logic to derived classes.
 /// </summary>
 /// <typeparam name="TRange">The type representing range boundaries.</typeparam>
 /// <typeparam name="TData">The type of data being cached.</typeparam>
@@ -13,12 +15,12 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 /// <para><strong>Sampling Algorithm:</strong></para>
 /// <list type="number">
 /// <item><description>
-///   Clamp the sample size to <c>min(SampleSize, segments.Count)</c> so that small caches
-///   are fully examined without any configuration change.
+///   Call <see cref="ISegmentStorage{TRange,TData}.GetRandomSegment"/> up to
+///   <c>SampleSize</c> times. Each call returns a single randomly-selected live segment
+///   from storage (O(1) per call, bounded retries for soft-deleted entries).
 /// </description></item>
 /// <item><description>
-///   Iterate up to <c>SampleSize</c> times: pick a random index from the segment list.
-///   If the segment at that index is immune, skip it and continue.
+///   If the returned segment is immune, skip it and continue.
 ///   Otherwise call <see cref="EnsureMetadata"/> to guarantee valid metadata, then compare
 ///   it to the current worst candidate using <see cref="IsWorse"/>.
 /// </description></item>
@@ -26,12 +28,6 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 ///   After the loop, return the worst candidate found (if any non-immune segment was reached).
 /// </description></item>
 /// </list>
-/// <para><strong>Sampling with replacement:</strong></para>
-/// <para>
-/// The algorithm samples with replacement (the same index may be picked twice). For the
-/// expected sample sizes (16–64) this is acceptable: the probability of collision is low
-/// and avoiding it would require a <c>HashSet</c> allocation per selection call.
-/// </para>
 /// <para><strong>Metadata guarantee:</strong></para>
 /// <para>
 /// Before <see cref="IsWorse"/> is called on any segment, <see cref="EnsureMetadata"/> is
@@ -40,16 +36,19 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 /// apply fallback defaults or perform null/type checks.
 /// Repaired metadata persists on the segment — future sampling passes skip the repair.
 /// </para>
-/// <para><strong>Execution Context:</strong> Background Path (single writer thread)</para>
-/// <para><strong>Thread safety:</strong>
-/// The <see cref="_random"/> instance is private to this class and only accessed on the
-/// Background Path — no synchronization is required.
+/// <para><strong>Storage injection:</strong></para>
+/// <para>
+/// The storage reference is injected post-construction via <see cref="Initialize"/>,
+/// because storage is created after the selector in the composition root.
+/// <see cref="TrySelectCandidate"/> requires <see cref="Initialize"/> to have been called first.
 /// </para>
+/// <para><strong>Execution Context:</strong> Background Path (single writer thread)</para>
 /// </remarks>
-internal abstract class SamplingEvictionSelector<TRange, TData> : IEvictionSelector<TRange, TData>
+internal abstract class SamplingEvictionSelector<TRange, TData>
+    : IEvictionSelector<TRange, TData>, IStorageAwareEvictionSelector<TRange, TData>
     where TRange : IComparable<TRange>
 {
-    private readonly Random _random;
+    private ISegmentStorage<TRange, TData>? _storage;
 
     /// <summary>
     /// The number of segments randomly examined per <see cref="TrySelectCandidate"/> call.
@@ -79,42 +78,43 @@ internal abstract class SamplingEvictionSelector<TRange, TData> : IEvictionSelec
     {
         var options = samplingOptions ?? EvictionSamplingOptions.Default;
         SampleSize = options.SampleSize;
-        _random = new Random();
         TimeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <inheritdoc/>
+    public void Initialize(ISegmentStorage<TRange, TData> storage)
+    {
+        _storage = storage;
+    }
+
+    /// <inheritdoc/>
     /// <remarks>
-    /// Randomly samples up to <see cref="SampleSize"/> segments from <paramref name="segments"/>,
-    /// skipping any that are in <paramref name="immuneSegments"/>, and returns the worst
-    /// candidate according to <see cref="IsWorse"/>.
+    /// Calls <see cref="ISegmentStorage{TRange,TData}.GetRandomSegment"/> up to
+    /// <see cref="SampleSize"/> times, skipping any segment that is in
+    /// <paramref name="immuneSegments"/> or is soft-deleted (<see langword="null"/> return from
+    /// storage), and returns the worst candidate according to <see cref="IsWorse"/>.
     /// Before each comparison, <see cref="EnsureMetadata"/> is called to guarantee the segment
     /// carries valid selector-specific metadata.
     /// Returns <see langword="false"/> when no eligible candidate is found (all segments are
-    /// immune, or the pool is empty).
+    /// immune, or the pool is empty / exhausted).
     /// </remarks>
     public bool TrySelectCandidate(
-        IReadOnlyList<CachedSegment<TRange, TData>> segments,
         IReadOnlySet<CachedSegment<TRange, TData>> immuneSegments,
         out CachedSegment<TRange, TData> candidate)
     {
-        var count = segments.Count;
-        if (count == 0)
-        {
-            candidate = default!;
-            return false;
-        }
+        var storage = _storage!; // initialized before first use
 
         CachedSegment<TRange, TData>? worst = null;
 
-        // Perform up to SampleSize random index picks.
-        // The loop count is not clamped to count — for small pools (count < SampleSize)
-        // we still do SampleSize iterations (with replacement), which naturally degrades
-        // to examining the same segments multiple times without any special-casing.
         for (var i = 0; i < SampleSize; i++)
         {
-            var index = _random.Next(count);
-            var segment = segments[index];
+            var segment = storage.GetRandomSegment();
+
+            if (segment is null)
+            {
+                // Storage empty or retries exhausted for this slot — skip.
+                continue;
+            }
 
             // Skip immune segments (just-stored + already selected in this eviction pass).
             if (immuneSegments.Contains(segment))
@@ -141,7 +141,7 @@ internal abstract class SamplingEvictionSelector<TRange, TData> : IEvictionSelec
 
         if (worst is null)
         {
-            // All sampled segments were immune — no candidate found.
+            // All sampled segments were immune or pool exhausted — no candidate found.
             candidate = default!;
             return false;
         }

@@ -13,7 +13,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 /// <para><strong>Responsibilities:</strong></para>
 /// <list type="bullet">
 /// <item><description>
-///   Notifies <see cref="IStatefulEvictionPolicy{TRange,TData}"/> instances of segment
+///   Notifies all <see cref="IEvictionPolicy{TRange,TData}"/> instances of segment
 ///   lifecycle events (<see cref="OnSegmentAdded"/>, <see cref="OnSegmentRemoved"/>) so they
 ///   can maintain incremental state and avoid O(N) recomputation in
 ///   <see cref="IEvictionPolicy{TRange,TData}.Evaluate"/>.
@@ -35,34 +35,30 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 /// <para>
 /// <see cref="CacheNormalizationExecutor{TRange,TData,TDomain}"/> previously held all of this
 /// logic inline. Moving it here simplifies the executor and creates a clean boundary for
-/// stateful policy support. The processor is unaware of whether any given policy is stateful;
-/// it only calls the three evaluator methods at the appropriate points in the four-step sequence.
+/// stateful policy support. The processor is unaware of whether any given policy maintains
+/// internal state; it only calls the three evaluator methods at the appropriate points in
+/// the four-step sequence.
 /// </para>
-/// <para><strong>Stateful vs. Stateless policies:</strong></para>
+/// <para><strong>All policies are stateful:</strong></para>
 /// <para>
-/// Policies that implement <see cref="IStatefulEvictionPolicy{TRange,TData}"/> receive
-/// <see cref="OnSegmentAdded"/> and <see cref="OnSegmentRemoved"/> notifications and can
-/// therefore run their <see cref="IEvictionPolicy{TRange,TData}.Evaluate"/> in O(1).
-/// Policies that only implement the base <see cref="IEvictionPolicy{TRange,TData}"/> interface
-/// (e.g., <see cref="Policies.MaxSegmentCountPolicy{TRange,TData}"/>) are stateless: they
-/// receive no lifecycle notifications and recompute their metric from <c>allSegments</c> in
-/// <c>Evaluate</c> — which is acceptable when the metric is already O(1)
-/// (e.g., <c>allSegments.Count</c>).
+/// All <see cref="IEvictionPolicy{TRange,TData}"/> implementations maintain incremental state
+/// via <see cref="IEvictionPolicy{TRange,TData}.OnSegmentAdded"/> and
+/// <see cref="IEvictionPolicy{TRange,TData}.OnSegmentRemoved"/>. Every registered policy
+/// receives lifecycle notifications; <see cref="IEvictionPolicy{TRange,TData}.Evaluate"/>
+/// runs in O(1) by reading the cached aggregate.
 /// </para>
 /// </remarks>
 internal sealed class EvictionPolicyEvaluator<TRange, TData>
     where TRange : IComparable<TRange>
 {
     private readonly IReadOnlyList<IEvictionPolicy<TRange, TData>> _policies;
-    private readonly IStatefulEvictionPolicy<TRange, TData>[] _statefulPolicies;
 
     /// <summary>
     /// Initializes a new <see cref="EvictionPolicyEvaluator{TRange,TData}"/>.
     /// </summary>
     /// <param name="policies">
-    /// The eviction policies to evaluate. Policies that implement
-    /// <see cref="IStatefulEvictionPolicy{TRange,TData}"/> will receive lifecycle notifications;
-    /// all others are evaluated statelessly via
+    /// The eviction policies to evaluate. All policies receive lifecycle notifications
+    /// (<see cref="OnSegmentAdded"/>, <see cref="OnSegmentRemoved"/>) and are evaluated via
     /// <see cref="IEvictionPolicy{TRange,TData}.Evaluate"/>.
     /// </param>
     /// <exception cref="ArgumentNullException">
@@ -73,13 +69,10 @@ internal sealed class EvictionPolicyEvaluator<TRange, TData>
         ArgumentNullException.ThrowIfNull(policies);
 
         _policies = policies;
-        _statefulPolicies = policies
-            .OfType<IStatefulEvictionPolicy<TRange, TData>>()
-            .ToArray();
     }
 
     /// <summary>
-    /// Notifies all <see cref="IStatefulEvictionPolicy{TRange,TData}"/> instances that a
+    /// Notifies all <see cref="IEvictionPolicy{TRange,TData}"/> instances that a
     /// new segment has been added to storage.
     /// </summary>
     /// <param name="segment">The segment that was just added to storage.</param>
@@ -90,14 +83,14 @@ internal sealed class EvictionPolicyEvaluator<TRange, TData>
     /// </remarks>
     public void OnSegmentAdded(CachedSegment<TRange, TData> segment)
     {
-        foreach (var policy in _statefulPolicies)
+        foreach (var policy in _policies)
         {
             policy.OnSegmentAdded(segment);
         }
     }
 
     /// <summary>
-    /// Notifies all <see cref="IStatefulEvictionPolicy{TRange,TData}"/> instances that a
+    /// Notifies all <see cref="IEvictionPolicy{TRange,TData}"/> instances that a
     /// segment has been removed from storage.
     /// </summary>
     /// <param name="segment">The segment that was just removed from storage.</param>
@@ -107,17 +100,16 @@ internal sealed class EvictionPolicyEvaluator<TRange, TData>
     /// </remarks>
     public void OnSegmentRemoved(CachedSegment<TRange, TData> segment)
     {
-        foreach (var policy in _statefulPolicies)
+        foreach (var policy in _policies)
         {
             policy.OnSegmentRemoved(segment);
         }
     }
 
     /// <summary>
-    /// Evaluates all registered policies against the current segment collection and returns
+    /// Evaluates all registered policies against the current cached aggregates and returns
     /// a combined pressure representing all violated constraints.
     /// </summary>
-    /// <param name="allSegments">All currently stored segments.</param>
     /// <returns>
     /// <list type="bullet">
     /// <item><description>
@@ -138,8 +130,7 @@ internal sealed class EvictionPolicyEvaluator<TRange, TData>
     /// Called by <see cref="CacheNormalizationExecutor{TRange,TData,TDomain}"/> in Step 3
     /// (evaluate eviction), only when at least one segment was stored in the current request cycle.
     /// </remarks>
-    public IEvictionPressure<TRange, TData> Evaluate(
-        IReadOnlyList<CachedSegment<TRange, TData>> allSegments)
+    public IEvictionPressure<TRange, TData> Evaluate()
     {
         // Collect exceeded pressures without allocating unless at least one policy fires.
         // Common case: no policy fires → return singleton NoPressure without any allocation.
@@ -148,7 +139,7 @@ internal sealed class EvictionPolicyEvaluator<TRange, TData>
 
         foreach (var policy in _policies)
         {
-            var pressure = policy.Evaluate(allSegments);
+            var pressure = policy.Evaluate();
 
             if (!pressure.IsExceeded)
             {

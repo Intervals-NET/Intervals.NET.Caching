@@ -5,7 +5,7 @@ using Intervals.NET.Domain.Abstractions;
 namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Policies;
 
 /// <summary>
-/// An <see cref="IStatefulEvictionPolicy{TRange,TData}"/> that fires when the sum of all cached
+/// An <see cref="IEvictionPolicy{TRange,TData}"/> that fires when the sum of all cached
 /// segment spans (total domain coverage) exceeds a configured maximum.
 /// </summary>
 /// <typeparam name="TRange">The type representing range boundaries.</typeparam>
@@ -51,7 +51,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Policies;
 /// segment's span in the lifecycle hooks. The domain is captured at construction and also passed
 /// to the pressure object for use during <see cref="IEvictionPressure{TRange,TData}.Reduce"/>.</para>
 /// </remarks>
-internal sealed class MaxTotalSpanPolicy<TRange, TData, TDomain> : IStatefulEvictionPolicy<TRange, TData>
+internal sealed class MaxTotalSpanPolicy<TRange, TData, TDomain> : IEvictionPolicy<TRange, TData>
     where TRange : IComparable<TRange>
     where TDomain : IRangeDomain<TRange>
 {
@@ -121,10 +121,10 @@ internal sealed class MaxTotalSpanPolicy<TRange, TData, TDomain> : IStatefulEvic
     /// <remarks>
     /// O(1): reads the cached <c>_totalSpan</c> via <see cref="Volatile.Read"/> and compares
     /// it against <c>MaxTotalSpan</c>.
-    /// The <paramref name="allSegments"/> parameter is not used; the running total maintained
-    /// via <see cref="OnSegmentAdded"/> and <see cref="OnSegmentRemoved"/> is always current.
+    /// The running total maintained via <see cref="OnSegmentAdded"/> and
+    /// <see cref="OnSegmentRemoved"/> is always current.
     /// </remarks>
-    public IEvictionPressure<TRange, TData> Evaluate(IReadOnlyList<CachedSegment<TRange, TData>> allSegments)
+    public IEvictionPressure<TRange, TData> Evaluate()
     {
         var currentSpan = Volatile.Read(ref _totalSpan);
 

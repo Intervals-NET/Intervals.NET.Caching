@@ -6,10 +6,18 @@ namespace Intervals.NET.Caching.VisitedPlaces.Unit.Tests.Storage;
 
 /// <summary>
 /// Unit tests for <see cref="SnapshotAppendBufferStorage{TRange,TData}"/>.
-/// Covers Constructor, Add, Remove, Count, FindIntersecting, GetAllSegments.
+/// Covers Constructor, Add, Remove, Count, FindIntersecting, GetRandomSegment.
 /// </summary>
 public sealed class SnapshotAppendBufferStorageTests
 {
+    /// <summary>
+    /// Number of <see cref="ISegmentStorage{TRange,TData}.GetRandomSegment"/> calls used in
+    /// statistical coverage assertions. With N segments and this many draws, the probability
+    /// that any specific segment is never selected is (1 - 1/N)^Trials ≈ e^(-Trials/N).
+    /// For N=10, Trials=1000: p(miss) ≈ e^(-100) ≈ 0 — effectively impossible.
+    /// </summary>
+    private const int StatisticalTrials = 1000;
+
     #region Constructor Tests
 
     [Fact]
@@ -89,34 +97,42 @@ public sealed class SnapshotAppendBufferStorageTests
 
     #endregion
 
-    #region Add / GetAllSegments Tests
+    #region Add / GetRandomSegment Tests
 
     [Fact]
-    public void GetAllSegments_WhenEmpty_ReturnsEmptyList()
+    public void GetRandomSegment_WhenEmpty_ReturnsNull()
     {
         // ARRANGE
         var storage = new SnapshotAppendBufferStorage<int, int>();
 
-        // ASSERT
-        Assert.Empty(storage.GetAllSegments());
+        // ASSERT — empty storage must return null every time
+        for (var i = 0; i < 10; i++)
+        {
+            Assert.Null(storage.GetRandomSegment());
+        }
     }
 
     [Fact]
-    public void GetAllSegments_AfterAdding_ContainsAddedSegment()
+    public void GetRandomSegment_AfterAdding_EventuallyReturnsAddedSegment()
     {
         // ARRANGE
         var storage = new SnapshotAppendBufferStorage<int, int>();
         var seg = AddSegment(storage, 0, 9);
 
-        // ACT
-        var all = storage.GetAllSegments();
+        // ACT — with a single live segment, every non-null result must be that segment
+        CachedSegment<int, int>? found = null;
+        for (var i = 0; i < StatisticalTrials && found is null; i++)
+        {
+            found = storage.GetRandomSegment();
+        }
 
         // ASSERT
-        Assert.Contains(seg, all);
+        Assert.NotNull(found);
+        Assert.Same(seg, found);
     }
 
     [Fact]
-    public void GetAllSegments_AfterRemove_DoesNotContainRemovedSegment()
+    public void GetRandomSegment_AfterRemove_NeverReturnsRemovedSegment()
     {
         // ARRANGE
         var storage = new SnapshotAppendBufferStorage<int, int>();
@@ -125,15 +141,24 @@ public sealed class SnapshotAppendBufferStorageTests
 
         // ACT
         storage.Remove(seg1);
-        var all = storage.GetAllSegments();
 
-        // ASSERT
-        Assert.DoesNotContain(seg1, all);
-        Assert.Contains(seg2, all);
+        // ASSERT — seg1 must never be returned; seg2 must eventually be returned
+        var foundSeg2 = false;
+        for (var i = 0; i < StatisticalTrials; i++)
+        {
+            var result = storage.GetRandomSegment();
+            Assert.NotSame(seg1, result); // removed segment must never appear
+            if (result is not null && ReferenceEquals(result, seg2))
+            {
+                foundSeg2 = true;
+            }
+        }
+
+        Assert.True(foundSeg2, "seg2 should have been returned at least once in 1000 trials");
     }
 
     [Fact]
-    public void GetAllSegments_AfterAddingMoreThanAppendBufferSize_ContainsAll()
+    public void GetRandomSegment_AfterAddingMoreThanAppendBufferSize_EventuallyReturnsAllSegments()
     {
         // ARRANGE — default AppendBufferSize is 8; add 10 to trigger normalization
         var storage = new SnapshotAppendBufferStorage<int, int>();
@@ -144,14 +169,22 @@ public sealed class SnapshotAppendBufferStorageTests
             segments.Add(AddSegment(storage, i * 10, i * 10 + 5));
         }
 
-        // ACT
-        var all = storage.GetAllSegments();
+        // ACT — sample enough times for every segment to be returned at least once
+        var seen = new HashSet<CachedSegment<int, int>>(ReferenceEqualityComparer.Instance);
+        for (var i = 0; i < StatisticalTrials; i++)
+        {
+            var result = storage.GetRandomSegment();
+            if (result is not null)
+            {
+                seen.Add(result);
+            }
+        }
 
-        // ASSERT
-        Assert.Equal(10, all.Count);
+        // ASSERT — every added segment must have been returned at least once
+        Assert.Equal(10, seen.Count);
         foreach (var seg in segments)
         {
-            Assert.Contains(seg, all);
+            Assert.Contains(seg, seen);
         }
     }
 

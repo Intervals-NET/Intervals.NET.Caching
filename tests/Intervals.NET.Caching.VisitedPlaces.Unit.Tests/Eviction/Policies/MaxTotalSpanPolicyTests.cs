@@ -10,7 +10,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Unit.Tests.Eviction.Policies;
 /// <summary>
 /// Unit tests for <see cref="MaxTotalSpanPolicy{TRange,TData,TDomain}"/>.
 /// Validates constructor constraints, the O(1) Evaluate path (using cached running total),
-/// stateful lifecycle via <see cref="IStatefulEvictionPolicy{TRange,TData}"/>,
+/// stateful lifecycle via <see cref="IEvictionPolicy{TRange,TData}"/>,
 /// and <see cref="MaxTotalSpanPolicy{TRange,TData,TDomain}.TotalSpanPressure"/> behavior.
 /// </summary>
 public sealed class MaxTotalSpanPolicyTests
@@ -43,13 +43,13 @@ public sealed class MaxTotalSpanPolicyTests
     }
 
     [Fact]
-    public void Policy_ImplementsIStatefulEvictionPolicy()
+    public void Policy_ImplementsIEvictionPolicy()
     {
         // ARRANGE & ACT
         var policy = new MaxTotalSpanPolicy<int, int, IntegerFixedStepDomain>(10, _domain);
 
-        // ASSERT — confirms the stateful contract is fulfilled
-        Assert.IsAssignableFrom<IStatefulEvictionPolicy<int, int>>(policy);
+        // ASSERT — confirms the eviction policy contract is fulfilled
+        Assert.IsAssignableFrom<IEvictionPolicy<int, int>>(policy);
     }
 
     #endregion
@@ -63,7 +63,7 @@ public sealed class MaxTotalSpanPolicyTests
         var policy = new MaxTotalSpanPolicy<int, int, IntegerFixedStepDomain>(50, _domain);
 
         // ACT — no OnSegmentAdded calls; _totalSpan == 0 <= 50
-        var pressure = policy.Evaluate([]);
+        var pressure = policy.Evaluate();
 
         // ASSERT
         Assert.Same(NoPressure<int, int>.Instance, pressure);
@@ -79,7 +79,7 @@ public sealed class MaxTotalSpanPolicyTests
         policy.OnSegmentAdded(segment); // _totalSpan = 10 <= 50
 
         // ACT
-        var pressure = policy.Evaluate([segment]);
+        var pressure = policy.Evaluate();
 
         // ASSERT
         Assert.Same(NoPressure<int, int>.Instance, pressure);
@@ -95,7 +95,7 @@ public sealed class MaxTotalSpanPolicyTests
         policy.OnSegmentAdded(segment); // _totalSpan = 10 == MaxTotalSpan
 
         // ACT
-        var pressure = policy.Evaluate([segment]);
+        var pressure = policy.Evaluate();
 
         // ASSERT
         Assert.Same(NoPressure<int, int>.Instance, pressure);
@@ -115,7 +115,7 @@ public sealed class MaxTotalSpanPolicyTests
         policy.OnSegmentAdded(segment); // _totalSpan = 10 > 5
 
         // ACT
-        var pressure = policy.Evaluate([segment]);
+        var pressure = policy.Evaluate();
 
         // ASSERT
         Assert.True(pressure.IsExceeded);
@@ -134,7 +134,7 @@ public sealed class MaxTotalSpanPolicyTests
         policy.OnSegmentAdded(seg2);
 
         // ACT
-        var pressure = policy.Evaluate([seg1, seg2]);
+        var pressure = policy.Evaluate();
 
         // ASSERT
         Assert.True(pressure.IsExceeded);
@@ -150,7 +150,7 @@ public sealed class MaxTotalSpanPolicyTests
         policy.OnSegmentAdded(segment); // _totalSpan = 10 > 5
 
         // ACT
-        var pressure = policy.Evaluate([segment]);
+        var pressure = policy.Evaluate();
         Assert.True(pressure.IsExceeded);
 
         // Reduce by removing the segment (span 10) → total 0 <= 5
@@ -178,7 +178,7 @@ public sealed class MaxTotalSpanPolicyTests
         }
 
         // ACT
-        var pressure = policy.Evaluate(segments);
+        var pressure = policy.Evaluate();
         Assert.True(pressure.IsExceeded); // total=30 > 15
 
         // Remove first: total 30 - 10 = 20 > 15 → still exceeded
@@ -194,7 +194,7 @@ public sealed class MaxTotalSpanPolicyTests
 
     #endregion
 
-    #region Stateful Lifecycle Tests (IStatefulEvictionPolicy)
+    #region Stateful Lifecycle Tests (IEvictionPolicy)
 
     [Fact]
     public void OnSegmentAdded_IncreasesTotalSpan()
@@ -204,13 +204,13 @@ public sealed class MaxTotalSpanPolicyTests
         var seg = CreateSegment(0, 9); // span 10
 
         // Initially no pressure
-        Assert.Same(NoPressure<int, int>.Instance, policy.Evaluate([]));
+        Assert.Same(NoPressure<int, int>.Instance, policy.Evaluate());
 
         // ACT
         policy.OnSegmentAdded(seg); // _totalSpan = 10 > 5
 
         // ASSERT — now exceeded
-        Assert.True(policy.Evaluate([seg]).IsExceeded);
+        Assert.True(policy.Evaluate().IsExceeded);
     }
 
     [Fact]
@@ -223,13 +223,13 @@ public sealed class MaxTotalSpanPolicyTests
 
         policy.OnSegmentAdded(seg1);
         policy.OnSegmentAdded(seg2);
-        Assert.True(policy.Evaluate([seg1, seg2]).IsExceeded);
+        Assert.True(policy.Evaluate().IsExceeded);
 
         // ACT
         policy.OnSegmentRemoved(seg2); // _totalSpan = 10 <= 15
 
         // ASSERT — no longer exceeded
-        Assert.Same(NoPressure<int, int>.Instance, policy.Evaluate([seg1]));
+        Assert.Same(NoPressure<int, int>.Instance, policy.Evaluate());
     }
 
     [Fact]
@@ -241,27 +241,25 @@ public sealed class MaxTotalSpanPolicyTests
 
         // ACT — add then remove the same segment
         policy.OnSegmentAdded(seg);
-        Assert.True(policy.Evaluate([seg]).IsExceeded);
+        Assert.True(policy.Evaluate().IsExceeded);
 
         policy.OnSegmentRemoved(seg);
 
         // ASSERT — total back to 0, no pressure
-        Assert.Same(NoPressure<int, int>.Instance, policy.Evaluate([]));
+        Assert.Same(NoPressure<int, int>.Instance, policy.Evaluate());
     }
 
     [Fact]
     public void Evaluate_DoesNotUseAllSegmentsParameter_UsesRunningTotal()
     {
         // ARRANGE — policy has _totalSpan = 0 (no OnSegmentAdded called)
-        // but we pass a non-empty segment list to Evaluate.
-        // Evaluate must ignore the list and use the cached total.
+        // Evaluate must use the cached total (0), not recompute from external data.
         var policy = new MaxTotalSpanPolicy<int, int, IntegerFixedStepDomain>(5, _domain);
-        var segment = CreateSegment(0, 9); // span 10 > 5
 
         // ACT — no OnSegmentAdded: _totalSpan remains 0 <= 5
-        var pressure = policy.Evaluate([segment]);
+        var pressure = policy.Evaluate();
 
-        // ASSERT — NoPressure because _totalSpan=0, not because of the list content
+        // ASSERT — NoPressure because _totalSpan=0
         Assert.Same(NoPressure<int, int>.Instance, pressure);
     }
 
@@ -279,14 +277,14 @@ public sealed class MaxTotalSpanPolicyTests
         };
 
         policy.OnSegmentAdded(segs[0]);
-        Assert.Same(NoPressure<int, int>.Instance, policy.Evaluate([segs[0]]));
+        Assert.Same(NoPressure<int, int>.Instance, policy.Evaluate());
 
         policy.OnSegmentAdded(segs[1]);
-        Assert.Same(NoPressure<int, int>.Instance, policy.Evaluate([segs[0], segs[1]]));
+        Assert.Same(NoPressure<int, int>.Instance, policy.Evaluate());
 
         // ACT — third segment pushes total over the limit
         policy.OnSegmentAdded(segs[2]);
-        var pressure = policy.Evaluate(segs);
+        var pressure = policy.Evaluate();
 
         // ASSERT
         Assert.True(pressure.IsExceeded);

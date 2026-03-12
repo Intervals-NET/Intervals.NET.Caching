@@ -10,7 +10,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Unit.Tests.Eviction;
 /// <summary>
 /// Unit tests for <see cref="EvictionPolicyEvaluator{TRange,TData}"/>.
 /// Validates constructor validation, stateful lifecycle forwarding to
-/// <see cref="IStatefulEvictionPolicy{TRange,TData}"/> implementations,
+/// <see cref="IEvictionPolicy{TRange,TData}"/> implementations,
 /// pressure evaluation (single policy, multiple policies, composite), and the
 /// <see cref="NoPressure{TRange,TData}.Instance"/> singleton return when no policy fires.
 /// </summary>
@@ -53,7 +53,7 @@ public sealed class EvictionPolicyEvaluatorTests
         var evaluator = new EvictionPolicyEvaluator<int, int>([]);
 
         // ACT
-        var pressure = evaluator.Evaluate([]);
+        var pressure = evaluator.Evaluate();
 
         // ASSERT — no eviction needed: singleton NoPressure, not exceeded
         Assert.IsType<NoPressure<int, int>>(pressure);
@@ -63,13 +63,16 @@ public sealed class EvictionPolicyEvaluatorTests
     [Fact]
     public void Evaluate_WhenNoPolicyFires_ReturnsNoPressureSingleton()
     {
-        // ARRANGE — limit 10, only 3 segments stored
+        // ARRANGE — limit 10, only 3 segments added
         var countPolicy = new MaxSegmentCountPolicy<int, int>(10);
         var evaluator = new EvictionPolicyEvaluator<int, int>([countPolicy]);
         var segments = CreateSegments(3);
 
+        // Drive stateful count via lifecycle
+        foreach (var seg in segments) evaluator.OnSegmentAdded(seg);
+
         // ACT
-        var pressure = evaluator.Evaluate(segments);
+        var pressure = evaluator.Evaluate();
 
         // ASSERT
         Assert.IsType<NoPressure<int, int>>(pressure);
@@ -83,13 +86,15 @@ public sealed class EvictionPolicyEvaluatorTests
     [Fact]
     public void Evaluate_WhenSinglePolicyFires_ReturnsThatPressure()
     {
-        // ARRANGE — max 2 segments; 3 stored → fires
+        // ARRANGE — max 2 segments; 3 added → fires
         var countPolicy = new MaxSegmentCountPolicy<int, int>(2);
         var evaluator = new EvictionPolicyEvaluator<int, int>([countPolicy]);
         var segments = CreateSegments(3);
 
+        foreach (var seg in segments) evaluator.OnSegmentAdded(seg);
+
         // ACT
-        var pressure = evaluator.Evaluate(segments);
+        var pressure = evaluator.Evaluate();
 
         // ASSERT — pressure must be exceeded and not null
         Assert.NotNull(pressure);
@@ -113,14 +118,14 @@ public sealed class EvictionPolicyEvaluatorTests
         var seg1 = CreateSegment(0, 9);   // span 10
         var seg2 = CreateSegment(20, 29); // span 10
 
-        // Notify stateful policy of both segments
+        // Notify stateful policies of both segments
         evaluator.OnSegmentAdded(seg1);
         evaluator.OnSegmentAdded(seg2);
 
-        var segments = new[] { seg1, seg2 }; // count=2>1; totalSpan=20>5
+        // count=2>1; totalSpan=20>5
 
         // ACT
-        var pressure = evaluator.Evaluate(segments);
+        var pressure = evaluator.Evaluate();
 
         // ASSERT
         Assert.NotNull(pressure);
@@ -141,7 +146,7 @@ public sealed class EvictionPolicyEvaluatorTests
         evaluator.OnSegmentAdded(seg);
 
         // ACT
-        var pressure = evaluator.Evaluate([seg]);
+        var pressure = evaluator.Evaluate();
 
         // ASSERT — one policy fired → single pressure (not composite)
         Assert.NotNull(pressure);
@@ -156,37 +161,38 @@ public sealed class EvictionPolicyEvaluatorTests
     [Fact]
     public void OnSegmentAdded_ForwardsToStatefulPolicies()
     {
-        // ARRANGE — stateful policy with max span 5; stateless count policy with max 100
+        // ARRANGE — stateful span policy with max 5; count policy with max 100
         var spanPolicy = new MaxTotalSpanPolicy<int, int, IntegerFixedStepDomain>(5, _domain);
         var countPolicy = new MaxSegmentCountPolicy<int, int>(100);
         var evaluator = new EvictionPolicyEvaluator<int, int>([spanPolicy, countPolicy]);
         var seg = CreateSegment(0, 9); // span 10 > 5
 
-        // Before add: spanPolicy._totalSpan=0 → no pressure
-        Assert.False(evaluator.Evaluate([]).IsExceeded);
+        // Before add: no pressure
+        Assert.False(evaluator.Evaluate().IsExceeded);
 
         // ACT
         evaluator.OnSegmentAdded(seg);
 
         // ASSERT — span policy now has _totalSpan=10 > 5 → fires
-        var pressure = evaluator.Evaluate([seg]);
+        var pressure = evaluator.Evaluate();
         Assert.NotNull(pressure);
         Assert.True(pressure.IsExceeded);
     }
 
     [Fact]
-    public void OnSegmentAdded_DoesNotForwardToStatelessPolicies()
+    public void OnSegmentAdded_DoesNotThrowForAnyPolicy()
     {
-        // ARRANGE — only a stateless count policy
+        // ARRANGE — count policy is stateful (Interlocked counter)
         var countPolicy = new MaxSegmentCountPolicy<int, int>(10);
         var evaluator = new EvictionPolicyEvaluator<int, int>([countPolicy]);
         var seg = CreateSegment(0, 9);
 
-        // ACT — OnSegmentAdded on a purely stateless policy must not throw or corrupt state
+        // ACT — OnSegmentAdded must not throw and must update count
         var exception = Record.Exception(() => evaluator.OnSegmentAdded(seg));
 
-        // ASSERT — no exception; evaluation uses allSegments.Count, still O(1)
+        // ASSERT — no exception; count is now 1 <= 10 → no pressure
         Assert.Null(exception);
+        Assert.False(evaluator.Evaluate().IsExceeded);
     }
 
     #endregion
@@ -204,24 +210,25 @@ public sealed class EvictionPolicyEvaluatorTests
 
         evaluator.OnSegmentAdded(seg1);
         evaluator.OnSegmentAdded(seg2);
-        Assert.True(evaluator.Evaluate([seg1, seg2]).IsExceeded);
+        Assert.True(evaluator.Evaluate().IsExceeded);
 
         // ACT
         evaluator.OnSegmentRemoved(seg2); // total 10 <= 15
 
         // ASSERT — no longer exceeded
-        Assert.False(evaluator.Evaluate([seg1]).IsExceeded);
+        Assert.False(evaluator.Evaluate().IsExceeded);
     }
 
     [Fact]
-    public void OnSegmentRemoved_DoesNotForwardToStatelessPolicies()
+    public void OnSegmentRemoved_DoesNotThrowForAnyPolicy()
     {
-        // ARRANGE — stateless count policy
+        // ARRANGE — count policy is stateful (Interlocked counter)
         var countPolicy = new MaxSegmentCountPolicy<int, int>(10);
         var evaluator = new EvictionPolicyEvaluator<int, int>([countPolicy]);
         var seg = CreateSegment(0, 9);
+        evaluator.OnSegmentAdded(seg);
 
-        // ACT — OnSegmentRemoved on a stateless policy must not throw
+        // ACT — OnSegmentRemoved must not throw
         var exception = Record.Exception(() => evaluator.OnSegmentRemoved(seg));
 
         // ASSERT
@@ -233,9 +240,9 @@ public sealed class EvictionPolicyEvaluatorTests
     #region Lifecycle — Mixed stateful + stateless policies
 
     [Fact]
-    public void MixedPolicies_StatefulReceivesLifecycle_StatelessDoesNot()
+    public void MixedPolicies_BothReceiveLifecycle()
     {
-        // ARRANGE — both a stateful span policy and a stateless count policy are registered
+        // ARRANGE — both a stateful span policy and a stateful count policy are registered
         var spanPolicy = new MaxTotalSpanPolicy<int, int, IntegerFixedStepDomain>(5, _domain);
         var countPolicy = new MaxSegmentCountPolicy<int, int>(100);
         var evaluator = new EvictionPolicyEvaluator<int, int>([spanPolicy, countPolicy]);
@@ -247,19 +254,19 @@ public sealed class EvictionPolicyEvaluatorTests
         evaluator.OnSegmentAdded(seg2);
 
         // Both added: span policy _totalSpan=16>5, count=2<=100
-        var pressure = evaluator.Evaluate([seg1, seg2]);
+        var pressure = evaluator.Evaluate();
         Assert.NotNull(pressure);
         Assert.True(pressure.IsExceeded);
 
         // Remove seg1: span total=6 still > 5 for span policy; count=1<=100
         evaluator.OnSegmentRemoved(seg1);
-        pressure = evaluator.Evaluate([seg2]);
+        pressure = evaluator.Evaluate();
         Assert.NotNull(pressure);
         Assert.True(pressure.IsExceeded);
 
         // Remove seg2: span total=0 <= 5; count=0 <= 100
         evaluator.OnSegmentRemoved(seg2);
-        var pressureAfter = evaluator.Evaluate([]);
+        var pressureAfter = evaluator.Evaluate();
         Assert.False(pressureAfter.IsExceeded);
     }
 
@@ -281,8 +288,7 @@ public sealed class EvictionPolicyEvaluatorTests
         evaluator.OnSegmentAdded(seg1);
         evaluator.OnSegmentAdded(seg2);
         // count=2>1, totalSpan=20>5 → both fire
-        var segments = new[] { seg1, seg2 };
-        var pressure = evaluator.Evaluate(segments);
+        var pressure = evaluator.Evaluate();
 
         Assert.NotNull(pressure);
         Assert.IsType<CompositePressure<int, int>>(pressure);

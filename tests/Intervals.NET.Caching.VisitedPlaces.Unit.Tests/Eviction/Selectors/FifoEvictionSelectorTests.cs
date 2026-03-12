@@ -1,6 +1,7 @@
 using Intervals.NET.Caching.VisitedPlaces.Core;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Selectors;
+using Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 using Intervals.NET.Caching.VisitedPlaces.Tests.Infrastructure.Helpers;
 
 namespace Intervals.NET.Caching.VisitedPlaces.Unit.Tests.Eviction.Selectors;
@@ -28,8 +29,10 @@ public sealed class FifoEvictionSelectorTests
         var oldest = CreateSegment(0, 5, baseTime);
         var newest = CreateSegment(10, 15, baseTime.AddHours(2));
 
+        InitializeStorage(_selector, [oldest, newest]);
+
         // ACT
-        var result = _selector.TrySelectCandidate([oldest, newest], NoImmune, out var candidate);
+        var result = _selector.TrySelectCandidate(NoImmune, out var candidate);
 
         // ASSERT — oldest (FIFO) is selected
         Assert.True(result);
@@ -39,15 +42,17 @@ public sealed class FifoEvictionSelectorTests
     [Fact]
     public void TrySelectCandidate_WithReversedInput_StillSelectsOldestCreated()
     {
-        // ARRANGE — input in reverse order (newest first)
+        // ARRANGE — storage insertion order does not matter
         var baseTime = DateTime.UtcNow.AddHours(-3);
         var oldest = CreateSegment(0, 5, baseTime);
         var newest = CreateSegment(10, 15, baseTime.AddHours(2));
 
-        // ACT
-        var result = _selector.TrySelectCandidate([newest, oldest], NoImmune, out var candidate);
+        InitializeStorage(_selector, [newest, oldest]);
 
-        // ASSERT — still selects the oldest regardless of input order
+        // ACT
+        var result = _selector.TrySelectCandidate(NoImmune, out var candidate);
+
+        // ASSERT — still selects the oldest regardless of insertion order
         Assert.True(result);
         Assert.Same(oldest, candidate);
     }
@@ -62,8 +67,10 @@ public sealed class FifoEvictionSelectorTests
         var seg3 = CreateSegment(20, 25, baseTime.AddHours(2));
         var seg4 = CreateSegment(30, 35, baseTime.AddHours(3));     // newest
 
+        InitializeStorage(_selector, [seg3, seg1, seg4, seg2]);
+
         // ACT
-        var result = _selector.TrySelectCandidate([seg3, seg1, seg4, seg2], NoImmune, out var candidate);
+        var result = _selector.TrySelectCandidate(NoImmune, out var candidate);
 
         // ASSERT — seg1 has oldest CreatedAt → selected by FIFO
         Assert.True(result);
@@ -75,9 +82,10 @@ public sealed class FifoEvictionSelectorTests
     {
         // ARRANGE
         var seg = CreateSegment(0, 5, DateTime.UtcNow);
+        InitializeStorage(_selector, [seg]);
 
         // ACT
-        var result = _selector.TrySelectCandidate([seg], NoImmune, out var candidate);
+        var result = _selector.TrySelectCandidate(NoImmune, out var candidate);
 
         // ASSERT
         Assert.True(result);
@@ -85,11 +93,13 @@ public sealed class FifoEvictionSelectorTests
     }
 
     [Fact]
-    public void TrySelectCandidate_WithEmptyList_ReturnsFalse()
+    public void TrySelectCandidate_WithEmptyStorage_ReturnsFalse()
     {
-        // ARRANGE & ACT
-        var result = _selector.TrySelectCandidate(
-            new List<CachedSegment<int, int>>(), NoImmune, out _);
+        // ARRANGE — initialize with empty storage
+        InitializeStorage(_selector, []);
+
+        // ACT
+        var result = _selector.TrySelectCandidate(NoImmune, out _);
 
         // ASSERT
         Assert.False(result);
@@ -107,10 +117,12 @@ public sealed class FifoEvictionSelectorTests
         var oldest = CreateSegment(0, 5, baseTime);           // FIFO — immune
         var newest = CreateSegment(10, 15, baseTime.AddHours(2));
 
+        InitializeStorage(_selector, [oldest, newest]);
+
         var immune = new HashSet<CachedSegment<int, int>> { oldest };
 
         // ACT
-        var result = _selector.TrySelectCandidate([oldest, newest], immune, out var candidate);
+        var result = _selector.TrySelectCandidate(immune, out var candidate);
 
         // ASSERT — oldest is immune, so next oldest (newest) is selected
         Assert.True(result);
@@ -122,10 +134,11 @@ public sealed class FifoEvictionSelectorTests
     {
         // ARRANGE
         var seg = CreateSegment(0, 5, DateTime.UtcNow);
+        InitializeStorage(_selector, [seg]);
         var immune = new HashSet<CachedSegment<int, int>> { seg };
 
         // ACT
-        var result = _selector.TrySelectCandidate([seg], immune, out _);
+        var result = _selector.TrySelectCandidate(immune, out _);
 
         // ASSERT
         Assert.False(result);
@@ -170,6 +183,27 @@ public sealed class FifoEvictionSelectorTests
     #endregion
 
     #region Helpers
+
+    /// <summary>
+    /// Creates a <see cref="SnapshotAppendBufferStorage{TRange,TData}"/> populated with
+    /// <paramref name="segments"/> and injects it into <paramref name="selector"/> via
+    /// <see cref="IStorageAwareEvictionSelector{TRange,TData}"/>.
+    /// </summary>
+    private static void InitializeStorage(
+        IEvictionSelector<int, int> selector,
+        IEnumerable<CachedSegment<int, int>> segments)
+    {
+        var storage = new SnapshotAppendBufferStorage<int, int>();
+        foreach (var seg in segments)
+        {
+            storage.Add(seg);
+        }
+
+        if (selector is IStorageAwareEvictionSelector<int, int> storageAware)
+        {
+            storageAware.Initialize(storage);
+        }
+    }
 
     private static CachedSegment<int, int> CreateSegment(int start, int end, DateTime createdAt)
     {

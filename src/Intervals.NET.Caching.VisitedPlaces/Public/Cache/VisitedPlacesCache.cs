@@ -104,6 +104,15 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
         // Create storage via the strategy options object (Factory Method pattern).
         var storage = options.StorageStrategy.Create();
 
+        // Inject storage into the selector so it can sample directly via GetRandomSegment()
+        // without requiring the full segment list to be passed at each call site.
+        // Cast to the internal IStorageAwareEvictionSelector — ISegmentStorage is internal and
+        // cannot appear on the public IEvictionSelector interface.
+        if (selector is IStorageAwareEvictionSelector<TRange, TData> storageAwareSelector)
+        {
+            storageAwareSelector.Initialize(storage);
+        }
+
         // Eviction engine: encapsulates selector metadata, policy evaluation, execution,
         // and eviction-specific diagnostics. Storage mutations remain in the processor.
         var evictionEngine = new EvictionEngine<TRange, TData>(policies, selector, cacheDiagnostics);

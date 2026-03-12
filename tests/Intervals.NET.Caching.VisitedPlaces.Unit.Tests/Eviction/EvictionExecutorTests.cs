@@ -4,6 +4,7 @@ using Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Policies;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Pressure;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Selectors;
+using Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 using Intervals.NET.Caching.VisitedPlaces.Tests.Infrastructure.Helpers;
 
 namespace Intervals.NET.Caching.VisitedPlaces.Unit.Tests.Eviction;
@@ -25,10 +26,11 @@ public sealed class EvictionExecutorTests
         // ARRANGE — 4 segments, max 2 → need to remove 2
         var segments = CreateSegmentsWithAccess(4);
         var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 4, maxCount: 2);
-        var executor = new EvictionExecutor<int, int>(new LruEvictionSelector<int, int>());
+        var selector = new LruEvictionSelector<int, int>();
+        var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(pressure, segments, justStoredSegments: []);
+        var toRemove = executor.Execute(pressure, justStoredSegments: []);
 
         // ASSERT — exactly 2 removed, pressure satisfied
         Assert.Equal(2, toRemove.Count);
@@ -41,10 +43,11 @@ public sealed class EvictionExecutorTests
         // ARRANGE — 3 segments, max 2 → remove 1
         var segments = CreateSegmentsWithAccess(3);
         var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 3, maxCount: 2);
-        var executor = new EvictionExecutor<int, int>(new LruEvictionSelector<int, int>());
+        var selector = new LruEvictionSelector<int, int>();
+        var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(pressure, segments, justStoredSegments: []);
+        var toRemove = executor.Execute(pressure, justStoredSegments: []);
 
         // ASSERT
         Assert.Single(toRemove);
@@ -64,10 +67,11 @@ public sealed class EvictionExecutorTests
             currentTotalSpan: 30, maxTotalSpan: 15, domain: _domain);
 
         // Use LRU selector — all have same access time, so order is stable
-        var executor = new EvictionExecutor<int, int>(new LruEvictionSelector<int, int>());
+        var selector = new LruEvictionSelector<int, int>();
+        var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(pressure, segments, justStoredSegments: []);
+        var toRemove = executor.Execute(pressure, justStoredSegments: []);
 
         // ASSERT — removed 2 segments (30 - 10 = 20 > 15, 20 - 10 = 10 <= 15)
         Assert.Equal(2, toRemove.Count);
@@ -88,10 +92,11 @@ public sealed class EvictionExecutorTests
         var segments = new List<CachedSegment<int, int>> { old, recent };
 
         var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 2, maxCount: 1);
-        var executor = new EvictionExecutor<int, int>(new LruEvictionSelector<int, int>());
+        var selector = new LruEvictionSelector<int, int>();
+        var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(pressure, segments, justStoredSegments: []);
+        var toRemove = executor.Execute(pressure, justStoredSegments: []);
 
         // ASSERT — the old (LRU) segment is removed
         Assert.Single(toRemove);
@@ -108,10 +113,11 @@ public sealed class EvictionExecutorTests
         var segments = new List<CachedSegment<int, int>> { oldest, newest };
 
         var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 2, maxCount: 1);
-        var executor = new EvictionExecutor<int, int>(new FifoEvictionSelector<int, int>());
+        var selector = new FifoEvictionSelector<int, int>();
+        var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(pressure, segments, justStoredSegments: []);
+        var toRemove = executor.Execute(pressure, justStoredSegments: []);
 
         // ASSERT — the oldest (FIFO) segment is removed
         Assert.Single(toRemove);
@@ -128,10 +134,10 @@ public sealed class EvictionExecutorTests
 
         var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 2, maxCount: 1);
         var selector = new SmallestFirstEvictionSelector<int, int, IntegerFixedStepDomain>(_domain);
-        var executor = new EvictionExecutor<int, int>(selector);
+        var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(pressure, segments, justStoredSegments: []);
+        var toRemove = executor.Execute(pressure, justStoredSegments: []);
 
         // ASSERT — smallest span removed
         Assert.Single(toRemove);
@@ -151,10 +157,11 @@ public sealed class EvictionExecutorTests
         var segments = new List<CachedSegment<int, int>> { old, justStored };
 
         var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 2, maxCount: 1);
-        var executor = new EvictionExecutor<int, int>(new LruEvictionSelector<int, int>());
+        var selector = new LruEvictionSelector<int, int>();
+        var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(pressure, segments, justStoredSegments: [justStored]);
+        var toRemove = executor.Execute(pressure, justStoredSegments: [justStored]);
 
         // ASSERT — old is removed, justStored is immune
         Assert.Single(toRemove);
@@ -170,10 +177,11 @@ public sealed class EvictionExecutorTests
         var segments = new List<CachedSegment<int, int>> { seg };
 
         var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 2, maxCount: 1);
-        var executor = new EvictionExecutor<int, int>(new LruEvictionSelector<int, int>());
+        var selector = new LruEvictionSelector<int, int>();
+        var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(pressure, segments, justStoredSegments: [seg]);
+        var toRemove = executor.Execute(pressure, justStoredSegments: [seg]);
 
         // ASSERT — no eviction possible
         Assert.Empty(toRemove);
@@ -191,10 +199,11 @@ public sealed class EvictionExecutorTests
         var segments = new List<CachedSegment<int, int>> { old1, old2, just1, just2 };
 
         var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 4, maxCount: 2);
-        var executor = new EvictionExecutor<int, int>(new LruEvictionSelector<int, int>());
+        var selector = new LruEvictionSelector<int, int>();
+        var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(pressure, segments, justStoredSegments: [just1, just2]);
+        var toRemove = executor.Execute(pressure, justStoredSegments: [just1, just2]);
 
         // ASSERT — old1 and old2 removed, just1 and just2 immune
         Assert.Equal(2, toRemove.Count);
@@ -215,10 +224,10 @@ public sealed class EvictionExecutorTests
 
         var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 3, maxCount: 2);
         var selector = new SmallestFirstEvictionSelector<int, int, IntegerFixedStepDomain>(_domain);
-        var executor = new EvictionExecutor<int, int>(selector);
+        var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(pressure, segments, justStoredSegments: [small]);
+        var toRemove = executor.Execute(pressure, justStoredSegments: [small]);
 
         // ASSERT — medium removed (next smallest after immune small)
         Assert.Single(toRemove);
@@ -238,10 +247,11 @@ public sealed class EvictionExecutorTests
         var p1 = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 4, maxCount: 2); // need 2 removals
         var p2 = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 4, maxCount: 3); // need 1 removal
         var composite = new CompositePressure<int, int>([p1, p2]);
-        var executor = new EvictionExecutor<int, int>(new LruEvictionSelector<int, int>());
+        var selector = new LruEvictionSelector<int, int>();
+        var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(composite, segments, justStoredSegments: []);
+        var toRemove = executor.Execute(composite, justStoredSegments: []);
 
         // ASSERT — 2 removed (satisfies both: 2<=2 and 2<=3)
         Assert.Equal(2, toRemove.Count);
@@ -263,10 +273,11 @@ public sealed class EvictionExecutorTests
 
         // Need to remove 3 (count=4, max=1) but only 2 eligible
         var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 4, maxCount: 1);
-        var executor = new EvictionExecutor<int, int>(new LruEvictionSelector<int, int>());
+        var selector = new LruEvictionSelector<int, int>();
+        var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(pressure, segments, justStoredSegments: [justStored]);
+        var toRemove = executor.Execute(pressure, justStoredSegments: [justStored]);
 
         // ASSERT — all eligible candidates removed (even though pressure still exceeded)
         Assert.Equal(2, toRemove.Count);
@@ -300,10 +311,11 @@ public sealed class EvictionExecutorTests
         var pressure = new MaxTotalSpanPolicy<int, int, IntegerFixedStepDomain>.TotalSpanPressure(
             currentTotalSpan: 19, maxTotalSpan: 10, domain: _domain);
 
-        var executor = new EvictionExecutor<int, int>(new LruEvictionSelector<int, int>());
+        var selector = new LruEvictionSelector<int, int>();
+        var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(pressure, segments, justStoredSegments: []);
+        var toRemove = executor.Execute(pressure, justStoredSegments: []);
 
         // ASSERT — correctly removes 2 segments (small + medium) to satisfy constraint.
         // Sampling with SampleSize=32 over 3 distinct-time segments reliably finds the LRU worst.
@@ -320,13 +332,13 @@ public sealed class EvictionExecutorTests
     [Fact]
     public void Execute_WithNoSegments_ReturnsEmptyList()
     {
-        // ARRANGE
-        var segments = new List<CachedSegment<int, int>>();
+        // ARRANGE — empty storage
         var pressure = new MaxSegmentCountPolicy<int, int>.SegmentCountPressure(currentCount: 1, maxCount: 0);
-        var executor = new EvictionExecutor<int, int>(new LruEvictionSelector<int, int>());
+        var selector = new LruEvictionSelector<int, int>();
+        var executor = CreateExecutorWithStorage(selector, []);
 
         // ACT
-        var toRemove = executor.Execute(pressure, segments, justStoredSegments: []);
+        var toRemove = executor.Execute(pressure, justStoredSegments: []);
 
         // ASSERT
         Assert.Empty(toRemove);
@@ -335,6 +347,30 @@ public sealed class EvictionExecutorTests
     #endregion
 
     #region Helpers
+
+    /// <summary>
+    /// Creates a <see cref="SnapshotAppendBufferStorage{TRange,TData}"/> populated with
+    /// <paramref name="segments"/>, injects it into <paramref name="selector"/> via
+    /// <see cref="IStorageAwareEvictionSelector{TRange,TData}"/>, and returns a new
+    /// <see cref="EvictionExecutor{TRange,TData}"/> backed by that selector.
+    /// </summary>
+    private static EvictionExecutor<int, int> CreateExecutorWithStorage(
+        IEvictionSelector<int, int> selector,
+        IEnumerable<CachedSegment<int, int>> segments)
+    {
+        var storage = new SnapshotAppendBufferStorage<int, int>();
+        foreach (var seg in segments)
+        {
+            storage.Add(seg);
+        }
+
+        if (selector is IStorageAwareEvictionSelector<int, int> storageAware)
+        {
+            storageAware.Initialize(storage);
+        }
+
+        return new EvictionExecutor<int, int>(selector);
+    }
 
     private static CachedSegment<int, int> CreateSegment(int start, int end)
     {

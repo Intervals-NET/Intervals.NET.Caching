@@ -2,6 +2,7 @@ using Intervals.NET.Domain.Default.Numeric;
 using Intervals.NET.Caching.VisitedPlaces.Core;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Selectors;
+using Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 using Intervals.NET.Caching.VisitedPlaces.Tests.Infrastructure.Helpers;
 
 namespace Intervals.NET.Caching.VisitedPlaces.Unit.Tests.Eviction.Selectors;
@@ -82,8 +83,10 @@ public sealed class SmallestFirstEvictionSelectorTests
         var small = CreateSegment(selector, 0, 2);    // span 3
         var large = CreateSegment(selector, 20, 29);  // span 10
 
+        InitializeStorage(selector, [small, large]);
+
         // ACT
-        var result = selector.TrySelectCandidate([small, large], NoImmune, out var candidate);
+        var result = selector.TrySelectCandidate(NoImmune, out var candidate);
 
         // ASSERT — smallest span is selected
         Assert.True(result);
@@ -93,16 +96,18 @@ public sealed class SmallestFirstEvictionSelectorTests
     [Fact]
     public void TrySelectCandidate_WithReversedInput_StillSelectsSmallestSpan()
     {
-        // ARRANGE
+        // ARRANGE — storage insertion order does not matter
         var selector = new SmallestFirstEvictionSelector<int, int, IntegerFixedStepDomain>(_domain);
 
         var small = CreateSegment(selector, 0, 2);    // span 3
         var large = CreateSegment(selector, 20, 29);  // span 10
 
-        // ACT
-        var result = selector.TrySelectCandidate([large, small], NoImmune, out var candidate);
+        InitializeStorage(selector, [large, small]);
 
-        // ASSERT — regardless of input order, smallest is found
+        // ACT
+        var result = selector.TrySelectCandidate(NoImmune, out var candidate);
+
+        // ASSERT — regardless of insertion order, smallest is found
         Assert.True(result);
         Assert.Same(small, candidate);
     }
@@ -117,8 +122,10 @@ public sealed class SmallestFirstEvictionSelectorTests
         var medium = CreateSegment(selector, 10, 15); // span 6
         var large = CreateSegment(selector, 20, 29);  // span 10
 
+        InitializeStorage(selector, [large, small, medium]);
+
         // ACT
-        var result = selector.TrySelectCandidate([large, small, medium], NoImmune, out var candidate);
+        var result = selector.TrySelectCandidate(NoImmune, out var candidate);
 
         // ASSERT — smallest span wins
         Assert.True(result);
@@ -131,9 +138,10 @@ public sealed class SmallestFirstEvictionSelectorTests
         // ARRANGE
         var selector = new SmallestFirstEvictionSelector<int, int, IntegerFixedStepDomain>(_domain);
         var seg = CreateSegment(selector, 0, 5);
+        InitializeStorage(selector, [seg]);
 
         // ACT
-        var result = selector.TrySelectCandidate([seg], NoImmune, out var candidate);
+        var result = selector.TrySelectCandidate(NoImmune, out var candidate);
 
         // ASSERT
         Assert.True(result);
@@ -141,14 +149,14 @@ public sealed class SmallestFirstEvictionSelectorTests
     }
 
     [Fact]
-    public void TrySelectCandidate_WithEmptyList_ReturnsFalse()
+    public void TrySelectCandidate_WithEmptyStorage_ReturnsFalse()
     {
-        // ARRANGE
+        // ARRANGE — initialize with empty storage
         var selector = new SmallestFirstEvictionSelector<int, int, IntegerFixedStepDomain>(_domain);
+        InitializeStorage(selector, []);
 
         // ACT
-        var result = selector.TrySelectCandidate(
-            new List<CachedSegment<int, int>>(), NoImmune, out _);
+        var result = selector.TrySelectCandidate(NoImmune, out _);
 
         // ASSERT
         Assert.False(result);
@@ -162,8 +170,11 @@ public sealed class SmallestFirstEvictionSelectorTests
         var small = CreateSegmentRaw(0, 2);    // span 3
         var large = CreateSegmentRaw(20, 29);  // span 10
 
+        // Storage without pre-initialized metadata — EnsureMetadata lazily computes span
+        InitializeStorage(selector, [large, small]);
+
         // ACT — EnsureMetadata lazily computes and stores span before IsWorse comparison
-        var result = selector.TrySelectCandidate([large, small], NoImmune, out var candidate);
+        var result = selector.TrySelectCandidate(NoImmune, out var candidate);
 
         // ASSERT — lazily computed span still selects the smallest
         Assert.True(result);
@@ -184,10 +195,12 @@ public sealed class SmallestFirstEvictionSelectorTests
         var medium = CreateSegment(selector, 10, 15); // span 6
         var large = CreateSegment(selector, 20, 29);  // span 10
 
+        InitializeStorage(selector, [small, medium, large]);
+
         var immune = new HashSet<CachedSegment<int, int>> { small };
 
         // ACT
-        var result = selector.TrySelectCandidate([small, medium, large], immune, out var candidate);
+        var result = selector.TrySelectCandidate(immune, out var candidate);
 
         // ASSERT — small is immune, so medium (next smallest) is selected
         Assert.True(result);
@@ -200,10 +213,11 @@ public sealed class SmallestFirstEvictionSelectorTests
         // ARRANGE
         var selector = new SmallestFirstEvictionSelector<int, int, IntegerFixedStepDomain>(_domain);
         var seg = CreateSegment(selector, 0, 5);
+        InitializeStorage(selector, [seg]);
         var immune = new HashSet<CachedSegment<int, int>> { seg };
 
         // ACT
-        var result = selector.TrySelectCandidate([seg], immune, out _);
+        var result = selector.TrySelectCandidate(immune, out _);
 
         // ASSERT
         Assert.False(result);
@@ -212,6 +226,27 @@ public sealed class SmallestFirstEvictionSelectorTests
     #endregion
 
     #region Helpers
+
+    /// <summary>
+    /// Creates a <see cref="SnapshotAppendBufferStorage{TRange,TData}"/> populated with
+    /// <paramref name="segments"/> and injects it into <paramref name="selector"/> via
+    /// <see cref="IStorageAwareEvictionSelector{TRange,TData}"/>.
+    /// </summary>
+    private static void InitializeStorage(
+        IEvictionSelector<int, int> selector,
+        IEnumerable<CachedSegment<int, int>> segments)
+    {
+        var storage = new SnapshotAppendBufferStorage<int, int>();
+        foreach (var seg in segments)
+        {
+            storage.Add(seg);
+        }
+
+        if (selector is IStorageAwareEvictionSelector<int, int> storageAware)
+        {
+            storageAware.Initialize(storage);
+        }
+    }
 
     private static CachedSegment<int, int> CreateSegment(
         SmallestFirstEvictionSelector<int, int, IntegerFixedStepDomain> selector,

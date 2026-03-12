@@ -3,6 +3,7 @@ using Intervals.NET.Caching.VisitedPlaces.Core;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Policies;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Selectors;
+using Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 using Intervals.NET.Caching.VisitedPlaces.Tests.Infrastructure;
 using Intervals.NET.Caching.VisitedPlaces.Tests.Infrastructure.Helpers;
 
@@ -149,22 +150,24 @@ public sealed class EvictionEngineTests
     {
         // ARRANGE — stateful span policy with max 5; segment span=10 will push it over
         var spanPolicy = new MaxTotalSpanPolicy<int, int, IntegerFixedStepDomain>(5, _domain);
+        var (selector, storage) = CreateSelectorWithStorage();
         var engine = new EvictionEngine<int, int>(
             [spanPolicy],
-            new LruEvictionSelector<int, int>(),
+            selector,
             _diagnostics);
         var segment = CreateSegment(0, 9); // span 10 > 5
 
         // Before initialize: policy has _totalSpan=0 → EvaluateAndExecute returns empty
-        Assert.Empty(engine.EvaluateAndExecute([], []));
+        Assert.Empty(engine.EvaluateAndExecute([]));
         Assert.Equal(1, _diagnostics.EvictionEvaluated);
         Assert.Equal(0, _diagnostics.EvictionTriggered);
 
         // ACT
         engine.InitializeSegment(segment);
+        storage.Add(segment);
 
         // ASSERT — stateful policy now knows about the segment → evaluates as exceeded
-        var toRemove = engine.EvaluateAndExecute([segment], [segment]); // immune → empty result
+        var toRemove = engine.EvaluateAndExecute([segment]); // immune → empty result
         Assert.Empty(toRemove); // all immune, so nothing removed
         Assert.Equal(2, _diagnostics.EvictionEvaluated);
         Assert.Equal(1, _diagnostics.EvictionTriggered); // triggered but immune
@@ -183,7 +186,7 @@ public sealed class EvictionEngineTests
         foreach (var seg in segments) engine.InitializeSegment(seg);
 
         // ACT
-        var toRemove = engine.EvaluateAndExecute(segments, []);
+        var toRemove = engine.EvaluateAndExecute([]);
 
         // ASSERT
         Assert.Empty(toRemove);
@@ -198,7 +201,7 @@ public sealed class EvictionEngineTests
         foreach (var seg in segments) engine.InitializeSegment(seg);
 
         // ACT
-        engine.EvaluateAndExecute(segments, []);
+        engine.EvaluateAndExecute([]);
 
         // ASSERT
         Assert.Equal(1, _diagnostics.EvictionEvaluated);
@@ -218,7 +221,7 @@ public sealed class EvictionEngineTests
         var segments = CreateSegmentsWithLruMetadata(engine, 3);
 
         // ACT — none are immune (empty justStored)
-        var toRemove = engine.EvaluateAndExecute(segments, []);
+        var toRemove = engine.EvaluateAndExecute([]);
 
         // ASSERT — exactly 1 removed to bring count from 3 → 2
         Assert.Single(toRemove);
@@ -232,7 +235,7 @@ public sealed class EvictionEngineTests
         var segments = CreateSegmentsWithLruMetadata(engine, 3);
 
         // ACT
-        engine.EvaluateAndExecute(segments, []);
+        engine.EvaluateAndExecute([]);
 
         // ASSERT
         Assert.Equal(1, _diagnostics.EvictionEvaluated);
@@ -248,7 +251,7 @@ public sealed class EvictionEngineTests
         var segments = CreateSegmentsWithLruMetadata(engine, 2);
 
         // ACT — both immune
-        var toRemove = engine.EvaluateAndExecute(segments, segments);
+        var toRemove = engine.EvaluateAndExecute(segments);
 
         // ASSERT — policy fires but no eligible candidates
         Assert.Empty(toRemove);
@@ -262,21 +265,25 @@ public sealed class EvictionEngineTests
         // ARRANGE — count (max 1) and span (max 5); 3 segments → both fire
         var spanPolicy = new MaxTotalSpanPolicy<int, int, IntegerFixedStepDomain>(5, _domain);
         var countPolicy = new MaxSegmentCountPolicy<int, int>(1);
+        var (selector, storage) = CreateSelectorWithStorage();
         var engine = new EvictionEngine<int, int>(
             [countPolicy, spanPolicy],
-            new LruEvictionSelector<int, int>(),
+            selector,
             _diagnostics);
 
         var seg1 = CreateSegment(0, 9);   // span 10
         var seg2 = CreateSegment(20, 29); // span 10
         var seg3 = CreateSegment(40, 49); // span 10
         foreach (var s in new[] { seg1, seg2, seg3 })
+        {
             engine.InitializeSegment(s);
+            storage.Add(s);
+        }
 
         var segments = new[] { seg1, seg2, seg3 };
 
         // ACT
-        var toRemove = engine.EvaluateAndExecute(segments, []);
+        var toRemove = engine.EvaluateAndExecute([]);
 
         // ASSERT — must evict until count<=1 AND span<=5 are both satisfied;
         // all spans are 10>5 so all 3 would need to go to satisfy span — but immunity stops at 0 non-immune
@@ -296,18 +303,21 @@ public sealed class EvictionEngineTests
     {
         // ARRANGE — span policy max 15; two segments push total to 20>15
         var spanPolicy = new MaxTotalSpanPolicy<int, int, IntegerFixedStepDomain>(15, _domain);
+        var (selector, storage) = CreateSelectorWithStorage();
         var engine = new EvictionEngine<int, int>(
             [spanPolicy],
-            new LruEvictionSelector<int, int>(),
+            selector,
             _diagnostics);
 
         var seg1 = CreateSegment(0, 9);   // span 10
         var seg2 = CreateSegment(20, 29); // span 10 → total 20 > 15
         engine.InitializeSegment(seg1);
+        storage.Add(seg1);
         engine.InitializeSegment(seg2);
+        storage.Add(seg2);
 
         // Confirm exceeded before removal
-        var toRemove = engine.EvaluateAndExecute([seg1, seg2], [seg1, seg2]); // both immune → returns []
+        var toRemove = engine.EvaluateAndExecute([seg1, seg2]); // both immune → returns []
         Assert.Equal(1, _diagnostics.EvictionTriggered);
 
         // ACT — simulate processor removing seg2 from storage then notifying engine
@@ -315,7 +325,7 @@ public sealed class EvictionEngineTests
 
         // ASSERT — policy no longer exceeded after notification
         _diagnostics.Reset();
-        var toRemove2 = engine.EvaluateAndExecute([seg1], []);
+        var toRemove2 = engine.EvaluateAndExecute([]);
         Assert.Empty(toRemove2);
         Assert.Equal(0, _diagnostics.EvictionTriggered);
     }
@@ -347,13 +357,33 @@ public sealed class EvictionEngineTests
 
     #region Helpers
 
-    private EvictionEngine<int, int> CreateEngine(int maxSegmentCount) =>
-        new(
-            [new MaxSegmentCountPolicy<int, int>(maxSegmentCount)],
-            new LruEvictionSelector<int, int>(),
-            _diagnostics);
+    // Per-test storage backing the selector; reset each time CreateEngine is called.
+    private SnapshotAppendBufferStorage<int, int> _storage = new(appendBufferSize: 64);
 
-    private static IReadOnlyList<CachedSegment<int, int>> CreateSegmentsWithLruMetadata(
+    private EvictionEngine<int, int> CreateEngine(int maxSegmentCount)
+    {
+        var (selector, storage) = CreateSelectorWithStorage();
+        _storage = storage;
+        return new EvictionEngine<int, int>(
+            [new MaxSegmentCountPolicy<int, int>(maxSegmentCount)],
+            selector,
+            _diagnostics);
+    }
+
+    /// <summary>
+    /// Creates an <see cref="LruEvictionSelector{TRange,TData}"/> that has been initialized
+    /// with a fresh <see cref="SnapshotAppendBufferStorage{TRange,TData}"/>.
+    /// </summary>
+    private static (LruEvictionSelector<int, int> Selector, SnapshotAppendBufferStorage<int, int> Storage)
+        CreateSelectorWithStorage()
+    {
+        var storage = new SnapshotAppendBufferStorage<int, int>(appendBufferSize: 64);
+        var selector = new LruEvictionSelector<int, int>();
+        ((IStorageAwareEvictionSelector<int, int>)selector).Initialize(storage);
+        return (selector, storage);
+    }
+
+    private IReadOnlyList<CachedSegment<int, int>> CreateSegmentsWithLruMetadata(
         EvictionEngine<int, int> engine,
         int count)
     {
@@ -361,6 +391,7 @@ public sealed class EvictionEngineTests
         foreach (var seg in segments)
         {
             engine.InitializeSegment(seg);
+            _storage.Add(seg);
         }
         return segments;
     }

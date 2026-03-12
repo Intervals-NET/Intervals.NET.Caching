@@ -11,8 +11,8 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 /// <para><strong>Execution Flow:</strong></para>
 /// <list type="number">
 /// <item><description>Build the immune set from <c>justStoredSegments</c> (Invariant VPC.E.3).</description></item>
-/// <item><description>Loop: call <see cref="IEvictionSelector{TRange,TData}.TrySelectCandidate"/> with the full
-///   segment pool and the current immune set.</description></item>
+/// <item><description>Loop: call <see cref="IEvictionSelector{TRange,TData}.TrySelectCandidate"/> with the
+///   current immune set; the selector samples directly from its injected storage.</description></item>
 /// <item><description>If a candidate is returned, add it to <c>toRemove</c>, call
 ///   <see cref="IEvictionPressure{TRange,TData}.Reduce"/>, and add it to the immune set so it
 ///   cannot be selected again in this pass.</description></item>
@@ -55,14 +55,13 @@ internal sealed class EvictionExecutor<TRange, TData>
 
     /// <summary>
     /// Executes the constraint satisfaction eviction loop. Repeatedly selects candidates via
-    /// the selector until the composite pressure is no longer exceeded or all eligible
-    /// candidates are exhausted.
+    /// the selector until the composite pressure is no longer exceeded or no more eligible
+    /// candidates exist.
     /// </summary>
     /// <param name="pressure">
     /// The composite (or single) pressure tracking constraint satisfaction.
     /// Must have <see cref="IEvictionPressure{TRange,TData}.IsExceeded"/> = <c>true</c> when called.
     /// </param>
-    /// <param name="allSegments">All currently stored segments (the full candidate pool).</param>
     /// <param name="justStoredSegments">
     /// All segments stored during the current event processing cycle (immune from eviction per
     /// Invariant VPC.E.3). Empty when no segments were stored in this cycle.
@@ -74,18 +73,19 @@ internal sealed class EvictionExecutor<TRange, TData>
     /// </returns>
     internal IReadOnlyList<CachedSegment<TRange, TData>> Execute(
         IEvictionPressure<TRange, TData> pressure,
-        IReadOnlyList<CachedSegment<TRange, TData>> allSegments,
         IReadOnlyList<CachedSegment<TRange, TData>> justStoredSegments)
     {
         // Build the immune set from just-stored segments (Invariant VPC.E.3).
         // Already-selected candidates are added to this set during the loop to prevent
         // re-selecting the same segment within one eviction pass.
+        // todo think about making it as a hashset initially to avoid temp allocation
         var immune = new HashSet<CachedSegment<TRange, TData>>(justStoredSegments);
+        // todo: looks like toRemove easily can be made as IEnumerable - save array allocation
         var toRemove = new List<CachedSegment<TRange, TData>>();
 
         while (pressure.IsExceeded)
         {
-            if (!_selector.TrySelectCandidate(allSegments, immune, out var candidate))
+            if (!_selector.TrySelectCandidate(immune, out var candidate))
             {
                 // No eligible candidates remain (all immune or pool exhausted).
                 break;

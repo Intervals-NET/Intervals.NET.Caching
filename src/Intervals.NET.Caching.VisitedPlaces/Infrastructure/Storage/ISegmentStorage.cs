@@ -12,7 +12,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 /// <para><strong>Threading Model:</strong></para>
 /// <list type="bullet">
 /// <item><description><see cref="FindIntersecting"/> — User Path; concurrent reads are safe</description></item>
-/// <item><description><see cref="Add"/>, <see cref="Remove"/>, <see cref="GetAllSegments"/> — Background Path only (single writer)</description></item>
+/// <item><description><see cref="Add"/>, <see cref="Remove"/>, <see cref="GetRandomSegment"/> — Background Path only (single writer)</description></item>
 /// </list>
 /// <para><strong>RCU Semantics (Invariant VPC.B.5):</strong>
 /// User Path reads operate on a stable snapshot published via <c>Volatile.Write</c>.
@@ -75,12 +75,26 @@ internal interface ISegmentStorage<TRange, TData>
     bool Remove(CachedSegment<TRange, TData> segment);
 
     /// <summary>
-    /// Returns all currently stored (non-deleted) segments.
+    /// Returns a single randomly-selected live (non-removed) segment from storage.
     /// </summary>
-    /// <returns>A snapshot of all live segments.</returns>
+    /// <returns>
+    /// A live segment chosen uniformly at random, or <see langword="null"/> when the storage
+    /// is empty or all candidates within the retry budget were soft-deleted.
+    /// </returns>
     /// <remarks>
     /// <para><strong>Execution Context:</strong> Background Path only (single writer)</para>
-    /// <para>Used by eviction executors and evaluators.</para>
+    /// <para>
+    /// Implementations use a bounded retry loop to skip over soft-deleted segments.
+    /// If the retry budget is exhausted before finding a live segment, <see langword="null"/>
+    /// is returned. Callers (eviction selectors) are responsible for handling this by treating
+    /// it as "pool exhausted" for one sample slot.
+    /// </para>
+    /// <para>
+    /// The <see cref="System.Random"/> instance used for index selection is owned privately
+    /// by each implementation — no synchronization is required since this method is
+    /// Background-Path-only.
+    /// </para>
     /// </remarks>
-    IReadOnlyList<CachedSegment<TRange, TData>> GetAllSegments();
+    /// todo should it be bool TryGetRandomSegment(out segment)?
+    CachedSegment<TRange, TData>? GetRandomSegment();
 }

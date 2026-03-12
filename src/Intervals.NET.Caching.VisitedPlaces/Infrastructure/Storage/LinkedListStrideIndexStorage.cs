@@ -38,9 +38,11 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
 {
     private const int DefaultStride = 16;
     private const int DefaultAppendBufferSize = 8;
+    private const int RandomRetryLimit = 8;
 
     private readonly int _stride;
     private readonly int _strideAppendBufferSize;
+    private readonly Random _random = new();
 
     // Sorted linked list — mutated on Background Path only.
     private readonly LinkedList<CachedSegment<TRange, TData>> _list = [];
@@ -51,10 +53,12 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
 
     // Maps each segment to its linked list node for O(1) removal.
     // Maintained on Background Path only.
+    // todo: I don't quite understand why do we need this map that actually multiplies memory usage. Why stride index can not reference LinkedListNode instead of segment?
     private readonly Dictionary<CachedSegment<TRange, TData>, LinkedListNode<CachedSegment<TRange, TData>>>
         _nodeMap = new(ReferenceEqualityComparer.Instance);
 
     // Stride append buffer: newly-added segments not yet reflected in the stride index.
+    // todo do we really need this separate buffer? Inserts are easy - stride index still can be removed when the counter equals the stride index gap.
     private readonly CachedSegment<TRange, TData>[] _strideAppendBuffer;
     private int _strideAppendCount;
 
@@ -221,8 +225,10 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
     /// uses <c>Interlocked.CompareExchange</c>; <c>_count</c> uses <c>Interlocked.Decrement</c>.
     /// </para>
     /// </remarks>
+    /// todo: consider renaming to TryRemove
     public bool Remove(CachedSegment<TRange, TData> segment)
     {
+        // todo: consider renaming to TryMarkAsRemoved
         if (segment.MarkAsRemoved())
         {
             Interlocked.Decrement(ref _count);
@@ -233,27 +239,100 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
     }
 
     /// <inheritdoc/>
-    public IReadOnlyList<CachedSegment<TRange, TData>> GetAllSegments()
+    /// <remarks>
+    /// <para><strong>Algorithm:</strong></para>
+    /// <list type="number">
+    /// <item><description>
+    ///   If <c>_strideIndex</c> is non-empty, pick a random anchor index and a random offset
+    ///   within the stride gap, then walk forward from the anchor to the selected node — O(stride).
+    /// </description></item>
+    /// <item><description>
+    ///   If <c>_strideIndex</c> is empty but <c>_list</c> is non-empty (segments were added but
+    ///   stride normalization has not yet run), fall back to a linear walk from <c>_list.First</c>
+    ///   with a random skip count bounded by <c>_list.Count</c>.
+    /// </description></item>
+    /// <item><description>
+    ///   If the selected segment is soft-deleted, retry (bounded by <c>RandomRetryLimit</c>).
+    /// </description></item>
+    /// </list>
+    /// </remarks>
+    public CachedSegment<TRange, TData>? GetRandomSegment()
     {
-        var results = new List<CachedSegment<TRange, TData>>(_count);
-
-        var node = _list.First;
-        while (node != null)
+        if (_list.Count == 0)
         {
-            if (!node.Value.IsRemoved)
-            {
-                results.Add(node.Value);
-            }
-
-            node = node.Next;
+            return null;
         }
 
-        // Also include segments currently in the stride append buffer that are not in the list yet.
-        // Note: InsertSorted already adds to _list, so all segments are in _list. The stride
-        // append buffer just tracks which are not yet reflected in the stride index.
-        // GetAllSegments returns live list segments (already done above).
+        for (var attempt = 0; attempt < RandomRetryLimit; attempt++)
+        {
+            CachedSegment<TRange, TData>? seg = null;
+            var strideIndex = Volatile.Read(ref _strideIndex);
 
-        return results;
+            if (strideIndex.Length > 0)
+            {
+                // Pick a random stride anchor index, then a random offset from 0 to stride-1
+                // (or to list-end for the last anchor, which may have more than _stride nodes
+                // when new segments have been appended after the last normalization).
+                var anchorIdx = _random.Next(strideIndex.Length);
+
+                var anchorSeg = strideIndex[anchorIdx];
+                if (_nodeMap.TryGetValue(anchorSeg, out var anchorNode))
+                {
+                    // Determine the maximum reachable offset from this anchor.
+                    // For interior anchors, offset is bounded by _stride (distance to next anchor).
+                    // For the last anchor, we walk to the actual list end (may be > _stride when
+                    // new segments have been appended since the last normalization).
+                    int maxOffset;
+                    if (anchorIdx < strideIndex.Length - 1)
+                    {
+                        maxOffset = _stride;
+                    }
+                    else
+                    {
+                        // Count nodes from this anchor to end of list.
+                        maxOffset = 0;
+                        var countNode = anchorNode;
+                        while (countNode != null)
+                        {
+                            maxOffset++;
+                            countNode = countNode.Next;
+                        }
+                    }
+
+                    var offset = _random.Next(maxOffset);
+
+                    var node = anchorNode;
+                    for (var i = 0; i < offset && node.Next != null; i++)
+                    {
+                        node = node.Next;
+                    }
+
+                    seg = node.Value;
+                }
+            }
+            else
+            {
+                // Stride index not yet built (all segments in append buffer, not yet normalized).
+                // Fall back: linear walk with a random skip count.
+                var listCount = _list.Count;
+                var skip = _random.Next(listCount);
+                var node = _list.First;
+
+                for (var i = 0; i < skip && node != null; i++)
+                {
+                    node = node.Next;
+                }
+
+                seg = node?.Value;
+            }
+
+            if (seg is { IsRemoved: false })
+            {
+                return seg;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -370,6 +449,7 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
             node = next;
         }
 
+        // todo: check how the values that are after the last stride index value inside linked list - are they considered in algorithms?
         // Second pass: walk live list and collect every Nth node as a stride anchor.
         var liveCount = _list.Count;
         var anchorCount = liveCount == 0 ? 0 : (liveCount + _stride - 1) / _stride;

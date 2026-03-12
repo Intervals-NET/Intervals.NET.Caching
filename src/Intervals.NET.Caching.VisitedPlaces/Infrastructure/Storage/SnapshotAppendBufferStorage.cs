@@ -18,11 +18,11 @@ namespace Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 /// <para><strong>Soft-delete via <see cref="CachedSegment{TRange,TData}.IsRemoved"/>:</strong></para>
 /// <para>
 /// Rather than maintaining a separate <c>_softDeleted</c> collection (which would require
-/// synchronisation between the Background Path and the TTL thread), this implementation
+/// synchronization between the Background Path and the TTL thread), this implementation
 /// delegates soft-delete tracking entirely to <see cref="CachedSegment{TRange,TData}.IsRemoved"/>.
 /// The flag is set atomically by <see cref="CachedSegment{TRange,TData}.MarkAsRemoved"/> and
 /// never reset, so it is safe to read from any thread without a lock.
-/// All read paths (<see cref="FindIntersecting"/>, <see cref="GetAllSegments"/>,
+/// All read paths (<see cref="FindIntersecting"/>, <see cref="GetRandomSegment"/>,
 /// <see cref="Normalize"/>) simply skip segments whose <c>IsRemoved</c> flag is set.
 /// </para>
 /// <para><strong>RCU semantics (Invariant VPC.B.5):</strong>
@@ -36,7 +36,10 @@ namespace Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 internal sealed class SnapshotAppendBufferStorage<TRange, TData> : ISegmentStorage<TRange, TData>
     where TRange : IComparable<TRange>
 {
+    private const int RandomRetryLimit = 8;
+
     private readonly int _appendBufferSize;
+    private readonly Random _random = new();
 
     // Sorted snapshot — published atomically via Volatile.Write on normalization.
     // User Path reads via Volatile.Read.
@@ -188,29 +191,46 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : ISegmentStora
     }
 
     /// <inheritdoc/>
-    public IReadOnlyList<CachedSegment<TRange, TData>> GetAllSegments()
+    /// <remarks>
+    /// <para><strong>Algorithm (O(1) per attempt, bounded retries):</strong></para>
+    /// <list type="number">
+    /// <item><description>Compute the live pool size: <c>snapshot.Length + _appendCount</c>.</description></item>
+    /// <item><description>Pick a random index in that range. Indices in <c>[0, snapshot.Length)</c>
+    ///   map to snapshot entries; indices in <c>[snapshot.Length, pool)</c> map to append buffer entries.</description></item>
+    /// <item><description>If the selected segment is soft-deleted, retry (bounded by <c>RandomRetryLimit</c>).</description></item>
+    /// </list>
+    /// </remarks>
+    public CachedSegment<TRange, TData>? GetRandomSegment()
     {
         var snapshot = Volatile.Read(ref _snapshot);
-        var results = new List<CachedSegment<TRange, TData>>(snapshot.Length + _appendCount);
+        var pool = snapshot.Length + _appendCount;
 
-        foreach (var seg in snapshot)
+        if (pool == 0)
         {
+            return null;
+        }
+
+        for (var attempt = 0; attempt < RandomRetryLimit; attempt++)
+        {
+            var index = _random.Next(pool);
+            CachedSegment<TRange, TData> seg;
+
+            if (index < snapshot.Length)
+            {
+                seg = snapshot[index];
+            }
+            else
+            {
+                seg = _appendBuffer[index - snapshot.Length];
+            }
+
             if (!seg.IsRemoved)
             {
-                results.Add(seg);
+                return seg;
             }
         }
 
-        for (var i = 0; i < _appendCount; i++)
-        {
-            var seg = _appendBuffer[i];
-            if (!seg.IsRemoved)
-            {
-                results.Add(seg);
-            }
-        }
-
-        return results;
+        return null;
     }
 
     /// <summary>

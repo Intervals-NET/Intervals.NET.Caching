@@ -55,12 +55,13 @@ public sealed class MaxSegmentCountPolicyTests
     [Fact]
     public void Evaluate_WhenCountBelowMax_ReturnsNoPressure()
     {
-        // ARRANGE
+        // ARRANGE — max 3; add 2 segments
         var policy = new MaxSegmentCountPolicy<int, int>(3);
         var segments = CreateSegments(2);
+        foreach (var seg in segments) policy.OnSegmentAdded(seg);
 
         // ACT
-        var pressure = policy.Evaluate(segments);
+        var pressure = policy.Evaluate();
 
         // ASSERT
         Assert.Same(NoPressure<int, int>.Instance, pressure);
@@ -69,12 +70,13 @@ public sealed class MaxSegmentCountPolicyTests
     [Fact]
     public void Evaluate_WhenCountEqualsMax_ReturnsNoPressure()
     {
-        // ARRANGE
+        // ARRANGE — max 3; add 3 segments
         var policy = new MaxSegmentCountPolicy<int, int>(3);
         var segments = CreateSegments(3);
+        foreach (var seg in segments) policy.OnSegmentAdded(seg);
 
         // ACT
-        var pressure = policy.Evaluate(segments);
+        var pressure = policy.Evaluate();
 
         // ASSERT
         Assert.Same(NoPressure<int, int>.Instance, pressure);
@@ -83,12 +85,11 @@ public sealed class MaxSegmentCountPolicyTests
     [Fact]
     public void Evaluate_WhenStorageEmpty_ReturnsNoPressure()
     {
-        // ARRANGE
+        // ARRANGE — max 1; no segments added
         var policy = new MaxSegmentCountPolicy<int, int>(1);
-        var segments = CreateSegments(0);
 
         // ACT
-        var pressure = policy.Evaluate(segments);
+        var pressure = policy.Evaluate();
 
         // ASSERT
         Assert.Same(NoPressure<int, int>.Instance, pressure);
@@ -101,12 +102,13 @@ public sealed class MaxSegmentCountPolicyTests
     [Fact]
     public void Evaluate_WhenCountExceedsMax_ReturnsPressureWithIsExceededTrue()
     {
-        // ARRANGE
+        // ARRANGE — max 3; add 4 segments
         var policy = new MaxSegmentCountPolicy<int, int>(3);
         var segments = CreateSegments(4);
+        foreach (var seg in segments) policy.OnSegmentAdded(seg);
 
         // ACT
-        var pressure = policy.Evaluate(segments);
+        var pressure = policy.Evaluate();
 
         // ASSERT
         Assert.True(pressure.IsExceeded);
@@ -116,12 +118,13 @@ public sealed class MaxSegmentCountPolicyTests
     [Fact]
     public void Evaluate_WhenCountExceedsByOne_PressureSatisfiedAfterOneReduce()
     {
-        // ARRANGE
+        // ARRANGE — max 3; add 4 segments
         var policy = new MaxSegmentCountPolicy<int, int>(3);
         var segments = CreateSegments(4);
+        foreach (var seg in segments) policy.OnSegmentAdded(seg);
 
         // ACT
-        var pressure = policy.Evaluate(segments);
+        var pressure = policy.Evaluate();
 
         // ASSERT — pressure is exceeded before reduction
         Assert.True(pressure.IsExceeded);
@@ -134,12 +137,13 @@ public sealed class MaxSegmentCountPolicyTests
     [Fact]
     public void Evaluate_WhenCountExceedsByMany_PressureSatisfiedAfterEnoughReduces()
     {
-        // ARRANGE
+        // ARRANGE — max 3; add 7 segments
         var policy = new MaxSegmentCountPolicy<int, int>(3);
         var segments = CreateSegments(7);
+        foreach (var seg in segments) policy.OnSegmentAdded(seg);
 
         // ACT
-        var pressure = policy.Evaluate(segments);
+        var pressure = policy.Evaluate();
 
         // ASSERT — need 4 reductions (7 - 4 = 3 <= 3)
         Assert.True(pressure.IsExceeded);

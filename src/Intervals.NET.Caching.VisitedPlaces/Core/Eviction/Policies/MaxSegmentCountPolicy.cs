@@ -9,18 +9,31 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Policies;
 /// <typeparam name="TRange">The type representing range boundaries.</typeparam>
 /// <typeparam name="TData">The type of data being cached.</typeparam>
 /// <remarks>
-/// <para><strong>Firing Condition:</strong> <c>allSegments.Count &gt; MaxCount</c></para>
+/// <para><strong>Firing Condition:</strong> <c>_count &gt; MaxCount</c></para>
 /// <para><strong>Pressure Produced:</strong> <see cref="SegmentCountPressure"/>
-/// with <c>currentCount = allSegments.Count</c> and <c>maxCount = MaxCount</c>.</para>
+/// with <c>currentCount = _count</c> and <c>maxCount = MaxCount</c>.</para>
 /// <para>
 /// This is the simplest policy: it limits the total number of independently-cached segments
 /// regardless of their span or data size. Count-based eviction is order-independent —
 /// removing any segment equally satisfies the constraint.
 /// </para>
+/// <para><strong>O(1) Evaluate via incremental state:</strong></para>
+/// <para>
+/// Rather than recomputing the segment count from <c>allSegments.Count</c>, this policy
+/// maintains a running <c>_count</c> updated via <see cref="OnSegmentAdded"/> and
+/// <see cref="OnSegmentRemoved"/>. <see cref="Evaluate"/> reads <c>_count</c> via
+/// <see cref="Volatile.Read"/> for an acquire fence.
+/// </para>
+/// <para><strong>Thread safety:</strong>
+/// <c>_count</c> is updated via <see cref="Interlocked.Increment"/>/<see cref="Interlocked.Decrement"/>
+/// because <see cref="OnSegmentRemoved"/> may be called concurrently from the Background Path
+/// and the TTL actor.</para>
 /// </remarks>
 internal sealed class MaxSegmentCountPolicy<TRange, TData> : IEvictionPolicy<TRange, TData>
     where TRange : IComparable<TRange>
 {
+    private int _count;
+
     /// <summary>
     /// The maximum number of segments allowed in the cache before eviction is triggered.
     /// </summary>
@@ -48,9 +61,35 @@ internal sealed class MaxSegmentCountPolicy<TRange, TData> : IEvictionPolicy<TRa
     }
 
     /// <inheritdoc/>
-    public IEvictionPressure<TRange, TData> Evaluate(IReadOnlyList<CachedSegment<TRange, TData>> allSegments)
+    /// <remarks>
+    /// Increments the running segment count atomically via
+    /// <see cref="Interlocked.Increment(ref int)"/>. Safe to call from the Background Path
+    /// concurrently with TTL-driven <see cref="OnSegmentRemoved"/> calls.
+    /// </remarks>
+    public void OnSegmentAdded(CachedSegment<TRange, TData> segment)
     {
-        var count = allSegments.Count;
+        Interlocked.Increment(ref _count);
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Decrements the running segment count atomically via
+    /// <see cref="Interlocked.Decrement(ref int)"/>. Safe to call concurrently from the
+    /// Background Path (eviction) and the TTL actor.
+    /// </remarks>
+    public void OnSegmentRemoved(CachedSegment<TRange, TData> segment)
+    {
+        Interlocked.Decrement(ref _count);
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// O(1): reads the cached <c>_count</c> via <see cref="Volatile.Read"/> and compares
+    /// it against <c>MaxCount</c>.
+    /// </remarks>
+    public IEvictionPressure<TRange, TData> Evaluate()
+    {
+        var count = Volatile.Read(ref _count);
 
         if (count <= MaxCount)
         {

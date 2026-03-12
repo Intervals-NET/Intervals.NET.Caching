@@ -67,9 +67,8 @@ internal sealed class EvictionEngine<TRange, TData>
     /// </summary>
     /// <param name="policies">
     /// One or more eviction policies. Eviction is triggered when ANY produces an exceeded
-    /// pressure (OR semantics, Invariant VPC.E.1a). Policies implementing
-    /// <see cref="IStatefulEvictionPolicy{TRange,TData}"/> receive lifecycle notifications
-    /// for O(1) evaluation.
+    /// pressure (OR semantics, Invariant VPC.E.1a). All policies receive lifecycle notifications
+    /// (<c>OnSegmentAdded</c>, <c>OnSegmentRemoved</c>) for O(1) evaluation.
     /// </param>
     /// <param name="selector">
     /// Eviction selector; determines candidate ordering and owns per-segment metadata.
@@ -124,7 +123,6 @@ internal sealed class EvictionEngine<TRange, TData>
     /// Evaluates all policies against the current segment collection and, if any constraint
     /// is exceeded, executes the candidate-removal loop.
     /// </summary>
-    /// <param name="allSegments">All currently stored segments (the full candidate pool).</param>
     /// <param name="justStoredSegments">
     /// All segments stored during the current event cycle. These are immune from eviction
     /// (Invariant VPC.E.3) and cannot be returned as candidates.
@@ -140,10 +138,9 @@ internal sealed class EvictionEngine<TRange, TData>
     /// <see cref="IVisitedPlacesCacheDiagnostics.EvictionExecuted"/> after the removal loop completes.
     /// </remarks>
     public IReadOnlyList<CachedSegment<TRange, TData>> EvaluateAndExecute(
-        IReadOnlyList<CachedSegment<TRange, TData>> allSegments,
         IReadOnlyList<CachedSegment<TRange, TData>> justStoredSegments)
     {
-        var pressure = _policyEvaluator.Evaluate(allSegments);
+        var pressure = _policyEvaluator.Evaluate();
         _diagnostics.EvictionEvaluated();
 
         if (!pressure.IsExceeded)
@@ -153,7 +150,7 @@ internal sealed class EvictionEngine<TRange, TData>
 
         _diagnostics.EvictionTriggered();
 
-        var toRemove = _executor.Execute(pressure, allSegments, justStoredSegments);
+        var toRemove = _executor.Execute(pressure, justStoredSegments);
 
         _diagnostics.EvictionExecuted();
 

@@ -170,10 +170,10 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
             if (justStoredSegments.Count > 0)
             {
                 // Step 3+4: Evaluate policies and get candidates to remove (Invariant VPC.E.2a).
+                // The selector samples directly from its injected storage
                 // Eviction diagnostics (EvictionEvaluated, EvictionTriggered, EvictionExecuted)
                 // are fired internally by the engine.
-                var allSegments = _storage.GetAllSegments();
-                var toRemove = _evictionEngine.EvaluateAndExecute(allSegments, justStoredSegments);
+                var toRemove = _evictionEngine.EvaluateAndExecute(justStoredSegments);
 
                 // Step 4 (storage): For each eviction candidate, delegate removal to storage.
                 // ISegmentStorage.Remove atomically claims ownership via MarkAsRemoved() and

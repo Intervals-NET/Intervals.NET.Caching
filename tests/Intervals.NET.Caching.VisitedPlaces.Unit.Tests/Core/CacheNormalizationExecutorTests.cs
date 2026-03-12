@@ -179,9 +179,9 @@ public sealed class CacheNormalizationExecutorTests
     public async Task ExecuteAsync_WhenStorageExceedsLimit_TriggersEviction()
     {
         // ARRANGE — pre-populate storage with 2 segments, limit is 2; adding one more triggers eviction
-        var executor = CreateExecutor(maxSegmentCount: 2);
-        AddToStorage(_storage, 0, 9);
-        AddToStorage(_storage, 20, 29);
+        var (executor, engine) = CreateExecutorWithEngine(maxSegmentCount: 2);
+        AddPreexisting(engine, 0, 9);
+        AddPreexisting(engine, 20, 29);
 
         var chunk = CreateChunk(40, 49);  // This will push count to 3 > 2
 
@@ -230,8 +230,8 @@ public sealed class CacheNormalizationExecutorTests
     public async Task ExecuteAsync_Eviction_JustStoredSegmentIsImmune()
     {
         // ARRANGE — only 1 slot allowed; the just-stored segment should survive
-        var executor = CreateExecutor(maxSegmentCount: 1);
-        var oldSeg = AddToStorage(_storage, 0, 9);
+        var (executor, engine) = CreateExecutorWithEngine(maxSegmentCount: 1);
+        var oldSeg = AddPreexisting(engine, 0, 9);
 
         var chunk = CreateChunk(20, 29);  // will be stored → count=2 > 1 → eviction
 
@@ -245,11 +245,10 @@ public sealed class CacheNormalizationExecutorTests
 
         // ASSERT — the old segment was evicted (not the just-stored one)
         Assert.Equal(1, _storage.Count);
-        var remaining = _storage.GetAllSegments();
-        Assert.DoesNotContain(oldSeg, remaining);
-        // The just-stored segment (range [20,29]) should still be there
-        Assert.Single(remaining);
-        Assert.Equal(20, (int)remaining[0].Range.Start);
+        // Old segment [0,9] must be gone
+        Assert.Empty(_storage.FindIntersecting(TestHelpers.CreateRange(0, 9)));
+        // Just-stored segment [20,29] must still be present
+        Assert.Single(_storage.FindIntersecting(TestHelpers.CreateRange(20, 29)));
     }
 
     #endregion
@@ -312,8 +311,11 @@ public sealed class CacheNormalizationExecutorTests
             evictionEngine,
             _diagnostics);
 
-        // Pre-populate so eviction is triggered (count > 1 after storing)
-        AddToStorage(_storage, 0, 9);
+        // Pre-populate so eviction is triggered (count > 1 after storing).
+        // Must notify the engine so MaxSegmentCountPolicy._count is accurate.
+        var preexisting = AddToStorage(_storage, 0, 9);
+        evictionEngine.InitializeSegment(preexisting);
+
         var chunk = CreateChunk(20, 29);
 
         var request = CreateRequest(
@@ -365,12 +367,16 @@ public sealed class CacheNormalizationExecutorTests
 
     #region Helpers — Factories
 
-    private CacheNormalizationExecutor<int, int, IntegerFixedStepDomain> CreateExecutor(
-        int maxSegmentCount)
+    private (CacheNormalizationExecutor<int, int, IntegerFixedStepDomain> Executor,
+             EvictionEngine<int, int> Engine)
+        CreateExecutorWithEngine(int maxSegmentCount)
     {
+        var selector = new LruEvictionSelector<int, int>();
+        ((IStorageAwareEvictionSelector<int, int>)selector).Initialize(_storage);
+
         var evictionEngine = new EvictionEngine<int, int>(
             [new MaxSegmentCountPolicy<int, int>(maxSegmentCount)],
-            new LruEvictionSelector<int, int>(),
+            selector,
             _diagnostics);
 
         var executor = new CacheNormalizationExecutor<int, int, IntegerFixedStepDomain>(
@@ -378,7 +384,24 @@ public sealed class CacheNormalizationExecutorTests
             evictionEngine,
             _diagnostics);
 
-        return executor;
+        return (executor, evictionEngine);
+    }
+
+    private CacheNormalizationExecutor<int, int, IntegerFixedStepDomain> CreateExecutor(
+        int maxSegmentCount) => CreateExecutorWithEngine(maxSegmentCount).Executor;
+
+    /// <summary>
+    /// Adds a segment to both <see cref="_storage"/> and the eviction engine's policy tracking
+    /// (simulates a segment that was stored in a prior event cycle).
+    /// </summary>
+    private CachedSegment<int, int> AddPreexisting(
+        EvictionEngine<int, int> engine,
+        int start,
+        int end)
+    {
+        var seg = AddToStorage(_storage, start, end);
+        engine.InitializeSegment(seg);
+        return seg;
     }
 
     private static CacheNormalizationRequest<int, int> CreateRequest(
@@ -422,7 +445,6 @@ public sealed class CacheNormalizationExecutorTests
         public void UpdateMetadata(IReadOnlyList<CachedSegment<int, int>> usedSegments) { }
 
         public bool TrySelectCandidate(
-            IReadOnlyList<CachedSegment<int, int>> segments,
             IReadOnlySet<CachedSegment<int, int>> immuneSegments,
             out CachedSegment<int, int> candidate) =>
             throw new InvalidOperationException("Simulated selector failure.");
@@ -442,7 +464,7 @@ public sealed class CacheNormalizationExecutorTests
 
         public bool Remove(CachedSegment<int, int> segment) => false;
 
-        public IReadOnlyList<CachedSegment<int, int>> GetAllSegments() => [];
+        public CachedSegment<int, int>? GetRandomSegment() => null;
     }
 
     #endregion
