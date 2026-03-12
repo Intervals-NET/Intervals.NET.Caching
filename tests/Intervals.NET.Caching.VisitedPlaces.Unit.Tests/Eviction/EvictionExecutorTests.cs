@@ -30,7 +30,7 @@ public sealed class EvictionExecutorTests
         var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(pressure, justStoredSegments: []);
+        var toRemove = executor.Execute(pressure, justStoredSegments: []).ToList();
 
         // ASSERT — exactly 2 removed, pressure satisfied
         Assert.Equal(2, toRemove.Count);
@@ -47,7 +47,7 @@ public sealed class EvictionExecutorTests
         var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(pressure, justStoredSegments: []);
+        var toRemove = executor.Execute(pressure, justStoredSegments: []).ToList();
 
         // ASSERT
         Assert.Single(toRemove);
@@ -71,7 +71,7 @@ public sealed class EvictionExecutorTests
         var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(pressure, justStoredSegments: []);
+        var toRemove = executor.Execute(pressure, justStoredSegments: []).ToList();
 
         // ASSERT — removed 2 segments (30 - 10 = 20 > 15, 20 - 10 = 10 <= 15)
         Assert.Equal(2, toRemove.Count);
@@ -96,7 +96,7 @@ public sealed class EvictionExecutorTests
         var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(pressure, justStoredSegments: []);
+        var toRemove = executor.Execute(pressure, justStoredSegments: []).ToList();
 
         // ASSERT — the old (LRU) segment is removed
         Assert.Single(toRemove);
@@ -117,7 +117,7 @@ public sealed class EvictionExecutorTests
         var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(pressure, justStoredSegments: []);
+        var toRemove = executor.Execute(pressure, justStoredSegments: []).ToList();
 
         // ASSERT — the oldest (FIFO) segment is removed
         Assert.Single(toRemove);
@@ -137,7 +137,7 @@ public sealed class EvictionExecutorTests
         var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(pressure, justStoredSegments: []);
+        var toRemove = executor.Execute(pressure, justStoredSegments: []).ToList();
 
         // ASSERT — smallest span removed
         Assert.Single(toRemove);
@@ -161,7 +161,7 @@ public sealed class EvictionExecutorTests
         var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(pressure, justStoredSegments: [justStored]);
+        var toRemove = executor.Execute(pressure, justStoredSegments: [justStored]).ToList();
 
         // ASSERT — old is removed, justStored is immune
         Assert.Single(toRemove);
@@ -181,7 +181,7 @@ public sealed class EvictionExecutorTests
         var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(pressure, justStoredSegments: [seg]);
+        var toRemove = executor.Execute(pressure, justStoredSegments: [seg]).ToList();
 
         // ASSERT — no eviction possible
         Assert.Empty(toRemove);
@@ -203,7 +203,7 @@ public sealed class EvictionExecutorTests
         var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(pressure, justStoredSegments: [just1, just2]);
+        var toRemove = executor.Execute(pressure, justStoredSegments: [just1, just2]).ToList();
 
         // ASSERT — old1 and old2 removed, just1 and just2 immune
         Assert.Equal(2, toRemove.Count);
@@ -227,7 +227,7 @@ public sealed class EvictionExecutorTests
         var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(pressure, justStoredSegments: [small]);
+        var toRemove = executor.Execute(pressure, justStoredSegments: [small]).ToList();
 
         // ASSERT — medium removed (next smallest after immune small)
         Assert.Single(toRemove);
@@ -251,7 +251,7 @@ public sealed class EvictionExecutorTests
         var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(composite, justStoredSegments: []);
+        var toRemove = executor.Execute(composite, justStoredSegments: []).ToList();
 
         // ASSERT — 2 removed (satisfies both: 2<=2 and 2<=3)
         Assert.Equal(2, toRemove.Count);
@@ -277,7 +277,7 @@ public sealed class EvictionExecutorTests
         var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(pressure, justStoredSegments: [justStored]);
+        var toRemove = executor.Execute(pressure, justStoredSegments: [justStored]).ToList();
 
         // ASSERT — all eligible candidates removed (even though pressure still exceeded)
         Assert.Equal(2, toRemove.Count);
@@ -315,7 +315,7 @@ public sealed class EvictionExecutorTests
         var executor = CreateExecutorWithStorage(selector, segments);
 
         // ACT
-        var toRemove = executor.Execute(pressure, justStoredSegments: []);
+        var toRemove = executor.Execute(pressure, justStoredSegments: []).ToList();
 
         // ASSERT — correctly removes 2 segments (small + medium) to satisfy constraint.
         // Sampling with SampleSize=32 over 3 distinct-time segments reliably finds the LRU worst.
@@ -338,7 +338,7 @@ public sealed class EvictionExecutorTests
         var executor = CreateExecutorWithStorage(selector, []);
 
         // ACT
-        var toRemove = executor.Execute(pressure, justStoredSegments: []);
+        var toRemove = executor.Execute(pressure, justStoredSegments: []).ToList();
 
         // ASSERT
         Assert.Empty(toRemove);

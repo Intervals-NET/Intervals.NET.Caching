@@ -6,7 +6,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 /// <summary>
 /// Abstract base class for sampling-based eviction selectors.
 /// Implements the <see cref="IEvictionSelector{TRange,TData}.TrySelectCandidate"/> contract
-/// using random sampling via <see cref="ISegmentStorage{TRange,TData}.GetRandomSegment"/>,
+/// using random sampling via <see cref="ISegmentStorage{TRange,TData}.TryGetRandomSegment"/>,
 /// delegating only the comparison logic to derived classes.
 /// </summary>
 /// <typeparam name="TRange">The type representing range boundaries.</typeparam>
@@ -89,7 +89,7 @@ internal abstract class SamplingEvictionSelector<TRange, TData>
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Calls <see cref="ISegmentStorage{TRange,TData}.GetRandomSegment"/> up to
+    /// Calls <see cref="ISegmentStorage{TRange,TData}.TryGetRandomSegment"/> up to
     /// <see cref="SampleSize"/> times, skipping any segment that is in
     /// <paramref name="immuneSegments"/> or is soft-deleted (<see langword="null"/> return from
     /// storage), and returns the worst candidate according to <see cref="IsWorse"/>.
@@ -108,7 +108,7 @@ internal abstract class SamplingEvictionSelector<TRange, TData>
 
         for (var i = 0; i < SampleSize; i++)
         {
-            var segment = storage.GetRandomSegment();
+            var segment = storage.TryGetRandomSegment();
 
             if (segment is null)
             {

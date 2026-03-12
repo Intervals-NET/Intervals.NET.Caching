@@ -22,8 +22,8 @@ namespace Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 /// delegates soft-delete tracking entirely to <see cref="CachedSegment{TRange,TData}.IsRemoved"/>.
 /// The flag is set atomically by <see cref="CachedSegment{TRange,TData}.MarkAsRemoved"/> and
 /// never reset, so it is safe to read from any thread without a lock.
-/// All read paths (<see cref="FindIntersecting"/>, <see cref="GetRandomSegment"/>,
-/// <see cref="Normalize"/>) simply skip segments whose <c>IsRemoved</c> flag is set.
+    /// All read paths (<see cref="FindIntersecting"/>, <see cref="TryGetRandomSegment"/>,
+    /// <see cref="Normalize"/>) simply skip segments whose <c>IsRemoved</c> flag is set.
 /// </para>
 /// <para><strong>RCU semantics (Invariant VPC.B.5):</strong>
 /// User Path threads read a stable snapshot via <c>Volatile.Read</c>. New snapshots are published
@@ -163,7 +163,7 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : ISegmentStora
     /// <inheritdoc/>
     /// <remarks>
     /// <para>
-    /// Calls <see cref="CachedSegment{TRange,TData}.MarkAsRemoved"/> to atomically transition
+    /// Calls <see cref="CachedSegment{TRange,TData}.TryMarkAsRemoved"/> to atomically transition
     /// the segment to the removed state. If this is the first removal of the segment (the flag
     /// was not already set), <c>_count</c> is decremented and <see langword="true"/> is returned.
     /// Subsequent calls for the same segment are no-ops (idempotent) and return
@@ -175,13 +175,13 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : ISegmentStora
     /// <see cref="CachedSegment{TRange,TData}.IsRemoved"/> flag.
     /// </para>
     /// <para><strong>Thread safety:</strong> Safe to call concurrently from the Background Path
-    /// (eviction) and the TTL thread. <see cref="CachedSegment{TRange,TData}.MarkAsRemoved"/>
+    /// (eviction) and the TTL thread. <see cref="CachedSegment{TRange,TData}.TryMarkAsRemoved"/>
     /// uses <c>Interlocked.CompareExchange</c>; <c>_count</c> uses <c>Interlocked.Decrement</c>.
     /// </para>
     /// </remarks>
-    public bool Remove(CachedSegment<TRange, TData> segment)
+    public bool TryRemove(CachedSegment<TRange, TData> segment)
     {
-        if (segment.MarkAsRemoved())
+        if (segment.TryMarkAsRemoved())
         {
             Interlocked.Decrement(ref _count);
             return true;
@@ -200,7 +200,7 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : ISegmentStora
     /// <item><description>If the selected segment is soft-deleted, retry (bounded by <c>RandomRetryLimit</c>).</description></item>
     /// </list>
     /// </remarks>
-    public CachedSegment<TRange, TData>? GetRandomSegment()
+    public CachedSegment<TRange, TData>? TryGetRandomSegment()
     {
         var snapshot = Volatile.Read(ref _snapshot);
         var pool = snapshot.Length + _appendCount;

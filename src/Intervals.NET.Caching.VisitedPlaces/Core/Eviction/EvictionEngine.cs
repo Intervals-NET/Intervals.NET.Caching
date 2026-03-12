@@ -18,14 +18,13 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 /// </description></item>
 /// <item><description>
 ///   Notifies the <see cref="EvictionPolicyEvaluator{TRange,TData}"/> of segment lifecycle
-///   events via <see cref="InitializeSegment"/>, <see cref="OnSegmentRemoved"/>, and
-///   <see cref="OnSegmentsRemoved"/>, keeping stateful policy aggregates consistent with
-///   storage state.
+///   events via <see cref="InitializeSegment"/> and <see cref="OnSegmentRemoved"/>,
+///   keeping stateful policy aggregates consistent with storage state.
 /// </description></item>
 /// <item><description>
 ///   Evaluates all policies and executes the constraint satisfaction loop via
-///   <see cref="EvaluateAndExecute"/>. Returns the list of segments the processor must remove
-///   from storage, firing eviction-specific diagnostics internally.
+///   <see cref="EvaluateAndExecute"/>. Returns an enumerable of segments the processor must
+///   remove from storage, firing eviction-specific diagnostics internally.
 /// </description></item>
 /// </list>
 /// <para><strong>Storage ownership:</strong></para>
@@ -128,16 +127,18 @@ internal sealed class EvictionEngine<TRange, TData>
     /// (Invariant VPC.E.3) and cannot be returned as candidates.
     /// </param>
     /// <returns>
-    /// The segments that the processor must remove from storage, in selection order.
-    /// Empty when no policy constraint is exceeded or all candidates are immune
-    /// (Invariant VPC.E.3a).
+    /// An <see cref="IEnumerable{T}"/> of segments that the processor must remove from storage,
+    /// yielded in selection order. Empty when no policy constraint is exceeded or all candidates
+    /// are immune (Invariant VPC.E.3a).
     /// </returns>
     /// <remarks>
-    /// Fires <see cref="IVisitedPlacesCacheDiagnostics.EvictionEvaluated"/> unconditionally,
-    /// <see cref="IVisitedPlacesCacheDiagnostics.EvictionTriggered"/> when at least one policy fires, and
-    /// <see cref="IVisitedPlacesCacheDiagnostics.EvictionExecuted"/> after the removal loop completes.
+    /// Fires <see cref="IVisitedPlacesCacheDiagnostics.EvictionEvaluated"/> unconditionally and
+    /// <see cref="IVisitedPlacesCacheDiagnostics.EvictionTriggered"/> when at least one policy fires.
+    /// <see cref="IVisitedPlacesCacheDiagnostics.EvictionExecuted"/> is fired by the consumer
+    /// (i.e. <see cref="Background.CacheNormalizationExecutor{TRange,TData,TDomain}"/>) after the
+    /// full enumeration completes, so it reflects actual removal work rather than loop entry.
     /// </remarks>
-    public IReadOnlyList<CachedSegment<TRange, TData>> EvaluateAndExecute(
+    public IEnumerable<CachedSegment<TRange, TData>> EvaluateAndExecute(
         IReadOnlyList<CachedSegment<TRange, TData>> justStoredSegments)
     {
         var pressure = _policyEvaluator.Evaluate();
@@ -150,40 +151,17 @@ internal sealed class EvictionEngine<TRange, TData>
 
         _diagnostics.EvictionTriggered();
 
-        var toRemove = _executor.Execute(pressure, justStoredSegments);
-
-        _diagnostics.EvictionExecuted();
-
-        return toRemove;
-    }
-
-    /// <summary>
-    /// Notifies stateful policies that a batch of segments has been removed from storage.
-    /// Called by the processor in Step 4 after all <c>storage.Remove</c> calls complete.
-    /// </summary>
-    /// <param name="removedSegments">
-    /// The segments that were just removed from storage. Must be the same list returned by
-    /// <see cref="EvaluateAndExecute"/> in the same event cycle.
-    /// </param>
-    public void OnSegmentsRemoved(IReadOnlyList<CachedSegment<TRange, TData>> removedSegments)
-    {
-        foreach (var segment in removedSegments)
-        {
-            _policyEvaluator.OnSegmentRemoved(segment);
-        }
+        return _executor.Execute(pressure, justStoredSegments);
     }
 
     /// <summary>
     /// Notifies stateful policies that a single segment has been removed from storage.
-    /// Prefer this overload over <see cref="OnSegmentsRemoved"/> when only one segment is
-    /// removed per call site to avoid allocating a temporary collection.
     /// </summary>
     /// <param name="segment">The segment that was just removed from storage.</param>
     /// <remarks>
-    /// Called by <c>TtlExpirationExecutor</c> after a single TTL expiration, and by
+    /// Called by <c>TtlExpirationExecutor</c> after a single TTL expiration and by
     /// <c>CacheNormalizationExecutor</c> inside the per-segment eviction loop (Step 4).
-    /// Using this overload eliminates the intermediate <c>List&lt;CachedSegment&gt;</c>
-    /// allocation that the batch variant would require in those call sites.
+    /// Using the single-value overload eliminates any intermediate collection allocation.
     /// </remarks>
     public void OnSegmentRemoved(CachedSegment<TRange, TData> segment)
     {

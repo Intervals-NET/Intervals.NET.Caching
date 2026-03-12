@@ -14,16 +14,24 @@ namespace Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 /// <para><strong>Data Structure:</strong></para>
 /// <list type="bullet">
 /// <item><description><c>_list</c> — doubly-linked list sorted by segment range start; mutated on Background Path only</description></item>
-/// <item><description><c>_strideIndex</c> — array of every Nth node ("stride anchors"); published via <c>Volatile.Write</c></description></item>
-/// <item><description><c>_strideAppendBuffer</c> — fixed-size buffer collecting newly-added segments before stride normalization</description></item>
+/// <item><description><c>_strideIndex</c> — array of every Nth <see cref="LinkedListNode{T}"/> ("stride anchors"); published via <c>Volatile.Write</c></description></item>
+/// <item><description><c>_addsSinceLastNormalization</c> — counter of segments added since the last stride normalization; triggers normalization when it reaches the append buffer size threshold</description></item>
 /// </list>
 /// <para><strong>Soft-delete via <see cref="CachedSegment{TRange,TData}.IsRemoved"/>:</strong></para>
 /// <para>
 /// Rather than maintaining a separate <c>_softDeleted</c> collection, this implementation uses
 /// <see cref="CachedSegment{TRange,TData}.IsRemoved"/> as the primary soft-delete filter.
 /// The flag is set atomically by <see cref="CachedSegment{TRange,TData}.MarkAsRemoved"/>.
-/// Removed nodes are physically unlinked from <c>_list</c> during <see cref="NormalizeStrideIndex"/>.
+/// Removed nodes are physically unlinked from <c>_list</c> during <see cref="NormalizeStrideIndex"/>,
+/// but only AFTER the new stride index is published (to preserve list integrity for any
+/// concurrent User Path walk still using the old stride index).
 /// All read paths skip segments whose <c>IsRemoved</c> flag is set without needing a shared collection.
+/// </para>
+/// <para><strong>No <c>_nodeMap</c>:</strong></para>
+/// <para>
+/// The stride index stores <see cref="LinkedListNode{T}"/> references directly, eliminating the
+/// need for a separate segment-to-node dictionary. Callers use <c>anchorNode.List != null</c>
+/// to verify the node is still linked before walking from it.
 /// </para>
 /// <para><strong>RCU semantics (Invariant VPC.B.5):</strong>
 /// User Path threads read a stable stride index via <c>Volatile.Read</c>. New stride index arrays
@@ -41,26 +49,20 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
     private const int RandomRetryLimit = 8;
 
     private readonly int _stride;
-    private readonly int _strideAppendBufferSize;
+    private readonly int _appendBufferSize;
     private readonly Random _random = new();
 
     // Sorted linked list — mutated on Background Path only.
     private readonly LinkedList<CachedSegment<TRange, TData>> _list = [];
 
-    // Stride index: every Nth node in the sorted list as a navigation anchor.
+    // Stride index: every Nth LinkedListNode in the sorted list as a navigation anchor.
+    // Stores nodes directly — no separate segment-to-node map needed.
     // Published atomically via Volatile.Write; read via Volatile.Read on the User Path.
-    private CachedSegment<TRange, TData>[] _strideIndex = [];
+    private LinkedListNode<CachedSegment<TRange, TData>>[] _strideIndex = [];
 
-    // Maps each segment to its linked list node for O(1) removal.
-    // Maintained on Background Path only.
-    // todo: I don't quite understand why do we need this map that actually multiplies memory usage. Why stride index can not reference LinkedListNode instead of segment?
-    private readonly Dictionary<CachedSegment<TRange, TData>, LinkedListNode<CachedSegment<TRange, TData>>>
-        _nodeMap = new(ReferenceEqualityComparer.Instance);
-
-    // Stride append buffer: newly-added segments not yet reflected in the stride index.
-    // todo do we really need this separate buffer? Inserts are easy - stride index still can be removed when the counter equals the stride index gap.
-    private readonly CachedSegment<TRange, TData>[] _strideAppendBuffer;
-    private int _strideAppendCount;
+    // Counter of segments added since the last stride normalization.
+    // Normalization is triggered when this reaches _appendBufferSize.
+    private int _addsSinceLastNormalization;
 
     // Total count of live (non-removed) segments.
     // Decremented by Remove (which may be called from the TTL thread) via Interlocked.Decrement.
@@ -72,8 +74,8 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
     /// append buffer size and stride values.
     /// </summary>
     /// <param name="appendBufferSize">
-    /// Number of segments accumulated in the stride append buffer before stride index
-    /// normalization is triggered. Must be &gt;= 1. Default: 8.
+    /// Number of segments added before stride index normalization is triggered.
+    /// Must be &gt;= 1. Default: 8.
     /// </param>
     /// <param name="stride">
     /// Distance between stride anchors (default 16). Must be &gt;= 1.
@@ -95,8 +97,7 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
                 "Stride must be greater than or equal to 1.");
         }
 
-        _strideAppendBufferSize = appendBufferSize;
-        _strideAppendBuffer = new CachedSegment<TRange, TData>[appendBufferSize];
+        _appendBufferSize = appendBufferSize;
         _stride = stride;
     }
 
@@ -105,11 +106,11 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
 
     /// <inheritdoc/>
     /// <remarks>
-    /// <para><strong>Algorithm (O(log(n/N) + k + N + m)):</strong></para>
+    /// <para><strong>Algorithm (O(log(n/N) + k + N)):</strong></para>
     /// <list type="number">
     /// <item><description>Acquire stable stride index via <c>Volatile.Read</c></description></item>
-    /// <item><description>Binary-search stride index for the anchor just before <paramref name="range"/>.Start</description></item>
-    /// <item><description>Walk the list forward from the anchor, collecting intersecting non-removed segments (checked via <see cref="CachedSegment{TRange,TData}.IsRemoved"/>)</description></item>
+    /// <item><description>Binary-search stride index for the anchor just before <paramref name="range"/>.Start (via <see cref="FindLastAnchorAtOrBefore"/>)</description></item>
+    /// <item><description>Walk the list forward from the anchor node, collecting intersecting non-removed segments (checked via <see cref="CachedSegment{TRange,TData}.IsRemoved"/>)</description></item>
     /// </list>
     /// </remarks>
     public IReadOnlyList<CachedSegment<TRange, TData>> FindIntersecting(Range<TRange> range)
@@ -118,49 +119,28 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
 
         var results = new List<CachedSegment<TRange, TData>>();
 
-        // todo try to deduplicate search mechanism
-        // Binary search stride index: find the last anchor whose Start <= range.End
-        // (the anchor just before or at the query range).
-        // We want the rightmost anchor whose Start.Value <= range.End.Value.
+        // Binary search: find the last anchor whose Start <= range.End, then step back one
+        // more to ensure we don't miss segments that start before range.Start but overlap it.
         LinkedListNode<CachedSegment<TRange, TData>>? startNode = null;
 
         if (strideIndex.Length > 0)
         {
-            var lo = 0;
-            var hi = strideIndex.Length - 1;
+            var hi = FindLastAnchorAtOrBefore(strideIndex, range.End.Value);
 
-            // Find the rightmost anchor where Start.Value <= range.End.Value.
-            // Because the stride index is sorted ascending by Start.Value, we binary-search for
-            // the largest index where anchor.Start.Value <= range.End.Value.
-            while (lo <= hi)
-            {
-                var mid = lo + (hi - lo) / 2;
-                if (strideIndex[mid].Range.Start.Value.CompareTo(range.End.Value) <= 0)
-                {
-                    lo = mid + 1;
-                }
-                else
-                {
-                    hi = mid - 1;
-                }
-            }
-
-            // hi is now the rightmost anchor with Start <= range.End.
-            // Step back one more to ensure we start at or just before range.Start
-            // (the anchor may cover part of range).
+            // Step back one more so we don't miss segments whose start is before range.Start.
             var anchorIdx = hi > 0 ? hi - 1 : 0;
             if (hi >= 0)
             {
-                // Look up the anchor segment in the node map to get the linked-list node.
-                var anchorSeg = strideIndex[anchorIdx];
-                if (_nodeMap.TryGetValue(anchorSeg, out var anchorNode))
+                var anchorNode = strideIndex[anchorIdx];
+                // Guard: node may have been physically unlinked since the old stride index was read.
+                if (anchorNode.List != null)
                 {
                     startNode = anchorNode;
                 }
             }
         }
 
-        // Walk linked list from the start node (or from head if no anchor found).
+        // Walk linked list from the start node (or from head if no usable anchor found).
         var node = startNode ?? _list.First;
 
         while (node != null)
@@ -182,10 +162,9 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
             node = node.Next;
         }
 
-        // NOTE: The stride append buffer does NOT need to be scanned separately.
-        // All segments added via Add() are inserted into _list immediately (InsertSorted).
-        // The stride append buffer only tracks which list entries haven't been reflected
-        // in the stride index yet — they are already covered by the list walk above.
+        // NOTE: All segments added via Add() are inserted into _list immediately (InsertSorted).
+        // _addsSinceLastNormalization only tracks the normalization trigger — all live segments
+        // are already in _list and covered by the walk above.
 
         return results;
     }
@@ -196,12 +175,10 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
         // Insert into sorted position in the linked list.
         InsertSorted(segment);
 
-        // Write to stride append buffer.
-        _strideAppendBuffer[_strideAppendCount] = segment;
-        _strideAppendCount++;
+        _addsSinceLastNormalization++;
         Interlocked.Increment(ref _count);
 
-        if (_strideAppendCount == _strideAppendBufferSize)
+        if (_addsSinceLastNormalization == _appendBufferSize)
         {
             NormalizeStrideIndex();
         }
@@ -210,7 +187,7 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
     /// <inheritdoc/>
     /// <remarks>
     /// <para>
-    /// Calls <see cref="CachedSegment{TRange,TData}.MarkAsRemoved"/> to atomically transition
+    /// Calls <see cref="CachedSegment{TRange,TData}.TryMarkAsRemoved"/> to atomically transition
     /// the segment to the removed state. If this is the first removal of the segment, <c>_count</c>
     /// is decremented and <see langword="true"/> is returned. Subsequent calls are no-ops
     /// (idempotent) and return <see langword="false"/>.
@@ -221,15 +198,13 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
     /// <see cref="CachedSegment{TRange,TData}.IsRemoved"/> flag.
     /// </para>
     /// <para><strong>Thread safety:</strong> Safe to call concurrently from the Background Path
-    /// (eviction) and the TTL thread. <see cref="CachedSegment{TRange,TData}.MarkAsRemoved"/>
+    /// (eviction) and the TTL thread. <see cref="CachedSegment{TRange,TData}.TryMarkAsRemoved"/>
     /// uses <c>Interlocked.CompareExchange</c>; <c>_count</c> uses <c>Interlocked.Decrement</c>.
     /// </para>
     /// </remarks>
-    /// todo: consider renaming to TryRemove
-    public bool Remove(CachedSegment<TRange, TData> segment)
+    public bool TryRemove(CachedSegment<TRange, TData> segment)
     {
-        // todo: consider renaming to TryMarkAsRemoved
-        if (segment.MarkAsRemoved())
+        if (segment.TryMarkAsRemoved())
         {
             Interlocked.Decrement(ref _count);
             return true;
@@ -244,7 +219,7 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
     /// <list type="number">
     /// <item><description>
     ///   If <c>_strideIndex</c> is non-empty, pick a random anchor index and a random offset
-    ///   within the stride gap, then walk forward from the anchor to the selected node — O(stride).
+    ///   within the stride gap, then walk forward from the anchor node to the selected node — O(stride).
     /// </description></item>
     /// <item><description>
     ///   If <c>_strideIndex</c> is empty but <c>_list</c> is non-empty (segments were added but
@@ -256,7 +231,7 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
     /// </description></item>
     /// </list>
     /// </remarks>
-    public CachedSegment<TRange, TData>? GetRandomSegment()
+    public CachedSegment<TRange, TData>? TryGetRandomSegment()
     {
         if (_list.Count == 0)
         {
@@ -274,9 +249,10 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
                 // (or to list-end for the last anchor, which may have more than _stride nodes
                 // when new segments have been appended after the last normalization).
                 var anchorIdx = _random.Next(strideIndex.Length);
+                var anchorNode = strideIndex[anchorIdx];
 
-                var anchorSeg = strideIndex[anchorIdx];
-                if (_nodeMap.TryGetValue(anchorSeg, out var anchorNode))
+                // Guard: node may have been physically unlinked since the old stride index was read.
+                if (anchorNode.List != null)
                 {
                     // Determine the maximum reachable offset from this anchor.
                     // For interior anchors, offset is bounded by _stride (distance to next anchor).
@@ -312,7 +288,7 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
             }
             else
             {
-                // Stride index not yet built (all segments in append buffer, not yet normalized).
+                // Stride index not yet built (all segments added but not yet normalized).
                 // Fall back: linear walk with a random skip count.
                 var listCount = _list.Count;
                 var skip = _random.Next(listCount);
@@ -336,51 +312,73 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
     }
 
     /// <summary>
-    /// Inserts a segment into the linked list in sorted order by range start value.
-    /// Also registers the node in <see cref="_nodeMap"/> for O(1) lookup.
+    /// Binary-searches the stride index for the rightmost anchor whose
+    /// <c>Range.Start.Value</c> is less than or equal to <paramref name="value"/>.
+    /// </summary>
+    /// <param name="strideIndex">The stride index to search (must be non-empty).</param>
+    /// <param name="value">The upper bound value to compare against each anchor's range start.</param>
+    /// <returns>
+    /// The index of the rightmost anchor where <c>Start.Value &lt;= value</c>,
+    /// or <c>-1</c> if all anchors have a start greater than <paramref name="value"/>.
+    /// </returns>
+    private static int FindLastAnchorAtOrBefore(
+        LinkedListNode<CachedSegment<TRange, TData>>[] strideIndex,
+        TRange value)
+    {
+        var lo = 0;
+        var hi = strideIndex.Length - 1;
+
+        while (lo <= hi)
+        {
+            var mid = lo + (hi - lo) / 2;
+            if (strideIndex[mid].Value.Range.Start.Value.CompareTo(value) <= 0)
+            {
+                lo = mid + 1;
+            }
+            else
+            {
+                hi = mid - 1;
+            }
+        }
+
+        // hi is the rightmost index where Start.Value <= value, or -1 if none.
+        return hi;
+    }
+
+    /// <summary>
+    /// Inserts a segment into the linked list in sorted order by range start value,
+    /// using the stride index for an O(log(n/N)) anchor lookup followed by an O(N) walk.
     /// </summary>
     private void InsertSorted(CachedSegment<TRange, TData> segment)
     {
         if (_list.Count == 0)
         {
-            var node = _list.AddFirst(segment);
-            _nodeMap[segment] = node;
+            _list.AddFirst(segment);
             return;
         }
 
-        // Use stride index to find a close insertion point (O(log(n/N)) search + O(N) walk).
+        // Use stride index to find a close insertion point.
         var strideIndex = Volatile.Read(ref _strideIndex);
         LinkedListNode<CachedSegment<TRange, TData>>? insertAfter = null;
 
         if (strideIndex.Length > 0)
         {
-            // Binary search: find last anchor with Start.Value <= segment.Range.Start.Value.
-            var lo = 0;
-            var hi = strideIndex.Length - 1;
-            while (lo <= hi)
-            {
-                var mid = lo + (hi - lo) / 2;
-                if (strideIndex[mid].Range.Start.Value.CompareTo(segment.Range.Start.Value) <= 0)
-                {
-                    lo = mid + 1;
-                }
-                else
-                {
-                    hi = mid - 1;
-                }
-            }
+            var hi = FindLastAnchorAtOrBefore(strideIndex, segment.Range.Start.Value);
 
-            if (hi >= 0 && _nodeMap.TryGetValue(strideIndex[hi], out var anchorNode))
+            if (hi >= 0)
             {
-                insertAfter = anchorNode;
+                var anchorNode = strideIndex[hi];
+                // Guard: node may have been physically unlinked.
+                if (anchorNode.List != null)
+                {
+                    insertAfter = anchorNode;
+                }
             }
         }
 
         // Walk forward from anchor (or from head) to find insertion position.
         var current = insertAfter ?? _list.First;
 
-        // If insertAfter is set, we start walking from that node.
-        // Walk until we find the first node with Start > segment.Range.Start.
         if (insertAfter != null)
         {
             // Walk forward while next node starts before or at our value.
@@ -390,9 +388,7 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
                 current = current.Next;
             }
 
-            // Now insert after current.
-            var newNode = _list.AddAfter(current, segment);
-            _nodeMap[segment] = newNode;
+            _list.AddAfter(current, segment);
         }
         else
         {
@@ -401,8 +397,7 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
                 current.Value.Range.Start.Value.CompareTo(segment.Range.Start.Value) > 0)
             {
                 // Insert before the first node.
-                var newNode = _list.AddBefore(current, segment);
-                _nodeMap[segment] = newNode;
+                _list.AddBefore(current, segment);
             }
             else
             {
@@ -413,68 +408,80 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : ISegmentStor
                     current = current.Next;
                 }
 
-                var newNode = _list.AddAfter(current, segment);
-                _nodeMap[segment] = newNode;
+                _list.AddAfter(current, segment);
             }
         }
     }
 
     /// <summary>
-    /// Rebuilds the stride index by walking the live linked list, physically removing nodes
-    /// whose <see cref="CachedSegment{TRange,TData}.IsRemoved"/> flag is set, collecting every
-    /// Nth live node as a stride anchor, and atomically publishing the new stride index via
-    /// <c>Volatile.Write</c>.
+    /// Rebuilds the stride index by walking the live linked list, collecting every Nth live
+    /// node as a stride anchor, atomically publishing the new stride index via
+    /// <c>Volatile.Write</c>, and only then physically unlinking removed nodes from the list.
     /// </summary>
     /// <remarks>
     /// <para><strong>Algorithm:</strong> O(n) list traversal + O(n/N) stride array allocation.</para>
     /// <para>
-    /// Resets <c>_strideAppendCount</c> to 0 and publishes the new stride index atomically.
-    /// Removed segments are physically unlinked from <c>_list</c> and evicted from <c>_nodeMap</c>
-    /// during this pass, reclaiming memory.
+    /// Resets <c>_addsSinceLastNormalization</c> to 0 and publishes the new stride index atomically.
+    /// Removed segments are physically unlinked from <c>_list</c> after the new stride index
+    /// is published, reclaiming memory.
+    /// </para>
+    /// <para><strong>Order matters for thread safety (Invariant VPC.B.5):</strong></para>
+    /// <para>
+    /// The new stride index is built and published BEFORE dead nodes are physically unlinked.
+    /// This ensures that any User Path thread reading the OLD stride index before the swap
+    /// still finds all anchor nodes present in <c>_list</c> (their <c>Next</c> pointers intact).
+    /// If dead nodes were unlinked first, a concurrent <c>FindIntersecting</c> walk starting
+    /// from a stale anchor could truncate prematurely when it hits a node whose <c>Next</c>
+    /// was set to <see langword="null"/> by the physical removal.
     /// </para>
     /// </remarks>
     private void NormalizeStrideIndex()
     {
-        // First pass: physically unlink removed nodes from the list.
+        // First pass: walk the full list (including removed nodes), collecting every Nth LIVE
+        // node as a stride anchor. Removed nodes are skipped for anchor selection but are NOT
+        // physically unlinked yet — their Next pointers must remain valid for any concurrent
+        // User Path walk still using the old stride index.
+        var anchorBuffer = new List<LinkedListNode<CachedSegment<TRange, TData>>>();
+        var liveNodeIdx = 0;
+
+        var current = _list.First;
+        while (current != null)
+        {
+            if (!current.Value.IsRemoved)
+            {
+                if (liveNodeIdx % _stride == 0)
+                {
+                    anchorBuffer.Add(current);
+                }
+
+                liveNodeIdx++;
+            }
+
+            current = current.Next;
+        }
+
+        var newStrideIndex = anchorBuffer.ToArray();
+
+        // Atomically publish the new stride index (release fence).
+        // From this point on, the User Path will use anchors that only reference live nodes.
+        Interlocked.Exchange(ref _strideIndex, newStrideIndex);
+
+        // Second pass: now that the new stride index is live, physically unlink removed nodes.
+        // Any User Path thread that was using the old stride index has already advanced past
+        // these nodes via Next pointers that were still valid before we unlinked them.
         var node = _list.First;
         while (node != null)
         {
             var next = node.Next;
             if (node.Value.IsRemoved)
             {
-                _nodeMap.Remove(node.Value);
                 _list.Remove(node);
             }
 
             node = next;
         }
 
-        // todo: check how the values that are after the last stride index value inside linked list - are they considered in algorithms?
-        // Second pass: walk live list and collect every Nth node as a stride anchor.
-        var liveCount = _list.Count;
-        var anchorCount = liveCount == 0 ? 0 : (liveCount + _stride - 1) / _stride;
-        var newStrideIndex = new CachedSegment<TRange, TData>[anchorCount];
-
-        var current = _list.First;
-        var nodeIdx = 0;
-        var anchorIdx = 0;
-
-        while (current != null)
-        {
-            if (nodeIdx % _stride == 0 && anchorIdx < anchorCount)
-            {
-                newStrideIndex[anchorIdx++] = current.Value;
-            }
-
-            current = current.Next;
-            nodeIdx++;
-        }
-
-        // Reset stride append buffer.
-        Array.Clear(_strideAppendBuffer, 0, _strideAppendBufferSize);
-        _strideAppendCount = 0;
-
-        // Atomically publish new stride index (release fence — User Path reads with acquire fence).
-        Volatile.Write(ref _strideIndex, newStrideIndex);
+        // Reset the add counter.
+        _addsSinceLastNormalization = 0;
     }
 }

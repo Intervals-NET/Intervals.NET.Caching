@@ -67,35 +67,31 @@ internal sealed class EvictionExecutor<TRange, TData>
     /// Invariant VPC.E.3). Empty when no segments were stored in this cycle.
     /// </param>
     /// <returns>
-    /// The segments that should be removed from storage. The caller is responsible for actual
-    /// removal from <see cref="Infrastructure.Storage.ISegmentStorage{TRange,TData}"/>.
-    /// May be empty if all candidates are immune (Invariant VPC.E.3a).
+    /// An <see cref="IEnumerable{T}"/> of segments that should be removed from storage, yielded
+    /// one at a time as they are selected. The caller is responsible for actual removal from
+    /// <see cref="Infrastructure.Storage.ISegmentStorage{TRange,TData}"/>.
+    /// May yield nothing if all candidates are immune (Invariant VPC.E.3a).
     /// </returns>
-    internal IReadOnlyList<CachedSegment<TRange, TData>> Execute(
+    internal IEnumerable<CachedSegment<TRange, TData>> Execute(
         IEvictionPressure<TRange, TData> pressure,
         IReadOnlyList<CachedSegment<TRange, TData>> justStoredSegments)
     {
         // Build the immune set from just-stored segments (Invariant VPC.E.3).
         // Already-selected candidates are added to this set during the loop to prevent
         // re-selecting the same segment within one eviction pass.
-        // todo think about making it as a hashset initially to avoid temp allocation
         var immune = new HashSet<CachedSegment<TRange, TData>>(justStoredSegments);
-        // todo: looks like toRemove easily can be made as IEnumerable - save array allocation
-        var toRemove = new List<CachedSegment<TRange, TData>>();
 
         while (pressure.IsExceeded)
         {
             if (!_selector.TrySelectCandidate(immune, out var candidate))
             {
                 // No eligible candidates remain (all immune or pool exhausted).
-                break;
+                yield break;
             }
 
-            toRemove.Add(candidate);
             immune.Add(candidate);   // Prevent re-selecting this segment in the same pass.
             pressure.Reduce(candidate);
+            yield return candidate;
         }
-
-        return toRemove;
     }
 }

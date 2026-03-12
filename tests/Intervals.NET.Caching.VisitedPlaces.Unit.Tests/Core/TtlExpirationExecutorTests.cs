@@ -92,9 +92,9 @@ public sealed class TtlExpirationExecutorTests
     [Fact]
     public async Task ExecuteAsync_SegmentAlreadyEvicted_IsNoOpButStillFiresDiagnostic()
     {
-        // ARRANGE — segment evicted before TTL fires (MarkAsRemoved already claimed)
+        // ARRANGE — segment evicted before TTL fires (TryMarkAsRemoved already claimed)
         var (executor, segment) = CreateExecutorWithSegment(0, 9);
-        segment.MarkAsRemoved(); // simulates eviction that beat the TTL
+        segment.TryMarkAsRemoved(); // simulates eviction that beat the TTL
 
         var workItem = new TtlExpirationWorkItem<int, int>(
             segment,

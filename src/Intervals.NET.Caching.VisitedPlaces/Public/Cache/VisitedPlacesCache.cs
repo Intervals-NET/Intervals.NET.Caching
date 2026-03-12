@@ -50,7 +50,6 @@ namespace Intervals.NET.Caching.VisitedPlaces.Public.Cache;
 /// the processing loop to drain gracefully.
 /// </para>
 /// </remarks>
-/// TODO: think about moving some part of the logic into the Intervals.NET, maybe we can move out the collection of not overlapped disjoint data ranges
 public sealed class VisitedPlacesCache<TRange, TData, TDomain>
     : IVisitedPlacesCache<TRange, TData, TDomain>
     where TRange : IComparable<TRange>

@@ -11,8 +11,8 @@ namespace Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 /// <remarks>
 /// <para><strong>Threading Model:</strong></para>
 /// <list type="bullet">
-/// <item><description><see cref="FindIntersecting"/> — User Path; concurrent reads are safe</description></item>
-/// <item><description><see cref="Add"/>, <see cref="Remove"/>, <see cref="GetRandomSegment"/> — Background Path only (single writer)</description></item>
+    /// <item><description><see cref="FindIntersecting"/> — User Path; concurrent reads are safe</description></item>
+    /// <item><description><see cref="Add"/>, <see cref="TryRemove"/>, <see cref="TryGetRandomSegment"/> — Background Path only (single writer)</description></item>
 /// </list>
 /// <para><strong>RCU Semantics (Invariant VPC.B.5):</strong>
 /// User Path reads operate on a stable snapshot published via <c>Volatile.Write</c>.
@@ -62,7 +62,7 @@ internal interface ISegmentStorage<TRange, TData>
     /// <param name="segment">The segment to remove.</param>
     /// <returns>
     /// <see langword="true"/> if this call was the first to remove the segment
-    /// (i.e., <see cref="CachedSegment{TRange,TData}.MarkAsRemoved"/> returned <see langword="true"/>
+    /// (i.e., <see cref="CachedSegment{TRange,TData}.TryMarkAsRemoved"/> returned <see langword="true"/>
     /// for this call); <see langword="false"/> if the segment was already removed by a concurrent
     /// caller (idempotent no-op).
     /// </returns>
@@ -72,7 +72,7 @@ internal interface ISegmentStorage<TRange, TData>
     /// becomes immediately invisible to all read operations after this call.</para>
     /// <para>The call is idempotent. Safe to call several times.</para>
     /// </remarks>
-    bool Remove(CachedSegment<TRange, TData> segment);
+    bool TryRemove(CachedSegment<TRange, TData> segment);
 
     /// <summary>
     /// Returns a single randomly-selected live (non-removed) segment from storage.
@@ -95,6 +95,5 @@ internal interface ISegmentStorage<TRange, TData>
     /// Background-Path-only.
     /// </para>
     /// </remarks>
-    /// todo should it be bool TryGetRandomSegment(out segment)?
-    CachedSegment<TRange, TData>? GetRandomSegment();
+    CachedSegment<TRange, TData>? TryGetRandomSegment();
 }

@@ -462,9 +462,9 @@ public sealed class CacheNormalizationExecutorTests
         public void Add(CachedSegment<int, int> segment) =>
             throw new InvalidOperationException("Simulated storage failure.");
 
-        public bool Remove(CachedSegment<int, int> segment) => false;
+        public bool TryRemove(CachedSegment<int, int> segment) => false;
 
-        public CachedSegment<int, int>? GetRandomSegment() => null;
+        public CachedSegment<int, int>? TryGetRandomSegment() => null;
     }
 
     #endregion

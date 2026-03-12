@@ -12,8 +12,8 @@ namespace Intervals.NET.Caching.VisitedPlaces.Unit.Tests.Eviction;
 /// <summary>
 /// Unit tests for <see cref="EvictionEngine{TRange,TData}"/>.
 /// Validates constructor validation, metadata delegation to the selector,
-/// segment initialization (selector + stateful policy), evaluate-and-execute
-/// (no eviction, eviction triggered, diagnostics), and bulk post-removal notification.
+/// segment initialization (selector + stateful policy), and evaluate-and-execute
+/// (no eviction, eviction triggered, diagnostics).
 /// </summary>
 public sealed class EvictionEngineTests
 {
@@ -158,7 +158,7 @@ public sealed class EvictionEngineTests
         var segment = CreateSegment(0, 9); // span 10 > 5
 
         // Before initialize: policy has _totalSpan=0 → EvaluateAndExecute returns empty
-        Assert.Empty(engine.EvaluateAndExecute([]));
+        Assert.Empty(engine.EvaluateAndExecute([]).ToList());
         Assert.Equal(1, _diagnostics.EvictionEvaluated);
         Assert.Equal(0, _diagnostics.EvictionTriggered);
 
@@ -167,7 +167,7 @@ public sealed class EvictionEngineTests
         storage.Add(segment);
 
         // ASSERT — stateful policy now knows about the segment → evaluates as exceeded
-        var toRemove = engine.EvaluateAndExecute([segment]); // immune → empty result
+        var toRemove = engine.EvaluateAndExecute([segment]).ToList(); // immune → empty result
         Assert.Empty(toRemove); // all immune, so nothing removed
         Assert.Equal(2, _diagnostics.EvictionEvaluated);
         Assert.Equal(1, _diagnostics.EvictionTriggered); // triggered but immune
@@ -186,7 +186,7 @@ public sealed class EvictionEngineTests
         foreach (var seg in segments) engine.InitializeSegment(seg);
 
         // ACT
-        var toRemove = engine.EvaluateAndExecute([]);
+        var toRemove = engine.EvaluateAndExecute([]).ToList();
 
         // ASSERT
         Assert.Empty(toRemove);
@@ -201,7 +201,7 @@ public sealed class EvictionEngineTests
         foreach (var seg in segments) engine.InitializeSegment(seg);
 
         // ACT
-        engine.EvaluateAndExecute([]);
+        engine.EvaluateAndExecute([]).ToList();
 
         // ASSERT
         Assert.Equal(1, _diagnostics.EvictionEvaluated);
@@ -221,26 +221,26 @@ public sealed class EvictionEngineTests
         var segments = CreateSegmentsWithLruMetadata(engine, 3);
 
         // ACT — none are immune (empty justStored)
-        var toRemove = engine.EvaluateAndExecute([]);
+        var toRemove = engine.EvaluateAndExecute([]).ToList();
 
         // ASSERT — exactly 1 removed to bring count from 3 → 2
         Assert.Single(toRemove);
     }
 
     [Fact]
-    public void EvaluateAndExecute_WhenPolicyFires_FiresAllThreeDiagnostics()
+    public void EvaluateAndExecute_WhenPolicyFires_FiresEvictionEvaluatedAndTriggeredDiagnostics()
     {
         // ARRANGE
         var engine = CreateEngine(maxSegmentCount: 2);
         var segments = CreateSegmentsWithLruMetadata(engine, 3);
 
-        // ACT
-        engine.EvaluateAndExecute([]);
+        // ACT — force enumeration so all candidates are yielded
+        engine.EvaluateAndExecute([]).ToList();
 
-        // ASSERT
+        // ASSERT — engine fires Evaluated and Triggered; EvictionExecuted is the consumer's responsibility
         Assert.Equal(1, _diagnostics.EvictionEvaluated);
         Assert.Equal(1, _diagnostics.EvictionTriggered);
-        Assert.Equal(1, _diagnostics.EvictionExecuted);
+        Assert.Equal(0, _diagnostics.EvictionExecuted);
     }
 
     [Fact]
@@ -251,12 +251,12 @@ public sealed class EvictionEngineTests
         var segments = CreateSegmentsWithLruMetadata(engine, 2);
 
         // ACT — both immune
-        var toRemove = engine.EvaluateAndExecute(segments);
+        var toRemove = engine.EvaluateAndExecute(segments).ToList();
 
         // ASSERT — policy fires but no eligible candidates
         Assert.Empty(toRemove);
         Assert.Equal(1, _diagnostics.EvictionTriggered);
-        Assert.Equal(1, _diagnostics.EvictionExecuted); // loop ran but found nothing
+        Assert.Equal(0, _diagnostics.EvictionExecuted); // engine never fires EvictionExecuted
     }
 
     [Fact]
@@ -280,10 +280,8 @@ public sealed class EvictionEngineTests
             storage.Add(s);
         }
 
-        var segments = new[] { seg1, seg2, seg3 };
-
         // ACT
-        var toRemove = engine.EvaluateAndExecute([]);
+        var toRemove = engine.EvaluateAndExecute([]).ToList();
 
         // ASSERT — must evict until count<=1 AND span<=5 are both satisfied;
         // all spans are 10>5 so all 3 would need to go to satisfy span — but immunity stops at 0 non-immune
@@ -292,65 +290,6 @@ public sealed class EvictionEngineTests
         // the remaining seg has span 10 which still exceeds 5 — executor removes it too → all 3.
         Assert.Equal(3, toRemove.Count);
         Assert.Equal(1, _diagnostics.EvictionTriggered);
-    }
-
-    #endregion
-
-    #region OnSegmentsRemoved — Stateful Policy Notification
-
-    [Fact]
-    public void OnSegmentsRemoved_UpdatesStatefulPolicyAggregate()
-    {
-        // ARRANGE — span policy max 15; two segments push total to 20>15
-        var spanPolicy = new MaxTotalSpanPolicy<int, int, IntegerFixedStepDomain>(15, _domain);
-        var (selector, storage) = CreateSelectorWithStorage();
-        var engine = new EvictionEngine<int, int>(
-            [spanPolicy],
-            selector,
-            _diagnostics);
-
-        var seg1 = CreateSegment(0, 9);   // span 10
-        var seg2 = CreateSegment(20, 29); // span 10 → total 20 > 15
-        engine.InitializeSegment(seg1);
-        storage.Add(seg1);
-        engine.InitializeSegment(seg2);
-        storage.Add(seg2);
-
-        // Confirm exceeded before removal
-        var toRemove = engine.EvaluateAndExecute([seg1, seg2]); // both immune → returns []
-        Assert.Equal(1, _diagnostics.EvictionTriggered);
-
-        // ACT — simulate processor removing seg2 from storage then notifying engine
-        engine.OnSegmentsRemoved([seg2]); // total span should drop to 10 <= 15
-
-        // ASSERT — policy no longer exceeded after notification
-        _diagnostics.Reset();
-        var toRemove2 = engine.EvaluateAndExecute([]);
-        Assert.Empty(toRemove2);
-        Assert.Equal(0, _diagnostics.EvictionTriggered);
-    }
-
-    [Fact]
-    public void OnSegmentsRemoved_WithEmptyList_DoesNotThrow()
-    {
-        // ARRANGE
-        var engine = CreateEngine(maxSegmentCount: 10);
-
-        // ACT & ASSERT
-        var exception = Record.Exception(() => engine.OnSegmentsRemoved([]));
-        Assert.Null(exception);
-    }
-
-    [Fact]
-    public void OnSegmentsRemoved_WithStatelessPolicyOnly_DoesNotThrow()
-    {
-        // ARRANGE — stateless count policy only
-        var engine = CreateEngine(maxSegmentCount: 10);
-        var seg = CreateSegment(0, 9);
-
-        // ACT & ASSERT — stateless policy receives no notification; must not throw
-        var exception = Record.Exception(() => engine.OnSegmentsRemoved([seg]));
-        Assert.Null(exception);
     }
 
     #endregion

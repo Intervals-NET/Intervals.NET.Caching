@@ -55,7 +55,7 @@ public sealed class CachedSegment<TRange, TData>
     /// <para>
     /// Storage implementations use this flag as the primary soft-delete filter:
     /// <see cref="ISegmentStorage{TRange,TData}.FindIntersecting"/> and
-    /// <c>GetAllSegments</c> check <see cref="IsRemoved"/> instead of consulting a
+    /// <c>TryGetRandomSegment</c> check <see cref="IsRemoved"/> instead of consulting a
     /// separate <c>_softDeleted</c> collection, which eliminates any shared mutable
     /// collection between the Background Path and the TTL thread.
     /// </para>
@@ -81,12 +81,12 @@ public sealed class CachedSegment<TRange, TData>
     /// </para>
     /// <para>
     /// This method is called by storage implementations inside
-    /// <see cref="ISegmentStorage{TRange,TData}.Remove"/> — callers do not set the flag
+    /// <see cref="ISegmentStorage{TRange,TData}.TryRemove"/> — callers do not set the flag
     /// directly. This centralises the one-way transition logic and makes the contract
     /// explicit.
     /// </para>
     /// </remarks>
-    internal bool MarkAsRemoved() =>
+    internal bool TryMarkAsRemoved() =>
         Interlocked.CompareExchange(ref _isRemoved, 1, 0) == 0;
 
     /// <summary>

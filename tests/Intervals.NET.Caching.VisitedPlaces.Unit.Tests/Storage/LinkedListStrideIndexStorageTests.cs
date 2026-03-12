@@ -6,12 +6,12 @@ namespace Intervals.NET.Caching.VisitedPlaces.Unit.Tests.Storage;
 
 /// <summary>
 /// Unit tests for <see cref="LinkedListStrideIndexStorage{TRange,TData}"/>.
-/// Covers Count, Add, Remove, GetRandomSegment, FindIntersecting, stride normalization.
+/// Covers Count, Add, TryRemove, TryGetRandomSegment, FindIntersecting, stride normalization.
 /// </summary>
 public sealed class LinkedListStrideIndexStorageTests
 {
     /// <summary>
-    /// Number of <see cref="ISegmentStorage{TRange,TData}.GetRandomSegment"/> calls used in
+    /// Number of <see cref="ISegmentStorage{TRange,TData}.TryGetRandomSegment"/> calls used in
     /// statistical coverage assertions. With N segments and this many draws, the probability
     /// that any specific segment is never selected is (1 - 1/N)^Trials ≈ e^(-Trials/N).
     /// For N=10, Trials=1000: p(miss) ≈ e^(-100) ≈ 0 — effectively impossible.
@@ -106,7 +106,7 @@ public sealed class LinkedListStrideIndexStorageTests
         AddSegment(storage, 20, 29);
 
         // ACT
-        storage.Remove(seg);
+        storage.TryRemove(seg);
 
         // ASSERT
         Assert.Equal(1, storage.Count);
@@ -121,8 +121,8 @@ public sealed class LinkedListStrideIndexStorageTests
         var seg2 = AddSegment(storage, 20, 29);
 
         // ACT
-        storage.Remove(seg1);
-        storage.Remove(seg2);
+        storage.TryRemove(seg1);
+        storage.TryRemove(seg2);
 
         // ASSERT
         Assert.Equal(0, storage.Count);
@@ -130,10 +130,10 @@ public sealed class LinkedListStrideIndexStorageTests
 
     #endregion
 
-    #region Add / GetRandomSegment Tests
+    #region Add / TryGetRandomSegment Tests
 
     [Fact]
-    public void GetRandomSegment_WhenEmpty_ReturnsNull()
+    public void TryGetRandomSegment_WhenEmpty_ReturnsNull()
     {
         // ARRANGE
         var storage = new LinkedListStrideIndexStorage<int, int>();
@@ -141,12 +141,12 @@ public sealed class LinkedListStrideIndexStorageTests
         // ASSERT — empty storage must return null every time
         for (var i = 0; i < 10; i++)
         {
-            Assert.Null(storage.GetRandomSegment());
+            Assert.Null(storage.TryGetRandomSegment());
         }
     }
 
     [Fact]
-    public void GetRandomSegment_AfterAdding_EventuallyReturnsAddedSegment()
+    public void TryGetRandomSegment_AfterAdding_EventuallyReturnsAddedSegment()
     {
         // ARRANGE
         var storage = new LinkedListStrideIndexStorage<int, int>();
@@ -156,7 +156,7 @@ public sealed class LinkedListStrideIndexStorageTests
         CachedSegment<int, int>? found = null;
         for (var i = 0; i < StatisticalTrials && found is null; i++)
         {
-            found = storage.GetRandomSegment();
+            found = storage.TryGetRandomSegment();
         }
 
         // ASSERT
@@ -165,7 +165,7 @@ public sealed class LinkedListStrideIndexStorageTests
     }
 
     [Fact]
-    public void GetRandomSegment_AfterRemove_NeverReturnsRemovedSegment()
+    public void TryGetRandomSegment_AfterRemove_NeverReturnsRemovedSegment()
     {
         // ARRANGE
         var storage = new LinkedListStrideIndexStorage<int, int>();
@@ -173,13 +173,13 @@ public sealed class LinkedListStrideIndexStorageTests
         var seg2 = AddSegment(storage, 20, 29);
 
         // ACT
-        storage.Remove(seg1);
+        storage.TryRemove(seg1);
 
         // ASSERT — seg1 must never be returned; seg2 must eventually be returned
         var foundSeg2 = false;
         for (var i = 0; i < StatisticalTrials; i++)
         {
-            var result = storage.GetRandomSegment();
+            var result = storage.TryGetRandomSegment();
             Assert.NotSame(seg1, result); // removed segment must never appear
             if (result is not null && ReferenceEquals(result, seg2))
             {
@@ -191,7 +191,7 @@ public sealed class LinkedListStrideIndexStorageTests
     }
 
     [Fact]
-    public void GetRandomSegment_AfterAddingMoreThanStrideAppendBufferSize_EventuallyReturnsAllSegments()
+    public void TryGetRandomSegment_AfterAddingMoreThanStrideAppendBufferSize_EventuallyReturnsAllSegments()
     {
         // ARRANGE — default AppendBufferSize is 8; add 10 to trigger normalization
         var storage = new LinkedListStrideIndexStorage<int, int>(appendBufferSize: 8, stride: 4);
@@ -206,7 +206,7 @@ public sealed class LinkedListStrideIndexStorageTests
         var seen = new HashSet<CachedSegment<int, int>>(ReferenceEqualityComparer.Instance);
         for (var i = 0; i < StatisticalTrials; i++)
         {
-            var result = storage.GetRandomSegment();
+            var result = storage.TryGetRandomSegment();
             if (result is not null)
             {
                 seen.Add(result);
@@ -317,7 +317,7 @@ public sealed class LinkedListStrideIndexStorageTests
         // ARRANGE
         var storage = new LinkedListStrideIndexStorage<int, int>();
         var seg = AddSegment(storage, 0, 9);
-        storage.Remove(seg);
+        storage.TryRemove(seg);
 
         // ACT
         var result = storage.FindIntersecting(TestHelpers.CreateRange(0, 9));
@@ -392,7 +392,7 @@ public sealed class LinkedListStrideIndexStorageTests
         }
 
         var toRemove = AddSegment(storage, 200, 205); // 8th add — normalization fires
-        storage.Remove(toRemove);
+        storage.TryRemove(toRemove);
 
         // Normalization already ran on the 8th add above (before Remove).
         // Now add 8 more to trigger a second normalization, which should physically unlink toRemove.
@@ -424,7 +424,7 @@ public sealed class LinkedListStrideIndexStorageTests
         // Remove half
         for (var i = 0; i < 10; i++)
         {
-            storage.Remove(added[i]);
+            storage.TryRemove(added[i]);
         }
 
         // ASSERT — Count is correct
@@ -450,7 +450,7 @@ public sealed class LinkedListStrideIndexStorageTests
         var seen = new HashSet<CachedSegment<int, int>>(ReferenceEqualityComparer.Instance);
         for (var i = 0; i < StatisticalTrials; i++)
         {
-            var result = storage.GetRandomSegment();
+            var result = storage.TryGetRandomSegment();
             if (result is not null)
             {
                 seen.Add(result);

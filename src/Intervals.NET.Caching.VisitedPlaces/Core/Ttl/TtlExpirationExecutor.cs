@@ -28,12 +28,12 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Ttl;
 ///   the scheduler's cancellation handler and the segment is NOT removed.
 /// </description></item>
 /// <item><description>
-///   Call <see cref="ISegmentStorage{TRange,TData}.Remove"/> — which atomically claims
-///   ownership via <see cref="CachedSegment{TRange,TData}.MarkAsRemoved()"/> internally
-///   (<c>Interlocked.CompareExchange</c>) and returns <see langword="true"/> only for the
-///   first caller. If it returns <see langword="false"/> the segment was already removed by
-///   eviction; fire <see cref="IVisitedPlacesCacheDiagnostics.TtlSegmentExpired"/> and return
-///   (idempotent no-op for storage and engine).
+    ///   Call <see cref="ISegmentStorage{TRange,TData}.TryRemove"/> — which atomically claims
+    ///   ownership via <see cref="CachedSegment{TRange,TData}.TryMarkAsRemoved()"/> internally
+    ///   (<c>Interlocked.CompareExchange</c>) and returns <see langword="true"/> only for the
+    ///   first caller. If it returns <see langword="false"/> the segment was already removed by
+    ///   eviction; fire <see cref="IVisitedPlacesCacheDiagnostics.TtlSegmentExpired"/> and return
+    ///   (idempotent no-op for storage and engine).
 /// </description></item>
 /// <item><description>
 ///   Call <see cref="EvictionEngine{TRange,TData}.OnSegmentRemoved"/> to update stateful
@@ -52,10 +52,10 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Ttl;
 /// </para>
 /// <list type="bullet">
 /// <item><description>
-///   <see cref="ISegmentStorage{TRange,TData}.Remove"/> internally calls
-///   <see cref="CachedSegment{TRange,TData}.MarkAsRemoved()"/> via
-///   <c>Interlocked.CompareExchange</c> — exactly one caller wins; the other returns
-///   <see langword="false"/> and becomes a no-op.
+    ///   <see cref="ISegmentStorage{TRange,TData}.TryRemove"/> internally calls
+    ///   <see cref="CachedSegment{TRange,TData}.TryMarkAsRemoved()"/> via
+    ///   <c>Interlocked.CompareExchange</c> — exactly one caller wins; the other returns
+    ///   <see langword="false"/> and becomes a no-op.
 /// </description></item>
 /// <item><description>
 ///   <see cref="EvictionEngine{TRange,TData}.OnSegmentRemoved"/> is only reached by the winner
@@ -87,8 +87,8 @@ internal sealed class TtlExpirationExecutor<TRange, TData>
     /// Initializes a new <see cref="TtlExpirationExecutor{TRange,TData}"/>.
     /// </summary>
     /// <param name="storage">
-    /// The segment storage. <see cref="ISegmentStorage{TRange,TData}.Remove"/> is called
-    /// after <see cref="CachedSegment{TRange,TData}.MarkAsRemoved()"/> succeeds.
+    /// The segment storage. <see cref="ISegmentStorage{TRange,TData}.TryRemove"/> is called
+    /// after <see cref="CachedSegment{TRange,TData}.TryMarkAsRemoved()"/> succeeds.
     /// </param>
     /// <param name="evictionEngine">
     /// The eviction engine. <see cref="EvictionEngine{TRange,TData}.OnSegmentsRemoved"/> is
@@ -131,7 +131,7 @@ internal sealed class TtlExpirationExecutor<TRange, TData>
         // Delegate removal to storage, which atomically claims ownership via MarkAsRemoved()
         // and returns true only for the first caller. If the segment was already evicted by
         // the Background Storage Loop, this returns false and we fire only the diagnostic.
-        if (!_storage.Remove(workItem.Segment))
+        if (!_storage.TryRemove(workItem.Segment))
         {
             // Already removed — still fire the diagnostic so TTL events are always counted.
             _diagnostics.TtlSegmentExpired();
