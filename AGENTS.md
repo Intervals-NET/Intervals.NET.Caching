@@ -80,6 +80,25 @@ dotnet test --collect:"XPlat Code Coverage" --results-directory ./TestResults
 
 ## Code Style Guidelines
 
+### Braces
+
+**Always use braces** for all control flow statements (`if`, `else`, `for`, `foreach`, `while`, `do`, `using`, etc.), even for single-line bodies:
+
+```csharp
+// Correct
+if (condition)
+{
+    DoSomething();
+}
+
+// Incorrect
+if (condition)
+    DoSomething();
+
+// Incorrect
+if (condition) DoSomething();
+```
+
 ### Namespace Organization
 ```csharp
 // Use file-scoped namespace declarations (C# 10+)
@@ -241,13 +260,13 @@ catch (Exception ex)
 var previousIntent = Interlocked.Exchange(ref _currentIntent, newIntent);
 var currentIntent = Volatile.Read(ref _currentIntent);
 
-// AsyncActivityCounter - fully lock-free as of latest refactor
+// AsyncActivityCounter - fully lock-free
 var newCount = Interlocked.Increment(ref _activityCount);  // Atomic counter
 Volatile.Write(ref _idleTcs, newTcs);  // Publish TCS with release fence
 var tcs = Volatile.Read(ref _idleTcs);  // Observe TCS with acquire fence
 ```
 
-**Note**: AsyncActivityCounter is now fully lock-free (refactored from previous lock-based implementation).
+**Note**: AsyncActivityCounter is fully lock-free.
 
 ### Testing Guidelines
 
@@ -302,9 +321,12 @@ Assert.Equal(expectedRange, actualRange);
 
 ## Commit & Documentation Workflow
 
+### Commit Policy
+
+**Commits are made exclusively by a human**, after all changes have been manually reviewed. Agents must NOT create git commits. When work is complete, present a summary of all changes for human review.
+
 ### Commit Message Guidelines
 - **Format**: Conventional Commits with passive voice
-- **Tool**: GitHub Copilot generates commit messages
 - **Multi-type commits allowed**: Combine feat/test/docs/fix in single commit
 
 **Examples:**
@@ -312,14 +334,11 @@ Assert.Equal(expectedRange, actualRange);
 feat: extension method for strong consistency mode has been implemented; test: new method has been covered by unit tests; docs: README.md has been updated with usage examples
 
 fix: race condition in intent processing has been resolved
-
-refactor: AsyncActivityCounter lock has been removed and replaced with lock-free mechanism
 ```
 
 ### Documentation Philosophy
 - **Code is source of truth** - documentation follows code
 - **CRITICAL**: Every implementation MUST be finalized by updating documentation
-- Documentation may be outdated; long-term goal is synchronization with code
 
 ### Documentation Update Map
 
