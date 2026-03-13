@@ -146,11 +146,9 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
         }
 
         // Walk linked list from the start node (or from head if no usable anchor found).
-        // Lock protects against concurrent node unlinking in NormalizeStrideIndex:
-        // - Prevents _list.First from being mutated while we read it (C4)
-        // - Prevents node.Next from being set to null by Remove() during our walk (C5)
-        // The entire walk is under one lock acquisition for efficiency — the Background Path
-        // waits for the read to finish rather than racing node-by-node.
+        // Held for the entire walk so that each per-node lock in NormalizeStrideIndex must wait
+        // for this read to release before it can advance past any node — giving the User Path
+        // priority over the Background Path's unlinking loop (C4, C5).
         lock (_listSyncRoot)
         {
             var node = startNode ?? _list.First;
@@ -378,10 +376,17 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
     /// <para><strong>Order matters for thread safety (Invariant VPC.B.5):</strong></para>
     /// <para>
     /// The new stride index is built and published BEFORE dead nodes are physically unlinked.
-    /// Dead nodes are then unlinked under <c>_listSyncRoot</c>, which is the same lock held
-    /// by the User Path during its entire linked-list walk in <see cref="FindIntersecting"/>.
-    /// This guarantees that no User Path walk can observe a node whose <c>Next</c> pointer was
-    /// set to <see langword="null"/> by <c>LinkedList.Remove()</c> mid-walk.
+    /// Dead nodes are then unlinked one at a time, each under a brief <c>_listSyncRoot</c>
+    /// acquisition: both <c>node.Next</c> and <c>_list.Remove(node)</c> execute inside the
+    /// same per-node lock block, so the walk variable <c>next</c> is captured before
+    /// <c>Remove()</c> can null out the pointer.
+    /// </para>
+    /// <para>
+    /// The User Path (<see cref="FindIntersecting"/>) holds <c>_listSyncRoot</c> for its entire
+    /// linked-list walk, so reads and removals interleave at node granularity: each removal step
+    /// waits only for the current read to release the lock, then executes one <c>Remove()</c>,
+    /// then yields so the reader can continue.  This gives the User Path priority over the
+    /// Background Path without blocking them wholesale against each other.
     /// </para>
     /// <para><strong>Allocation:</strong> Uses an <see cref="ArrayPool{T}"/> rental as the
     /// anchor accumulation buffer (returned immediately after the right-sized index array is
@@ -438,24 +443,28 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
             anchorPool.Return(anchorBuffer, clearArray: true);
         }
 
-        // Second pass: physically unlink removed nodes under lock.
-        // The User Path holds the same lock during its entire linked-list walk, so this
-        // unlinking pass waits until any in-progress read completes, then runs uninterrupted.
-        // This eliminates the race where Remove() sets node.Next to null while a User Path
-        // thread is walking through that node.
-        lock (_listSyncRoot)
+        // Second pass: physically unlink removed nodes — per-node lock granularity.
+        // For each node we briefly acquire _listSyncRoot to (a) read node.Next safely before
+        // Remove() can null it out, and (b) call Remove() itself.
+        // The User Path holds _listSyncRoot for its entire linked-list walk, so it will
+        // block individual removal steps rather than the entire unlinking pass.
+        // This lets reads and removals interleave at node granularity: a removal step waits
+        // only for the current read to release the lock, executes one Remove(), then yields
+        // the lock so the reader can continue to the next node.
+        var node = _list.First;
+        while (node != null)
         {
-            var node = _list.First;
-            while (node != null)
+            LinkedListNode<CachedSegment<TRange, TData>>? next;
+            lock (_listSyncRoot)
             {
-                var next = node.Next;
+                next = node.Next;
                 if (node.Value.IsRemoved)
                 {
                     _list.Remove(node);
                 }
-
-                node = next;
             }
+
+            node = next;
         }
 
         // Reset the add counter.
