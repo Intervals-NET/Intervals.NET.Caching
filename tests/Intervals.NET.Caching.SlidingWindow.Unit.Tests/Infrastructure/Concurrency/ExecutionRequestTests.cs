@@ -2,7 +2,6 @@ using Intervals.NET.Data.Extensions;
 using Intervals.NET.Domain.Default.Numeric;
 using Intervals.NET.Caching.SlidingWindow.Core.Rebalance.Execution;
 using Intervals.NET.Caching.SlidingWindow.Core.Rebalance.Intent;
-using Intervals.NET.Caching.SlidingWindow.Tests.Infrastructure.DataSources;
 
 namespace Intervals.NET.Caching.SlidingWindow.Unit.Tests.Infrastructure.Concurrency;
 

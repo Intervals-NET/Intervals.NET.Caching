@@ -4,7 +4,6 @@ using Moq;
 using Intervals.NET.Caching.Dto;
 using Intervals.NET.Caching.SlidingWindow.Core.Rebalance.Execution;
 using Intervals.NET.Caching.SlidingWindow.Public.Instrumentation;
-using Intervals.NET.Caching.SlidingWindow.Tests.Infrastructure.DataSources;
 
 namespace Intervals.NET.Caching.SlidingWindow.Unit.Tests.Infrastructure.Concurrency;
 

@@ -118,14 +118,16 @@ SnapshotAppendBufferStorage
 **Normalize:**
 1. Allocate a new `Segment[]` of size `(_snapshot.Length - removedCount + _appendCount)`
 2. Merge `_snapshot` (excluding `IsRemoved` segments) and `_appendBuffer[0.._appendCount]` into the new array via merge-sort
-3. Reset `_appendCount = 0`; clear stale references in `_appendBuffer`
-4. `Volatile.Write(_snapshot, newArray)` — atomically publish the new snapshot
+3. Under `_normalizeLock`: atomically publish the new snapshot and reset `_appendCount = 0`
+4. Leave `_appendBuffer` contents in place (see below)
 
 **Normalization cost**: O(n + m) merge of two sorted sequences (snapshot already sorted; append buffer sorted before merge)
 
-**Publish-before-reset ordering:** The snapshot is published via `Volatile.Write` BEFORE `_appendCount` is reset to zero. This eliminates the race where the User Path could observe `_appendCount == 0` but still read the old snapshot (missing new segments that were in the append buffer).
+**Atomic publish via `_normalizeLock`:** Both `_snapshot` and `_appendCount` are updated together inside `_normalizeLock`, the same lock that `FindIntersecting` holds when capturing the `(_snapshot, _appendCount)` pair. This ensures readers always see either (old snapshot, old count) or (new snapshot, 0) — never the mixed state that would cause duplicate segment references in query results.
 
-**RCU safety**: User Path threads that read `_snapshot` via `Volatile.Read` before normalization continue to see the old, valid snapshot until their read completes. The new snapshot is published atomically; no intermediate state is ever visible.
+**Why `_appendBuffer` is not cleared after normalization:** A `FindIntersecting` call that captured `appendCount > 0` before the lock update is still iterating `_appendBuffer` lock-free when `Normalize` completes. Calling `Array.Clear` on the shared buffer at that point nulls out slots the reader is actively dereferencing, causing a `NullReferenceException`. Stale references left in the buffer are harmless: readers entering after the lock update capture `appendCount = 0` and skip the buffer scan entirely; subsequent `Add()` calls overwrite each slot before making it visible to readers.
+
+**RCU safety**: User Path threads that captured `_snapshot` and `_appendCount` under `_normalizeLock` before normalization continue to operate on a consistent pre-normalization view until their read completes. No intermediate state is ever visible.
 
 ### Memory Behavior
 

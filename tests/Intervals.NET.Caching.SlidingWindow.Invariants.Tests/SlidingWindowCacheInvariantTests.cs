@@ -1,4 +1,3 @@
-using Intervals.NET;
 using Intervals.NET.Domain.Default.Numeric;
 using Intervals.NET.Domain.Extensions.Fixed;
 using Intervals.NET.Extensions;

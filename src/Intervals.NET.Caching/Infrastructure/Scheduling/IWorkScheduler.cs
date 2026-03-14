@@ -1,7 +1,3 @@
-using Intervals.NET.Caching.Infrastructure.Scheduling.Concurrent;
-using Intervals.NET.Caching.Infrastructure.Scheduling.Serial;
-using Intervals.NET.Caching.Infrastructure.Scheduling.Supersession;
-
 namespace Intervals.NET.Caching.Infrastructure.Scheduling;
 
 /// <summary>

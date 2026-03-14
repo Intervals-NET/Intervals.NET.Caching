@@ -202,10 +202,23 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
             _appendCount = 0;
         }
 
-        // Clear stale references in append buffer — safe outside the lock because:
-        // (a) _appendCount is now 0, so FindIntersecting will not scan any buffer slots;
-        // (b) Add() is called only from the Background Path (single writer), which is this thread.
-        Array.Clear(_appendBuffer, 0, _appendBufferSize);
+        // Intentionally NOT clearing _appendBuffer here.
+        //
+        // A FindIntersecting call that captured appendCount > 0 under the lock (before the
+        // _appendCount = 0 write above) is still iterating _appendBuffer[0..appendCount] lock-free.
+        // Array.Clear on the shared buffer while that scan is in progress produces a
+        // NullReferenceException when the reader dereferences a nulled slot.
+        //
+        // Leaving the stale references in place is safe:
+        //   (a) Any FindIntersecting entering AFTER the lock update captures appendCount = 0
+        //       and skips the buffer scan entirely.
+        //   (b) Any FindIntersecting that captured (old snapshot, appendCount = N) before the
+        //       lock update sees a consistent pre-normalization view — no duplication is possible
+        //       because the same lock prevents the mixed state (new snapshot, old count).
+        //   (c) The next Add() call overwrites _appendBuffer[0] before Volatile.Write increments
+        //       _appendCount, so the stale reference at slot 0 is never observable to readers.
+        //   (d) The merged snapshot already holds references to all live segments; leaving them
+        //       in buffer slots until overwritten does not extend their logical lifetime.
     }
 
     private static CachedSegment<TRange, TData>[] MergeSorted(

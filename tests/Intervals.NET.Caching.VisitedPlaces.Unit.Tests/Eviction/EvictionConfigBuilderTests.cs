@@ -1,4 +1,3 @@
-using Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Policies;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Selectors;
 using Intervals.NET.Caching.VisitedPlaces.Public.Cache;

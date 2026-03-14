@@ -1,7 +1,9 @@
-using Intervals.NET;
 using Intervals.NET.Caching.Dto;
 using Intervals.NET.Caching.Extensions;
 using Intervals.NET.Domain.Default.Numeric;
+using Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
+using Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Policies;
+using Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Selectors;
 using Intervals.NET.Caching.VisitedPlaces.Public.Cache;
 using Intervals.NET.Caching.VisitedPlaces.Public.Configuration;
 using Intervals.NET.Caching.VisitedPlaces.Tests.Infrastructure;
@@ -756,6 +758,286 @@ public sealed class VisitedPlacesCacheInvariantTests : IAsyncDisposable
     }
 
     // ============================================================
+    // VPC.F.2 — Bounded Source: null Range Means No Segment Stored
+    // ============================================================
+
+    /// <summary>
+    /// Invariant VPC.F.2 [Behavioral]: When <c>IDataSource.FetchAsync</c> returns a <c>RangeChunk</c>
+    /// with a null <c>Range</c>, the cache treats it as "no data available" and does NOT store
+    /// a segment for that gap. The background lifecycle counter still increments correctly.
+    /// </summary>
+    [Fact]
+    public async Task Invariant_VPC_F_2_NullRangeChunk_NoSegmentStored()
+    {
+        // ARRANGE — BoundedDataSource only serves [1000, 9999]; request below that returns null Range
+        var boundedSource = new BoundedDataSource();
+        var cache = TrackCache(TestHelpers.CreateCache(
+            boundedSource, _domain, TestHelpers.CreateDefaultOptions(), _diagnostics));
+
+        // ACT — request entirely out of bounds (below MinId)
+        var outOfBoundsRange = TestHelpers.CreateRange(0, 9);
+        var result = await cache.GetDataAndWaitForIdleAsync(outOfBoundsRange);
+
+        // ASSERT — no segment was stored (null Range chunk → no storage step)
+        Assert.Equal(0, _diagnostics.BackgroundSegmentStored);
+
+        // The request was still served (classified as FullMiss) and lifecycle is consistent
+        Assert.Equal(CacheInteraction.FullMiss, result.CacheInteraction);
+        TestHelpers.AssertBackgroundLifecycleIntegrity(_diagnostics);
+    }
+
+    /// <summary>
+    /// Invariant VPC.F.2 [Behavioral]: When the data source returns a range smaller than requested
+    /// (partial fulfilment), the cache stores only what was returned — it does NOT use the requested range.
+    /// A subsequent request for the same original range will be a PartialHit or FullMiss (not FullHit).
+    /// </summary>
+    [Fact]
+    public async Task Invariant_VPC_F_2_PartialFulfillment_CachesOnlyActualReturnedRange()
+    {
+        // ARRANGE — BoundedDataSource serves [1000, 9999]; request crossing the lower boundary
+        var boundedSource = new BoundedDataSource();
+        var cache = TrackCache(TestHelpers.CreateCache(
+            boundedSource, _domain, TestHelpers.CreateDefaultOptions(), _diagnostics));
+
+        // ACT — request [990, 1009]: only [1000, 1009] is within the boundary
+        var crossBoundaryRange = TestHelpers.CreateRange(990, 1009);
+        var result = await cache.GetDataAndWaitForIdleAsync(crossBoundaryRange);
+
+        // ASSERT — one segment stored (only the fulfillable part [1000, 1009])
+        Assert.Equal(1, _diagnostics.BackgroundSegmentStored);
+
+        // The portion [1000, 1009] is now a FullHit; re-requesting it doesn't call the source
+        var innerResult = await cache.GetDataAsync(
+            TestHelpers.CreateRange(1000, 1009), CancellationToken.None);
+        Assert.Equal(CacheInteraction.FullHit, innerResult.CacheInteraction);
+        Assert.Equal(10, innerResult.Data.Length);
+        Assert.Equal(1000, innerResult.Data.Span[0]);
+
+        await cache.WaitForIdleAsync();
+    }
+
+    // ============================================================
+    // VPC.F.4 — CancellationToken Propagated to FetchAsync
+    // ============================================================
+
+    /// <summary>
+    /// Invariant VPC.F.4 [Behavioral]: The <c>CancellationToken</c> passed to <c>GetDataAsync</c>
+    /// is forwarded to <c>IDataSource.FetchAsync</c>. Cancelling the token before the fetch
+    /// completes causes <c>GetDataAsync</c> to throw <c>OperationCanceledException</c>.
+    /// </summary>
+    [Fact]
+    public async Task Invariant_VPC_F_4_CancellationToken_PropagatedToFetchAsync()
+    {
+        // ARRANGE — use a data source that delays fetch so we can cancel mid-flight
+        var delaySource = new CancellableDelayDataSource(delay: TimeSpan.FromMilliseconds(500));
+        var cache = TrackCache(TestHelpers.CreateCache(
+            delaySource, _domain, TestHelpers.CreateDefaultOptions(), _diagnostics));
+
+        using var cts = new CancellationTokenSource();
+
+        // Cancel after a short delay so the fetch is in-flight
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(50, CancellationToken.None);
+            await cts.CancelAsync();
+        }, CancellationToken.None);
+
+        // ACT
+        var exception = await Record.ExceptionAsync(() =>
+            cache.GetDataAsync(TestHelpers.CreateRange(0, 9), cts.Token).AsTask());
+
+        // ASSERT — cancellation propagated to the data source
+        Assert.NotNull(exception);
+        Assert.IsAssignableFrom<OperationCanceledException>(exception);
+
+        await cache.WaitForIdleAsync();
+    }
+
+    // ============================================================
+    // VPC.E.1a — OR-Combined Policies: Any Exceeded Triggers Eviction
+    // ============================================================
+
+    /// <summary>
+    /// Invariant VPC.E.1a [Behavioral]: Eviction is triggered when ANY configured policy is exceeded
+    /// (OR-combination). A single <c>MaxSegmentCountPolicy(1)</c> alone is sufficient to trigger
+    /// eviction when a second segment is stored — no other policy is required.
+    /// </summary>
+    [Fact]
+    public async Task Invariant_VPC_E_1a_AnyPolicyExceeded_TriggersEviction()
+    {
+        // ARRANGE — a single MaxSegmentCountPolicy(1) plus a permissive MaxSegmentCountPolicy(100).
+        // Only the first policy can be exceeded. Eviction fires if either is exceeded (OR logic).
+        var policies = new IEvictionPolicy<int, int>[]
+        {
+            new MaxSegmentCountPolicy<int, int>(1),
+            new MaxSegmentCountPolicy<int, int>(100)
+        };
+        var selector = new LruEvictionSelector<int, int>();
+        var cache = TrackCache(new VisitedPlacesCache<int, int, IntegerFixedStepDomain>(
+            new SimpleTestDataSource(), _domain, TestHelpers.CreateDefaultOptions(),
+            policies, selector, _diagnostics));
+
+        // ACT — store two segments: first at capacity (count=1 → eviction fires at second)
+        await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(0, 9));
+        await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(100, 109));
+
+        // ASSERT — eviction triggered (MaxSegmentCountPolicy(1) was exceeded)
+        Assert.True(_diagnostics.EvictionTriggered >= 1,
+            "Eviction must fire when any policy is exceeded (OR logic).");
+
+        // Second segment (just-stored) must survive (VPC.E.3 immunity)
+        var result = await cache.GetDataAsync(TestHelpers.CreateRange(100, 109), CancellationToken.None);
+        Assert.Equal(CacheInteraction.FullHit, result.CacheInteraction);
+
+        await cache.WaitForIdleAsync();
+    }
+
+    // ============================================================
+    // VPC.E.3a — Only Segment at Capacity: Eviction Is a No-Op
+    // ============================================================
+
+    /// <summary>
+    /// Invariant VPC.E.3a [Behavioral]: When eviction is triggered but the just-stored segment is
+    /// the only segment in the cache, the eviction loop finds no eligible candidates (all are immune)
+    /// and becomes a no-op. The segment survives and is immediately accessible.
+    /// </summary>
+    [Fact]
+    public async Task Invariant_VPC_E_3a_OnlySegmentAtCapacity_EvictionIsNoOp()
+    {
+        // ARRANGE — maxSegmentCount=1; first store immediately hits capacity.
+        // The just-stored segment is the ONLY segment AND it is immune — eviction loop is a no-op.
+        var cache = CreateCache(maxSegmentCount: 1);
+
+        // ACT — store first (and only) segment
+        await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(0, 9));
+
+        // ASSERT — eviction was evaluated (policy is exceeded: count 1 >= limit 1) ...
+        Assert.Equal(1, _diagnostics.EvictionEvaluated);
+        // ... but NO segment was removed (just-stored segment is immune)
+        Assert.Equal(0, _diagnostics.EvictionSegmentRemoved);
+
+        // The only segment is still accessible as a FullHit
+        var result = await cache.GetDataAsync(TestHelpers.CreateRange(0, 9), CancellationToken.None);
+        Assert.Equal(CacheInteraction.FullHit, result.CacheInteraction);
+        TestHelpers.AssertUserDataCorrect(result.Data, TestHelpers.CreateRange(0, 9));
+
+        await cache.WaitForIdleAsync();
+    }
+
+    // ============================================================
+    // VPC.T.3 — Disposal Cancels Pending TTL Work Items
+    // ============================================================
+
+    /// <summary>
+    /// Invariant VPC.T.3 [Behavioral]: Pending TTL work items are cancelled when the cache is disposed.
+    /// No TTL-related background failures should occur after disposal.
+    /// </summary>
+    [Fact]
+    public async Task Invariant_VPC_T_3_Disposal_CancelsPendingTtlWorkItems()
+    {
+        // ARRANGE — very long TTL so the work item will definitely still be pending at disposal time
+        var options = new VisitedPlacesCacheOptions<int, int>(
+            eventChannelCapacity: 128,
+            segmentTtl: TimeSpan.FromHours(1));
+        var cache = TrackCache(TestHelpers.CreateCacheWithSimpleSource(_domain, _diagnostics, options));
+
+        // ACT — store a segment (schedules a TTL work item with a 1-hour delay)
+        await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(0, 9));
+        Assert.Equal(1, _diagnostics.TtlWorkItemScheduled);
+
+        // Dispose immediately — the pending Task.Delay for 1 hour must be cancelled
+        await cache.DisposeAsync();
+
+        // Brief wait to allow any would-be TTL activity to surface (should be silent)
+        await Task.Delay(100);
+
+        // ASSERT — no TTL expiration (the delay was cancelled) and no background failures
+        Assert.Equal(0, _diagnostics.TtlSegmentExpired);
+        Assert.Equal(0, _diagnostics.BackgroundOperationFailed);
+    }
+
+    // ============================================================
+    // VPC.C.7 — Snapshot Normalization Correctness
+    // ============================================================
+
+    /// <summary>
+    /// Invariant VPC.C.7 [Behavioral]: <c>SnapshotAppendBufferStorage</c> normalizes atomically.
+    /// After the append buffer is flushed into the snapshot (at buffer capacity), all previously
+    /// added segments remain accessible — none are lost during the normalization pass.
+    /// </summary>
+    [Fact]
+    public async Task Invariant_VPC_C_7_SnapshotNormalization_AllSegmentsRetainedAfterFlush()
+    {
+        // ARRANGE — use AppendBufferSize=3 to trigger normalization after every 3 additions.
+        // Storing 9 non-overlapping segments forces 3 normalization passes.
+        var storageOptions = new SnapshotAppendBufferStorageOptions<int, int>(appendBufferSize: 3);
+        var cache = CreateCache(storageOptions, maxSegmentCount: 100);
+
+        var ranges = Enumerable.Range(0, 9)
+            .Select(i => TestHelpers.CreateRange(i * 20, i * 20 + 9))
+            .ToArray();
+
+        // ACT — store all segments sequentially, waiting for each to be processed
+        foreach (var range in ranges)
+        {
+            await cache.GetDataAndWaitForIdleAsync(range);
+        }
+
+        // ASSERT — all 9 segments were stored
+        Assert.Equal(9, _diagnostics.BackgroundSegmentStored);
+
+        // All 9 segments are still accessible as FullHits (normalization didn't lose any)
+        foreach (var range in ranges)
+        {
+            var result = await cache.GetDataAsync(range, CancellationToken.None);
+            Assert.Equal(CacheInteraction.FullHit, result.CacheInteraction);
+            TestHelpers.AssertUserDataCorrect(result.Data, range);
+        }
+
+        await cache.WaitForIdleAsync();
+    }
+
+    // ============================================================
+    // VPC.A.9b — DataSourceFetchGap Diagnostic
+    // ============================================================
+
+    /// <summary>
+    /// Invariant VPC.A.9b [Behavioral]: The <c>DataSourceFetchGap</c> diagnostic fires exactly once
+    /// per gap fetch. A full miss fires once; a partial hit fires once per distinct gap;
+    /// a full hit fires zero times.
+    /// </summary>
+    [Fact]
+    public async Task Invariant_VPC_A_9b_DataSourceFetchGap_FiredOncePerGap()
+    {
+        // ARRANGE
+        var spy = new SpyDataSource();
+        var cache = TrackCache(TestHelpers.CreateCache(
+            spy, _domain, TestHelpers.CreateDefaultOptions(), _diagnostics));
+
+        // ACT — full miss: 1 gap fetch
+        await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(0, 9));
+        Assert.Equal(1, _diagnostics.DataSourceFetchGap);
+
+        // ACT — full hit: 0 gap fetches
+        _diagnostics.Reset();
+        await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(0, 9));
+        Assert.Equal(0, _diagnostics.DataSourceFetchGap);
+
+        // ACT — partial hit: [0,9] cached; request [5,14] has one gap [10,14] → 1 gap fetch
+        _diagnostics.Reset();
+        await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(5, 14));
+        Assert.Equal(1, _diagnostics.DataSourceFetchGap);
+
+        // ACT — two-gap partial hit: [0,9] and [20,29] cached; [0,29] has one gap [10,19] → 1 fetch
+        await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(20, 29));
+        _diagnostics.Reset();
+        await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(0, 29));
+        Assert.Equal(1, _diagnostics.DataSourceFetchGap);
+
+        await cache.WaitForIdleAsync();
+    }
+
+    // ============================================================
     // TEST DOUBLES
     // ============================================================
 
@@ -768,6 +1050,24 @@ public sealed class VisitedPlacesCacheInvariantTests : IAsyncDisposable
         private readonly TimeSpan _delay;
 
         public SlowDataSource(TimeSpan delay) => _delay = delay;
+
+        public async Task<RangeChunk<int, int>> FetchAsync(Range<int> range, CancellationToken cancellationToken)
+        {
+            await Task.Delay(_delay, cancellationToken);
+            var data = DataGenerationHelpers.GenerateDataForRange(range);
+            return new RangeChunk<int, int>(range, data);
+        }
+    }
+
+    /// <summary>
+    /// A data source that delays fetches and respects cancellation.
+    /// Used to verify that the CancellationToken is propagated to FetchAsync.
+    /// </summary>
+    private sealed class CancellableDelayDataSource : IDataSource<int, int>
+    {
+        private readonly TimeSpan _delay;
+
+        public CancellableDelayDataSource(TimeSpan delay) => _delay = delay;
 
         public async Task<RangeChunk<int, int>> FetchAsync(Range<int> range, CancellationToken cancellationToken)
         {

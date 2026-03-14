@@ -240,6 +240,7 @@ Assert.Equal(expectedCount, cache.SegmentCount);
 - Without this guarantee, `FindIntersecting` could return the same segment reference twice (once from the new snapshot, once from the stale append buffer count), causing `Assemble` to double the data for that segment — silent data corruption.
 - The lock is held for nanoseconds (two field reads on the reader side, two field writes on the writer side). `Normalize` fires at most once per `appendBufferSize` additions, so contention is negligible.
 - `LinkedListStrideIndexStorage` is not affected — it inserts segments directly into the linked list with no dual-source scan.
+- **`_appendBuffer` is intentionally NOT cleared after normalization.** A `FindIntersecting` call that captured `appendCount > 0` before the lock update is still iterating `_appendBuffer` lock-free when `Normalize` completes. Calling `Array.Clear` on the shared buffer at that point nulls out slots the reader is actively dereferencing, causing a `NullReferenceException`. Leaving stale references in place is safe: readers entering after the lock update capture `appendCount = 0` and skip the buffer scan entirely; the next `Add()` call overwrites each slot before incrementing the count, so stale entries are never observable to new readers.
 
 ---
 
