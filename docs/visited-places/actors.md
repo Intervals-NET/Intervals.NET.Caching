@@ -149,13 +149,9 @@ GetDataAsync()
 ### Background Path (Event Processor)
 
 **Responsibilities**
-- Process each `CacheNormalizationRequest` in the fixed sequence: metadata update → storage → eviction evaluation + execution → post-removal notification.
-- Delegate Step 1 (metadata update) to `EvictionEngine.UpdateMetadata`.
-- Delegate segment storage to the Storage Strategy.
-- Call `engine.InitializeSegment(segment)` immediately after each new segment is stored (sets up selector metadata and notifies stateful policies).
-- Delegate Step 3+4 (policy evaluation and execution) to `EvictionEngine.EvaluateAndExecute`.
-- Perform all `storage.Remove` calls for the returned eviction candidates (sole storage writer).
-- Call `engine.OnSegmentRemoved(segment)` for each removed segment after storage removal.
+- Process each `CacheNormalizationRequest` in the fixed four-step sequence (Invariant VPC.B.3): (1) metadata update, (2) storage, (3) eviction evaluation + execution, (4) post-removal notification. See `docs/visited-places/architecture.md` — Threading Model, Context 2 for the authoritative step-by-step description.
+- Perform all `storage.Add` and `storage.Remove` calls (sole storage writer on the add path).
+- Delegate all eviction concerns through `EvictionEngine` (sole eviction dependency).
 
 **Non-responsibilities**
 - Does not serve user requests.
@@ -307,11 +303,9 @@ The Eviction Executor is an **internal implementation detail of `EvictionEngine`
 
 **Responsibilities**
 - Receive a newly stored segment from `CacheNormalizationExecutor` (via `TtlEngine.ScheduleExpirationAsync`) when `SegmentTtl` is configured.
-- Await `Task.Delay` for the remaining TTL duration (fire-and-forget on the thread pool; concurrent with other TTL work items).
-- On expiry, call `segment.MarkAsRemoved()` — if it returns `true` (first caller), call `storage.Remove(segment)` and `engine.OnSegmentRemoved(segment)`.
-- Fire `IVisitedPlacesCacheDiagnostics.TtlSegmentExpired()` only when the segment was actually removed (i.e., `TryRemove` returned `true`).
-- Run on an independent `ConcurrentWorkScheduler` (never on the Background Storage Loop or User Thread).
-- Support cancellation: `OperationCanceledException` from `Task.Delay` is swallowed cleanly on disposal.
+- Await TTL delay fire-and-forget on the thread pool; on expiry, call `segment.MarkAsRemoved()` and, if first caller, perform storage removal and eviction engine notification.
+- Fire `IVisitedPlacesCacheDiagnostics.TtlSegmentExpired()` only on actual removal.
+- Support cancellation on disposal. See `docs/visited-places/architecture.md` — Threading Model, Context 3 for the authoritative mechanism description.
 
 **Non-responsibilities**
 - Does not interact with the normalization scheduler or the Background Storage Loop directly.

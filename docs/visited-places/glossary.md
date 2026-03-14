@@ -23,22 +23,17 @@ VisitedPlaces-specific term definitions. Shared terms — `IRangeCache`, `IDataS
 
 ## Eviction Terms
 
-**EvictionMetadata** — Per-segment metadata owned by the configured Eviction Selector (`IEvictionMetadata?` on each `CachedSegment`). Selector-specific:
-- `LruMetadata { DateTime LastAccessedAt }` — updated on every `UsedSegments` event
-- `FifoMetadata { DateTime CreatedAt }` — immutable after creation
-- `SmallestFirstMetadata { long Span }` — immutable after creation; computed from `Range.Span(domain)`
-
-Timestamps are obtained from an injected `TimeProvider`. See `docs/visited-places/eviction.md` for the full metadata ownership model.
+**EvictionMetadata** — Per-segment metadata owned by the configured Eviction Selector (`IEvictionMetadata?` on each `CachedSegment`). Selector-specific: `LruMetadata { LastAccessedAt }`, `FifoMetadata { CreatedAt }`, `SmallestFirstMetadata { Span }`. See `docs/visited-places/eviction.md` for the full metadata ownership model and lifecycle.
 
 **EvictionPolicy** — Determines whether eviction should run after each storage step. Evaluates the current `CachedSegments` state and produces an `IEvictionPressure` object. Eviction triggers when ANY configured policy fires (OR semantics, Invariant VPC.E.1a). Built-in: `MaxSegmentCountPolicy`, `MaxTotalSpanPolicy`.
 
-**EvictionPressure** — A constraint tracker produced by an `IEvictionPolicy` when its limit is exceeded. Exposes `IsExceeded` and `Reduce(segment)`. The executor calls `Reduce` after each candidate removal until `IsExceeded` becomes `false`. See `docs/visited-places/eviction.md` for the full pressure model.
+**EvictionPressure** — A constraint tracker produced by an `IEvictionPolicy` when its limit is exceeded. The executor repeatedly calls `Reduce(candidate)` until `IsExceeded` becomes `false`. See `docs/visited-places/eviction.md` for the full pressure model.
 
 **EvictionSelector** — Defines, creates, and updates per-segment eviction metadata. Selects the single worst eviction candidate from a random sample of segments via `TrySelectCandidate` (O(SampleSize), controlled by `EvictionSamplingOptions.SampleSize`). Built-in: `LruEvictionSelector`, `FifoEvictionSelector`, `SmallestFirstEvictionSelector`.
 
 **EvictionEngine** — Internal facade encapsulating the full eviction subsystem. Exposed to `CacheNormalizationExecutor` as its sole eviction dependency. Orchestrates selector metadata management, policy evaluation, and the constraint satisfaction loop. See `docs/visited-places/eviction.md`.
 
-**EvictionExecutor** — Internal component of `EvictionEngine`. Executes the constraint satisfaction loop: builds the immune set from just-stored segments, repeatedly calls `selector.TrySelectCandidate(allSegments, immune, out candidate)` and calls `pressure.Reduce(candidate)` until all pressures are satisfied or no eligible candidates remain.
+**EvictionExecutor** — Internal component of `EvictionEngine` that runs the constraint satisfaction loop until all policy pressures are satisfied or no eligible candidates remain. See `docs/visited-places/eviction.md`.
 
 **Just-Stored Segment Immunity** — The segment(s) stored in step 2 of the current background event are always excluded from the eviction candidate set (Invariant VPC.E.3). Prevents an infinite fetch-store-evict loop on every new cache miss.
 
@@ -52,7 +47,7 @@ Timestamps are obtained from an injected `TimeProvider`. See `docs/visited-place
 
 **TtlExpirationWorkItem** — Carries a segment reference and expiry timestamp. Scheduled on a `ConcurrentWorkScheduler`; each work item awaits `Task.Delay` independently on the thread pool (fire-and-forget).
 
-**Idempotent Removal** — The coordination mechanism between TTL expiration and eviction. `CachedSegment.MarkAsRemoved()` performs an `Interlocked.CompareExchange` on the segment's `_isRemoved` flag. The first caller (returns `true`) performs storage removal; concurrent callers (return `false`) perform no-op. See Invariant VPC.T.1.
+**Idempotent Removal** — The coordination mechanism between TTL expiration and eviction. `CachedSegment.MarkAsRemoved()` ensures only the first caller performs storage removal; concurrent callers are no-ops. See Invariant VPC.T.1 and `docs/visited-places/architecture.md` — Single-Writer Details.
 
 ---
 
@@ -62,7 +57,7 @@ Timestamps are obtained from an injected `TimeProvider`. See `docs/visited-place
 
 **TTL Loop** — Independent background work dispatched fire-and-forget on the thread pool via `ConcurrentWorkScheduler`. Awaits TTL delays and removes expired segments directly via `ISegmentStorage`. Only present when `SegmentTtl` is configured. Runs concurrently with the Background Storage Loop; uses `CachedSegment.MarkAsRemoved()` for coordination.
 
-**FIFO Event Processing** — Unlike `SlidingWindowCache` (latest-intent-wins), VPC processes every `CacheNormalizationRequest` in the exact order it was enqueued. No supersession. Required for metadata accuracy (e.g., LRU `LastAccessedAt` depends on processing every access event). Invariant VPC.B.1, VPC.B.1a.
+**FIFO Event Processing** — Unlike `SlidingWindowCache` (latest-intent-wins), VPC processes every `CacheNormalizationRequest` in the exact order it was enqueued — no supersession. See `docs/visited-places/architecture.md` — FIFO vs. Latest-Intent-Wins for the rationale. Invariant VPC.B.1, VPC.B.1a.
 
 ---
 

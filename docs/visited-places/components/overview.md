@@ -140,21 +140,7 @@ UserRequestHandler.HandleRequestAsync(requestedRange, ct)
 |--------------------------------------------------------------------|----------------|------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `Core/Background/CacheNormalizationExecutor<TRange,TData,TDomain>` | `sealed class` | internal   | Processes `CacheNormalizationRequest`s; implements the four-step background sequence; sole storage writer (add path); delegates eviction to `EvictionEngine`, TTL scheduling to `TtlEngine` |
 
-**Four-step sequence per event (Invariant VPC.B.3):**
-```
-CacheNormalizationExecutor.ExecuteAsync(request, ct)
-  Step 1: engine.UpdateMetadata(request.UsedSegments)
-  Step 2: [if FetchedData != null]
-            storage.Add(segment)
-            engine.InitializeSegment(segment)
-            ttlEngine?.ScheduleExpirationAsync(segment)   ← if TTL enabled
-  Step 3: [if step 2 ran]
-            engine.EvaluateAndExecute(allSegments, justStored) → toRemove
-  Step 4: [foreach segment in toRemove]
-            segment.TryMarkAsRemoved()                    ← skip if already removed by TTL
-            storage.Remove(segment)
-            engine.OnSegmentRemoved(segment)
-```
+**Four-step sequence per event (Invariant VPC.B.3):** metadata update → storage + TTL scheduling → eviction evaluation + execution → post-removal. See `docs/visited-places/architecture.md` — Threading Model, Context 2 for the authoritative step-by-step description.
 
 ---
 

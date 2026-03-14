@@ -12,21 +12,6 @@ Component maps describe "what exists"; scenarios describe "what happens". Scenar
 
 ---
 
-## Base Definitions
-
-- **RequestedRange** — A range requested by the user.
-- **CachedSegments** — The collection of non-contiguous cached segments currently stored in the cache.
-- **Segment** — A single contiguous range with its associated data, stored in `CachedSegments`.
-- **EvictionMetadata** — Per-segment metadata owned by the configured Eviction Selector (`IEvictionMetadata?` on each `CachedSegment`). Selector-specific: `LruMetadata { LastAccessedAt }`, `FifoMetadata { CreatedAt }`, `SmallestFirstMetadata { Span }`. Timestamps are obtained from an injected `TimeProvider`; spans are computed from `Range.Span(domain)`.
-- **CacheNormalizationRequest** — A message published by the User Path to the Background Path after every `GetDataAsync` call. Carries used segment references and any newly fetched data.
-- **IDataSource** — A range-based data source used to fetch data absent from the cache.
-- **EvictionPolicy** — Determines whether eviction should run (e.g., too many segments, too much total span). Multiple policies may be active; eviction triggers when ANY fires. Produces an `IEvictionPressure` object representing the violated constraint.
-- **EvictionSelector** — Defines, creates, and updates per-segment eviction metadata. Selects the single worst eviction candidate from a random sample of segments (O(SampleSize)) via `TrySelectCandidate`. Strategies: LRU, FIFO, smallest-first, etc.
-- **EvictionEngine** — Facade encapsulating the full eviction subsystem. Exposed to `CacheNormalizationExecutor` as its sole eviction dependency. Orchestrates: selector metadata management (`UpdateMetadata`, `InitializeSegment`), policy evaluation, and the constraint satisfaction loop (`EvaluateAndExecute`). Fires eviction-specific diagnostics. Has no storage reference.
-- **EvictionExecutor** — Internal component of `EvictionEngine`. Executes the constraint satisfaction loop: builds the immune set from just-stored segments, repeatedly calls `selector.TrySelectCandidate(allSegments, immune, out candidate)` and calls `pressure.Reduce(candidate)` until all pressures are satisfied or no eligible candidates remain. Returns the removal list to the engine.
-
----
-
 ## Design
 
 Scenarios are grouped by path:
@@ -191,12 +176,7 @@ TTL Loop (only when SegmentTtl is configured)         [fire-and-forget per segme
 
 ## II. Background Path Scenarios
 
-**Core principle**: The Background Path is the sole writer of cache state. It processes `CacheNormalizationRequest`s in strict FIFO order. No supersession — every request is processed. Each request triggers:
-
-1. **Metadata update** — update per-segment eviction metadata for all used segments by calling `engine.UpdateMetadata(usedSegments)` (delegated to `selector.UpdateMetadata`)
-2. **Storage** — store fetched data as new segment(s), if `FetchedData != null`; call `engine.InitializeSegment(segment)` for each new segment (initializes selector metadata and notifies stateful policies)
-3. **Eviction evaluation + execution** — call `engine.EvaluateAndExecute(allSegments, justStoredSegments)` if new data was stored; returns list of segments to remove
-4. **Post-removal** — remove returned segments from storage (`storage.Remove`); call `engine.OnSegmentRemoved(segment)` for each removed segment to notify policies
+**Core principle**: The Background Path is the sole writer of cache state. It processes `CacheNormalizationRequest`s in strict FIFO order (no supersession). Each request triggers four steps: (1) metadata update, (2) storage, (3) eviction evaluation + execution, (4) post-removal. See `docs/visited-places/architecture.md` — Threading Model, Context 2 for the authoritative description.
 
 ---
 
@@ -288,7 +268,7 @@ TTL Loop (only when SegmentTtl is configured)         [fire-and-forget per segme
 
 **Key difference from SWC**: There is no "latest wins" supersession. Every event is processed. E₂ cannot skip E₁, and E₃ cannot skip E₂. The Background Path provides a total ordering over all cache mutations.
 
-**Rationale**: Metadata accuracy depends on processing every access. Supersession would silently lose access events, causing incorrect eviction decisions (e.g., LRU evicting a recently-used segment).
+**Rationale**: See `docs/visited-places/architecture.md` — FIFO vs. Latest-Intent-Wins.
 
 ---
 
@@ -460,7 +440,7 @@ TTL Loop (only when SegmentTtl is configured)         [fire-and-forget per segme
 4. Eviction metadata is updated accurately (every access recorded in the correct FIFO order)
 5. Eviction policies are checked after each storage event (not batched)
 
-**Key difference from SWC**: In SWC, a burst of requests results in only the latest intent being executed (supersession). In VPC, every event is processed — statistics accuracy requires it.
+**Key difference from SWC**: In SWC, a burst of requests results in only the latest intent being executed (supersession). In VPC, every event is processed. See `docs/visited-places/architecture.md` — FIFO vs. Latest-Intent-Wins for the rationale.
 
 **Outcome**: Cache converges to an accurate eviction metadata state reflecting all accesses in order. Eviction decisions are based on complete access history.
 

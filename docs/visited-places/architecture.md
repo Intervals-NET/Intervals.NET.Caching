@@ -14,11 +14,7 @@ Unlike `SlidingWindowCache`, VPC:
 - **Never merges segments** — each independently-fetched range remains a distinct segment
 - **Processes every event** — no supersession; FIFO ordering preserves metadata accuracy
 
-// todo: Intervals.NET.Caching - is not a standalone NuGet package - it is an internal project with shared components.
-The library spans two NuGet packages:
-
-- **`Intervals.NET.Caching`** — shared contracts and infrastructure: `IRangeCache`, `IDataSource`, `RangeResult`, `RangeChunk`, `CacheInteraction`, `LayeredRangeCache`, `RangeCacheDataSourceAdapter`, `LayeredRangeCacheBuilder`, `GetDataAndWaitForIdleAsync`.
-- **`Intervals.NET.Caching.VisitedPlaces`** — VPC implementation: `VisitedPlacesCache`, `IVisitedPlacesCache`, `VisitedPlacesCacheOptions`, `VisitedPlacesCacheBuilder`, eviction policies, selectors, and TTL support.
+The library ships one NuGet package: **`Intervals.NET.Caching.VisitedPlaces`**. `Intervals.NET.Caching` is a non-packable shared foundation project (`<IsPackable>false</IsPackable>`) whose types — `IRangeCache`, `IDataSource`, `RangeResult`, `RangeChunk`, `CacheInteraction`, `LayeredRangeCache`, `RangeCacheDataSourceAdapter`, `LayeredRangeCacheBuilder`, `AsyncActivityCounter`, and the strong-consistency extension methods — are compiled directly into the `Intervals.NET.Caching.VisitedPlaces` assembly via `ProjectReference` with `PrivateAssets="all"`. It is never published as a standalone package.
 
 ---
 
@@ -177,12 +173,27 @@ See `docs/shared/invariants.md` group S.J for formal disposal invariants.
 
 ## Multi-Layer Caches
 
-// todo: even if stacking two VPC instances is possible - I do not think that it is a great idea. This section must focus on the support to be used as a layer in layered setup. Probably reference an example from README, or describe it completely
-Multiple `VisitedPlacesCache` instances can be stacked into a cache pipeline using `VisitedPlacesCacheBuilder.Layered(...)`. The outermost layer is user-facing (small, fast cache); inner layers provide progressively larger buffers.
+`VisitedPlacesCache` is designed to participate as a layer in a mixed-type layered cache stack — not as a standalone outer cache, but as a deep inner buffer that absorbs random-access misses from outer `SlidingWindowCache` layers.
+
+**Typical role:** VPC as the innermost layer (L3 random-access absorber) with one or more SWC layers above it as sequential buffers. This arrangement lets the outer SWC layers handle sequential-access bursts efficiently while VPC accumulates and retains data across non-contiguous access patterns.
+
+**Example — three-layer mixed stack** (see `README.md` for the full code example):
+
+```
+User request
+   ↓
+SlidingWindowCache (L1, small 0.5-unit window, user-facing, Snapshot)
+   ↓ miss
+SlidingWindowCache (L2, large 10-unit buffer, CopyOnRead)
+   ↓ miss
+VisitedPlacesCache (L3, random-access absorber, MaxSegmentCount=200, LRU)
+   ↓ miss
+IDataSource (real data source)
+```
 
 Key types in `Intervals.NET.Caching`:
 - **`RangeCacheDataSourceAdapter`** — adapts any `IRangeCache` as an `IDataSource`
-- **`LayeredRangeCacheBuilder`** — wires layers via `AddVisitedPlacesLayer(...)` extension method; returns a `LayeredRangeCache`
+- **`LayeredRangeCacheBuilder`** — wires layers via `AddVisitedPlacesLayer(...)` and `AddSlidingWindowLayer(...)` extension methods; returns a `LayeredRangeCache`
 - **`LayeredRangeCache`** — delegates `GetDataAsync` to the outermost layer; awaits all layers outermost-first on `WaitForIdleAsync`
 
 ### Cascading Miss

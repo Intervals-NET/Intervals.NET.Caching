@@ -6,13 +6,13 @@ Architectural principles that apply across all cache implementations in this sol
 
 ## Single-Writer Architecture
 
-Only one component — the **Rebalance Execution** component — is permitted to mutate shared cache state. All other components (especially the User Path) are strictly read-only with respect to cached data.
+Only one component — the **designated background execution component** — is permitted to mutate shared cache state. All other components (especially the User Path) are strictly read-only with respect to cached data.
 
 **Why:** Eliminates the need for locks on the hot read path. User requests read from a snapshot that only background execution can replace. This enables lock-free reads while maintaining strong consistency guarantees.
 
 **Key rules:**
 - User Path: read-only at all times, in all cache states
-- Rebalance Execution: sole writer — all cache mutations go through this component
+- Background execution component: sole writer — all cache mutations go through this component
 - Cache mutations are atomic (all-or-nothing — no partial states are ever visible)
 
 ---
@@ -24,36 +24,6 @@ User requests must return data immediately without waiting for background optimi
 The User Path reads from the current cache state (or fetches from `IDataSource` on miss), assembles the result, and returns it. It then signals background work (fire-and-forget) and returns to the caller.
 
 **Consequence:** Data returned to the user is always correct, but the cache window may not yet be in the optimal configuration. Background work converges the cache asynchronously.
-
----
-// todo: if this is SWC only - move to SWC, it can not be shared.
-## Intent Model *(SlidingWindowCache only)*
-
-The User Path signals background work by publishing an **intent** — a lightweight, versioned signal carrying the delivered data and the requested range. Intents are not commands: publishing an intent does not guarantee that background execution will occur.
-
-The intent model has two key properties:
-
-1. **Latest-intent-wins:** When multiple intents are published in rapid succession, only the most recent one is processed. Intermediate intents are superseded and discarded. This is the primary burst-resistance mechanism.
-
-2. **Fire-and-forget:** The User Path publishes the intent and returns immediately without awaiting any background response.
-
-**Note:** `VisitedPlacesCache` does not use an intent model. It publishes `CacheNormalizationRequest`s to a FIFO queue and processes every event. See `docs/visited-places/architecture.md` for the VPC background processing model.
-
----
-
-// todo: if this is SWC only - move to SWC, it can not be shared.
-## Decision-Driven Execution *(SlidingWindowCache only)*
-
-Before scheduling cache mutations, background logic runs a multi-stage analytical validation to determine whether rebalancing is actually necessary. Execution is scheduled **only if all validation stages confirm necessity**.
-
-This prevents:
-- Redundant rebalancing when the cache is already optimal
-- Thrashing when the access pattern changes rapidly
-- Unnecessary I/O when the cache already covers the request
-
-The decision is always a pure CPU-only operation: no I/O, no state mutation.
-
-**Note:** `VisitedPlacesCache` has no decision engine. Every `CacheNormalizationRequest` is processed unconditionally. See `docs/visited-places/architecture.md` for the rationale.
 
 ---
 
@@ -100,5 +70,5 @@ Multiple cache instances may be composed into a stack where each layer uses the 
 
 - `docs/shared/invariants.md` — formal invariant groups S.H (activity tracking) and S.J (disposal)
 - `docs/shared/components/infrastructure.md` — `AsyncActivityCounter` and work schedulers
-- `docs/sliding-window/architecture.md` — SlidingWindow-specific architectural details (intent model, decision-driven execution, execution serialization)
+- `docs/sliding-window/architecture.md` — SlidingWindow-specific architectural details (intent model, decision-driven execution, execution serialization, rebalance execution)
 - `docs/visited-places/architecture.md` — VisitedPlaces-specific architectural details (FIFO processing, TTL, disposal)

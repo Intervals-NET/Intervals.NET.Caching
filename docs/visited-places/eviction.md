@@ -407,29 +407,21 @@ Segment evicted (Background Path, step 4):
 
 ## Eviction and Storage: Interaction
 
-Eviction never happens in isolation — it is always the tail of a storage step in background event processing. The full sequence:
+Eviction never happens in isolation — it is always the tail of a storage step in background event processing. For the complete four-step background sequence see `docs/visited-places/architecture.md` — Threading Model, Context 2. Eviction occupies steps 3 and 4:
 
 ```
-Background event received
-  |
-Step 1: Update metadata for UsedSegments         (engine.UpdateMetadata)
-  |                                               → selector.UpdateMetadata
-  |
-Step 2: Store FetchedData as new segment(s)      (Storage Strategy)
-  |      + engine.InitializeSegment(segment)     <- Only if FetchedData != null
-  |        → selector.InitializeMetadata(...)
-  |        → evaluator.OnSegmentAdded(...)
-  |
+... (Steps 1–2: metadata update + storage — see architecture.md)
+   |
 Step 3+4: EvaluateAndExecute                     (EvictionEngine)
-  |        → evaluator.Evaluate(allSegments)     <- Only if step 2 ran
-  |          → [if pressure.IsExceeded]
-  |            executor.Execute(...)
-  |              → selector.TrySelectCandidate(...)  [loop]
-  |        Returns: toRemove list
-  |
+   |        → evaluator.Evaluate(allSegments)     ← Only if step 2 ran (FetchedData != null)
+   |          → [if pressure.IsExceeded]
+   |            executor.Execute(...)
+   |              → selector.TrySelectCandidate(...)  [loop until pressure satisfied]
+   |        Returns: toRemove list
+   |
 Step 4 (storage): Remove evicted segments        (CacheNormalizationExecutor, sole storage writer)
-  |      + engine.OnSegmentRemoved(segment) per removed segment
-  |        → evaluator.OnSegmentRemoved(...)  per segment
+   |      + engine.OnSegmentRemoved(segment) per removed segment
+   |        → evaluator.OnSegmentRemoved(...)  per segment
 ```
 
 Steps 3 and 4 are **skipped entirely** for stats-only events (full-hit events where `FetchedData == null`). This means reads never trigger eviction.
