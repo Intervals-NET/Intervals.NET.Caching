@@ -110,13 +110,21 @@ internal abstract class WorkSchedulerBase<TWorkItem> : IWorkScheduler<TWorkItem>
         }
         finally
         {
-            // Dispose the work item (releases its CancellationTokenSource etc.)
-            // This is the canonical disposal site — every work item is disposed here,
-            // so no separate dispose step is needed during scheduler disposal.
-            workItem.Dispose();
-
-            // Decrement activity counter — ALWAYS happens after execution completes/cancels/fails.
-            ActivityCounter.DecrementActivity();
+            // Nested try/finally ensures DecrementActivity() fires even if Dispose() throws
+            // (Invariant S.H.2). A throwing Dispose() would otherwise skip the decrement,
+            // leaving the counter permanently incremented and hanging WaitForIdleAsync forever.
+            try
+            {
+                // Dispose the work item (releases its CancellationTokenSource etc.)
+                // This is the canonical disposal site — every work item is disposed here,
+                // so no separate dispose step is needed during scheduler disposal.
+                workItem.Dispose();
+            }
+            finally
+            {
+                // Decrement activity counter — ALWAYS happens after execution completes/cancels/fails.
+                ActivityCounter.DecrementActivity();
+            }
         }
     }
 

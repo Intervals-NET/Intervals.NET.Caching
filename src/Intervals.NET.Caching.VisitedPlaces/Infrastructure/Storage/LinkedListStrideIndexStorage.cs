@@ -94,6 +94,18 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
         // priority over the Background Path's unlinking loop (C4, C5).
         lock (_listSyncRoot)
         {
+            // Re-validate the anchor inside the lock (VPC.D.7 TOCTOU guard).
+            // The outer anchorNode.List != null check (above) is a lock-free fast-path hint;
+            // NormalizeStrideIndex Pass 2 can unlink the anchor between that check and here.
+            // If the anchor was unlinked between the outer check and the lock acquisition,
+            // node.Next is null after Remove(), so the walk would terminate immediately and
+            // miss all segments — a false cache miss. Re-checking inside the lock eliminates
+            // the race: if stale, fall back to _list.First for a full walk.
+            if (startNode?.List == null)
+            {
+                startNode = null;
+            }
+
             var node = startNode ?? _list.First;
 
             while (node != null)

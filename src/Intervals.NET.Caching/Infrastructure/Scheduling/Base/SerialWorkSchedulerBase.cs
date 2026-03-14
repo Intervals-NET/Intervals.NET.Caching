@@ -62,9 +62,25 @@ internal abstract class SerialWorkSchedulerBase<TWorkItem> : WorkSchedulerBase<T
         }
         catch
         {
-            // If enqueue fails, decrement the activity counter to avoid a permanent leak.
-            // Successful enqueue paths decrement in the processing pipeline's finally block.
-            ActivityCounter.DecrementActivity();
+            // If enqueue fails, dispose the work item (releasing its CancellationTokenSource)
+            // and decrement the activity counter to avoid permanent leaks.
+            // Successful enqueue paths dispose and decrement in the processing pipeline's finally block.
+
+            // Nested try/finally ensures DecrementActivity() fires even if Dispose() throws
+            // (Invariant S.H.2). A throwing Dispose() would otherwise skip the decrement,
+            // leaving the counter permanently incremented and hanging WaitForIdleAsync forever.
+            try
+            {
+                // Dispose the work item (releases its CancellationTokenSource etc.)
+                // This is the canonical disposal site — every work item is disposed here,
+                // so no separate dispose step is needed during scheduler disposal.
+                workItem.Dispose();
+            }
+            finally
+            {
+                // Decrement activity counter — ALWAYS happens after execution completes/cancels/fails.
+                ActivityCounter.DecrementActivity();
+            }
             throw;
         }
     }

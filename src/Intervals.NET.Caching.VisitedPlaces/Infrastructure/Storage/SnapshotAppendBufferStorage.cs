@@ -284,6 +284,23 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
             j++;
         }
 
+        // Guard against TOCTOU race: a TTL thread may call TryMarkAsRemoved() on a segment
+        // between the counting pass in Normalize() (which sized the result array) and this
+        // merge pass (which re-checks IsRemoved). If that happens, fewer elements are written
+        // than allocated, leaving null trailing slots that would cause NullReferenceException
+        // in FindIntersecting's binary search and FindLastAtOrBefore.
+        //
+        // Trimming to the actual write count is lock-free and safe:
+        //   - On the happy path (no race), k == result.Length and the branch is never taken.
+        //   - On the rare race path, Array.Resize allocates a new array of size k and copies
+        //     the first k elements, discarding the null trailing slots.
+        //   - The counting pass in Normalize() remains a good-faith size hint that avoids
+        //     allocation on the common case; it does not need to be exact.
+        if (k < result.Length)
+        {
+            Array.Resize(ref result, k);
+        }
+
         return result;
     }
 

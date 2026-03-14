@@ -43,11 +43,23 @@ At every publication site, the counter increment happens before the visibility e
 
 ---
 
-**S.H.2** 🔵 **[Architectural]** **Activity counter is decremented in `finally` blocks.**
+**S.H.2** 🔵 **[Architectural]** **Activity counter is decremented in `finally` blocks, and `DecrementActivity()` must be protected from `Dispose()` throwing.**
 
 Every path that increments the counter (via `IncrementActivity`) has a corresponding `DecrementActivity()` in a `finally` block — unconditional cleanup regardless of success, failure, or cancellation.
 
-**Rationale:** Ensures the counter remains balanced even when exceptions or cancellation interrupt normal flow. An unbalanced counter would leave `WaitForIdleAsync` permanently waiting.
+Where `workItem.Dispose()` precedes `DecrementActivity()` in the same `finally` block, `Dispose()` MUST be wrapped in a nested `try/finally` so that an unexpected exception thrown by `Dispose()` does not bypass the `DecrementActivity()` call:
+
+```csharp
+finally
+{
+    try { workItem.Dispose(); }
+    finally { ActivityCounter.DecrementActivity(); }
+}
+```
+
+**Rationale:** Ensures the counter remains balanced even when exceptions or cancellation interrupt normal flow. An unbalanced counter would leave `WaitForIdleAsync` permanently waiting. The nested `try/finally` pattern additionally ensures that a misbehaving `Dispose()` implementation cannot break the counter invariant.
+
+**Enforcement:** `WorkSchedulerBase.ExecuteWorkItemCoreAsync` (execution pipeline) and `SerialWorkSchedulerBase.PublishWorkItemAsync` (enqueue error path)
 
 ---
 

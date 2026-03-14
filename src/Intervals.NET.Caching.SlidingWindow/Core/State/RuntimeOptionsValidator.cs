@@ -28,6 +28,20 @@ internal static class RuntimeOptionsValidator
         double? leftThreshold,
         double? rightThreshold)
     {
+        // NaN comparisons always return false in IEEE 754, so NaN would silently pass
+        // all subsequent range checks and corrupt geometry calculations. Guard explicitly.
+        if (double.IsNaN(leftCacheSize))
+        {
+            throw new ArgumentOutOfRangeException(nameof(leftCacheSize),
+                "LeftCacheSize must not be NaN.");
+        }
+
+        if (double.IsNaN(rightCacheSize))
+        {
+            throw new ArgumentOutOfRangeException(nameof(rightCacheSize),
+                "RightCacheSize must not be NaN.");
+        }
+
         if (leftCacheSize < 0)
         {
             throw new ArgumentOutOfRangeException(nameof(leftCacheSize),
@@ -38,6 +52,18 @@ internal static class RuntimeOptionsValidator
         {
             throw new ArgumentOutOfRangeException(nameof(rightCacheSize),
                 "RightCacheSize must be greater than or equal to 0.");
+        }
+
+        if (leftThreshold.HasValue && double.IsNaN(leftThreshold.Value))
+        {
+            throw new ArgumentOutOfRangeException(nameof(leftThreshold),
+                "LeftThreshold must not be NaN.");
+        }
+
+        if (rightThreshold.HasValue && double.IsNaN(rightThreshold.Value))
+        {
+            throw new ArgumentOutOfRangeException(nameof(rightThreshold),
+                "RightThreshold must not be NaN.");
         }
 
         if (leftThreshold is < 0)

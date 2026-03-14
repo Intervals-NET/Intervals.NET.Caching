@@ -242,6 +242,14 @@ Assert.Equal(expectedCount, cache.SegmentCount);
 - `LinkedListStrideIndexStorage` is not affected — it inserts segments directly into the linked list with no dual-source scan.
 - **`_appendBuffer` is intentionally NOT cleared after normalization.** A `FindIntersecting` call that captured `appendCount > 0` before the lock update is still iterating `_appendBuffer` lock-free when `Normalize` completes. Calling `Array.Clear` on the shared buffer at that point nulls out slots the reader is actively dereferencing, causing a `NullReferenceException`. Leaving stale references in place is safe: readers entering after the lock update capture `appendCount = 0` and skip the buffer scan entirely; the next `Add()` call overwrites each slot before incrementing the count, so stale entries are never observable to new readers.
 
+**VPC.C.8** [Architectural] **`MergeSorted` defensively trims its result array** to the actual number of elements written, guarding against a TOCTOU race with the TTL Loop.
+
+- `Normalize()` counts live segments in two passes (counting pass, then merge pass). If a TTL work item calls `CachedSegment.TryMarkAsRemoved()` on a segment between these two passes, that segment is counted as live but then skipped as removed during the merge — leaving null trailing slots in the result array.
+- Without trimming, `FindIntersecting`'s binary search (`FindLastAtOrBefore`) would dereference a null element, producing a `NullReferenceException` on the User Path.
+- `MergeSorted` compares the write cursor `k` against `result.Length` after all merge loops complete. If `k < result.Length` (race occurred), it calls `Array.Resize(ref result, k)` to discard the null trailing slots before publishing.
+- On the common path (no concurrent TTL expiration during the narrow count-to-merge window), `k == result.Length` and the branch is not taken — zero overhead.
+- This fix is entirely lock-free: it requires no coordination between the Background Storage Loop and the TTL Loop beyond the existing `CachedSegment.TryMarkAsRemoved()` CAS. The counting pass remains a good-faith size hint that avoids allocation on the common case; it does not need to be exact.
+
 ---
 
 ## VPC.D. Concurrency Invariants
@@ -277,6 +285,16 @@ Assert.Equal(expectedCount, cache.SegmentCount);
 - **`OnSegmentAdded` and `Evaluate` remain single-threaded**: called only from the Background Storage Loop, inheriting VPC.D.3's single-writer guarantee
 - Pressure objects (`IEvictionPressure`) are stack-local: created fresh per evaluation cycle by `IEvictionPolicy.Evaluate`, used within a single `EvaluateAndExecute` call, and then discarded
 - The `EvictionExecutor` and `IEvictionSelector` are single-threaded — they run only within the Background Storage Loop's `EvaluateAndExecute` call
+
+**VPC.D.7** [Architectural] **`LinkedListStrideIndexStorage.FindIntersecting` re-validates the stride anchor inside `_listSyncRoot`** before using it as the walk start node.
+
+- The stride index is published lock-free via `Volatile.Write`; `FindIntersecting` reads it via `Volatile.Read` and performs a binary search to find the rightmost anchor at or before `range.Start` — all without holding the lock.
+- An outer `anchorNode.List != null` check (before lock acquisition) acts as a fast-path hint: it avoids acquiring `_listSyncRoot` when the anchor is obviously stale.
+- However, `NormalizeStrideIndex` Pass 2 can physically unlink the anchor node (inside its own per-node `_listSyncRoot` acquisition) between the outer check and `FindIntersecting`'s own lock acquisition — a TOCTOU race. After `Remove()`, `node.Next` is null, so the walk would start from the unlinked node and terminate immediately, producing a false cache miss.
+- The fix: after acquiring `_listSyncRoot`, `FindIntersecting` re-evaluates `startNode?.List == null`. If the anchor was unlinked in the narrow window between the two checks, `startNode` is reset to null and the walk falls back to `_list.First` — a safe full-list walk.
+- On the common path (anchor still live), the inner check is a single null comparison against a volatile field — negligible overhead.
+
+**Enforcement:** `LinkedListStrideIndexStorage.FindIntersecting` in `src/Intervals.NET.Caching.VisitedPlaces/Infrastructure/Storage/LinkedListStrideIndexStorage.cs`
 
 ---
 
@@ -432,8 +450,8 @@ VPC invariant groups:
 |--------|-------------------------------------------|-------|
 | VPC.A  | User Path & Fast User Access              | 12    |
 | VPC.B  | Background Path & Event Processing        | 8     |
-| VPC.C  | Segment Storage & Non-Contiguity          | 7     |
-| VPC.D  | Concurrency                               | 6     |
+| VPC.C  | Segment Storage & Non-Contiguity          | 8     |
+| VPC.D  | Concurrency                               | 7     |
 | VPC.E  | Eviction                                  | 14    |
 | VPC.F  | Data Source & I/O                         | 4     |
 | VPC.T  | TTL (Time-To-Live)                        | 4     |

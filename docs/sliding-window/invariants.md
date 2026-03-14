@@ -284,6 +284,13 @@ leftThreshold.HasValue && rightThreshold.HasValue
 
 **Enforcement:** Constructor validation in `SlidingWindowCacheOptions` throws `ArgumentException` at construction time if violated.
 
+**SWC.E.7** [Behavioral] `LeftCacheSize`, `RightCacheSize`, `LeftThreshold`, and `RightThreshold` **must not be `NaN`**.
+
+- `double.NaN` silently passes all IEEE 754 range comparisons (`NaN < 0` and `NaN > 1.0` are both `false`), so without an explicit guard, NaN propagates into geometry calculations and corrupts all derived values (`DesiredCacheRange`, `NoRebalanceRange`, etc.).
+- `RuntimeOptionsValidator` checks `double.IsNaN()` for each parameter before any range comparison, throwing `ArgumentOutOfRangeException` immediately on NaN input.
+
+**Enforcement:** `RuntimeOptionsValidator.ValidateCacheSizesAndThresholds` in `src/Intervals.NET.Caching.SlidingWindow/Core/State/RuntimeOptionsValidator.cs`
+
 ---
 
 ## SWC.F. Rebalance Execution Invariants

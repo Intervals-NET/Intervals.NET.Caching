@@ -73,6 +73,8 @@ Fire-and-forget background work dispatched on the **thread pool** via `Concurren
 
 TTL work items run **concurrently** — multiple delays may be in-flight simultaneously. Thread safety with the Background Storage Loop is provided by `CachedSegment.MarkAsRemoved()` (`Interlocked.CompareExchange`) and lock-free policy aggregates in `EvictionEngine`.
 
+**TOCTOU interaction with `Normalize()`:** `SnapshotAppendBufferStorage.Normalize()` counts live segments in one pass, then merges in a second pass, re-checking `IsRemoved` inline. A TTL work item may mark a segment as removed between these two passes, causing fewer elements to be written than the pre-allocated array size. `MergeSorted` trims the result array to the actual write count before publishing (Invariant VPC.C.8). This is the only required coordination point — no lock or barrier is needed between the TTL Loop and `Normalize()`.
+
 ---
 
 ## FIFO vs. Latest-Intent-Wins

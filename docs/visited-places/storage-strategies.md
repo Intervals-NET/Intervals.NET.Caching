@@ -116,10 +116,11 @@ SnapshotAppendBufferStorage
 2. No immediate structural change to snapshot or append buffer
 
 **Normalize:**
-1. Allocate a new `Segment[]` of size `(_snapshot.Length - removedCount + _appendCount)`
-2. Merge `_snapshot` (excluding `IsRemoved` segments) and `_appendBuffer[0.._appendCount]` into the new array via merge-sort
-3. Under `_normalizeLock`: atomically publish the new snapshot and reset `_appendCount = 0`
-4. Leave `_appendBuffer` contents in place (see below)
+1. Count live segments in a first pass to size the output array (good-faith estimate — a concurrent TTL expiration may reduce the actual count between this pass and the merge)
+2. Merge `_snapshot` (excluding `IsRemoved` segments) and `_appendBuffer[0.._appendCount]` into the new array via merge-sort; re-check `IsRemoved` inline during the merge
+3. Trim the result array to the actual write cursor `k` if `k < result.Length` (guards against the TOCTOU race where a TTL work item marks a segment as removed between step 1 and step 2, leaving null trailing slots — see Invariant VPC.C.8)
+4. Under `_normalizeLock`: atomically publish the new snapshot and reset `_appendCount = 0`
+5. Leave `_appendBuffer` contents in place (see below)
 
 **Normalization cost**: O(n + m) merge of two sorted sequences (snapshot already sorted; append buffer sorted before merge)
 
@@ -476,7 +477,10 @@ hi = -1         →  all anchors start after range.Start; startNode = null
 hi = 0          →  anchorIdx = Math.Max(0, 0) = 0
                    walk from anchor[0]
 
-anchor unlinked →  anchorNode.List == null guard fires
+anchor unlinked →  outer anchorNode.List == null guard fires before lock acquisition
+                   (fast-path hint — avoids acquiring the lock unnecessarily)
+                   AND inner startNode?.List == null re-check fires inside the lock
+                   (VPC.D.7 TOCTOU guard — eliminates race between the two checks)
                    fall back to _list.First
 ```
 
