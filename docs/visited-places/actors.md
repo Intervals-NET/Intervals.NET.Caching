@@ -12,6 +12,51 @@ This document is the canonical actor catalog for `VisitedPlacesCache`. Formal in
 
 There are up to three execution contexts in VPC when TTL is enabled (compared to two in the no-TTL configuration, and three in SlidingWindowCache). There is no Decision Path; the Background Storage Loop combines the roles of event processing and cache mutation. The TTL Loop is an independent actor with its own scheduler and activity counter.
 
+### Execution Context Diagram
+
+```
+User Thread                 Background Storage Loop        TTL Loop (if TTL enabled)
+──────────────────────      ───────────────────────────    ─────────────────────────
+GetDataAsync()
+  │
+  ├─ read CachedSegments    ← ISegmentStorage (read)
+  │
+  ├─ [on miss/gap]
+  │    └─ IDataSource.FetchAsync()
+  │
+  ├─ assemble result
+  │
+  ├─ ActivityCounter.Increment()
+  │
+  └─ channel.Write(CacheNormalizationRequest)
+       │
+       │              dequeue event
+       │         ┌────────────────────────
+       │         │ engine.UpdateMetadata()
+       │         │ storage.Add(segment)
+       │         │ engine.InitializeSegment()
+       │         │ engine.EvaluateAndExecute()
+       │         │   ├─ [if triggered]
+       │         │   │    executor.Execute()
+       │         │   │      └─ selector.TrySelectCandidate() [loop]
+       │         │   └─ [if TTL enabled]
+       │         │        ttlEngine.ScheduleExpiration()
+       │         │              └─ ConcurrentWorkScheduler.Enqueue()
+       │         │                       │
+       │         │                       │   Task.Delay(ttl) [fire-and-forget]
+       │         │                       │       │
+       │         │                       │   segment.MarkAsRemoved()
+       │         │                       │   storage.Remove()
+       │         │                       │   engine.OnSegmentRemoved()
+       │         │
+       │         └─ ActivityCounter.Decrement()
+```
+
+**Key invariants illustrated:**
+- User Thread ends at `channel.Write` — never waits for background work
+- Background Storage Loop is the sole writer of `CachedSegments`
+- TTL Loop uses `segment.MarkAsRemoved()` (idempotent) to collaborate with eviction
+
 ---
 
 ## Actors
@@ -233,11 +278,8 @@ The Eviction Executor is an **internal implementation detail of `EvictionEngine`
 ### Eviction Selector
 
 **Responsibilities**
-- Define, create, and update per-segment eviction metadata.
-- Select the single worst eviction candidate from a random sample of segments via `TrySelectCandidate`.
-- Implement `InitializeMetadata(segment)` — attach selector-specific metadata to a newly-stored segment; time-aware selectors obtain the current timestamp from an injected `TimeProvider`.
-- Implement `UpdateMetadata(usedSegments)` — update metadata for segments accessed by the User Path.
-- Implement `EnsureMetadata(segment)` — called inside the sampling loop before every `IsWorse` comparison; repairs null or stale metadata so `IsWorse` can stay pure.
+- Own, create, and update per-segment eviction metadata (`IEvictionMetadata? EvictionMetadata` on each `CachedSegment`).
+- Select the single worst eviction candidate from a random sample of segments via `TrySelectCandidate` (O(SampleSize)).
 - Skip immune segments inline during sampling (the immune set is passed as a parameter).
 
 **Non-responsibilities**
@@ -256,6 +298,8 @@ The Eviction Executor is an **internal implementation detail of `EvictionEngine`
 - `LruEvictionSelector<TRange, TData>` — selects worst by `LruMetadata.LastAccessedAt` from a random sample; uses `TimeProvider` for timestamps
 - `FifoEvictionSelector<TRange, TData>` — selects worst by `FifoMetadata.CreatedAt` from a random sample; uses `TimeProvider` for timestamps
 - `SmallestFirstEvictionSelector<TRange, TData, TDomain>` — selects worst by `SmallestFirstMetadata.Span` from a random sample; span pre-cached from `Range.Span(domain)` at initialization
+
+> For metadata types, lifecycle, sampling contract, `SamplingEvictionSelector` base class, and `TimeProvider` injection details, see `docs/visited-places/eviction.md` — Component 3 (Eviction Selector) and Eviction Metadata.
 
 ---
 

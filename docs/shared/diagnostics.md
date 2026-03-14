@@ -169,3 +169,4 @@ public class PrometheusMetricsDiagnostics : ISlidingWindowCacheDiagnostics
 ## See Also
 
 - `docs/sliding-window/diagnostics.md` — full `ISlidingWindowCacheDiagnostics` event reference (18 events, test patterns, layered cache diagnostics)
+- `docs/visited-places/diagnostics.md` — full `IVisitedPlacesCacheDiagnostics` event reference (16 events, test patterns, layered cache diagnostics)

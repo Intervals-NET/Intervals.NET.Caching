@@ -128,3 +128,4 @@ Adapts an `IRangeCache` as an `IDataSource`, allowing any cache implementation t
 - `docs/shared/architecture.md` — shared architectural principles (single-writer, activity counter, disposal)
 - `docs/shared/invariants.md` — shared invariant groups (activity tracking, disposal)
 - `docs/sliding-window/glossary.md` — SlidingWindow-specific terms
+- `docs/visited-places/glossary.md` — VisitedPlaces-specific terms (segment, eviction metadata, TTL, normalization)

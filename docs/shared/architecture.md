@@ -26,8 +26,8 @@ The User Path reads from the current cache state (or fetches from `IDataSource` 
 **Consequence:** Data returned to the user is always correct, but the cache window may not yet be in the optimal configuration. Background work converges the cache asynchronously.
 
 ---
-
-## Intent Model
+// todo: if this is SWC only - move to SWC, it can not be shared.
+## Intent Model *(SlidingWindowCache only)*
 
 The User Path signals background work by publishing an **intent** — a lightweight, versioned signal carrying the delivered data and the requested range. Intents are not commands: publishing an intent does not guarantee that background execution will occur.
 
@@ -37,9 +37,12 @@ The intent model has two key properties:
 
 2. **Fire-and-forget:** The User Path publishes the intent and returns immediately without awaiting any background response.
 
+**Note:** `VisitedPlacesCache` does not use an intent model. It publishes `CacheNormalizationRequest`s to a FIFO queue and processes every event. See `docs/visited-places/architecture.md` for the VPC background processing model.
+
 ---
 
-## Decision-Driven Execution
+// todo: if this is SWC only - move to SWC, it can not be shared.
+## Decision-Driven Execution *(SlidingWindowCache only)*
 
 Before scheduling cache mutations, background logic runs a multi-stage analytical validation to determine whether rebalancing is actually necessary. Execution is scheduled **only if all validation stages confirm necessity**.
 
@@ -49,6 +52,8 @@ This prevents:
 - Unnecessary I/O when the cache already covers the request
 
 The decision is always a pure CPU-only operation: no I/O, no state mutation.
+
+**Note:** `VisitedPlacesCache` has no decision engine. Every `CacheNormalizationRequest` is processed unconditionally. See `docs/visited-places/architecture.md` for the rationale.
 
 ---
 
@@ -95,4 +100,5 @@ Multiple cache instances may be composed into a stack where each layer uses the 
 
 - `docs/shared/invariants.md` — formal invariant groups S.H (activity tracking) and S.J (disposal)
 - `docs/shared/components/infrastructure.md` — `AsyncActivityCounter` and work schedulers
-- `docs/sliding-window/architecture.md` — SlidingWindow-specific architectural details
+- `docs/sliding-window/architecture.md` — SlidingWindow-specific architectural details (intent model, decision-driven execution, execution serialization)
+- `docs/visited-places/architecture.md` — VisitedPlaces-specific architectural details (FIFO processing, TTL, disposal)

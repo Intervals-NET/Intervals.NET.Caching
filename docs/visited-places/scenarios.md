@@ -39,6 +39,61 @@ Scenarios are grouped by path:
 
 ---
 
+## Request Lifecycle Overview
+
+The following diagram shows the full flow of a single `GetDataAsync` call — from the user thread through to background convergence. Scenarios I–V each describe one or more segments of this flow in detail.
+
+```
+User Thread
+───────────────────────────────────────────────────────────────────────────────
+  GetDataAsync(range)
+       │
+       ├─ Find intersecting segments in CachedSegments (read-only)
+       │
+       ├─ [FullHit]      All data found in cache ──────────────────────────────┐
+       │                                                                       │
+       ├─ [PartialHit]   Fetch gap sub-ranges from IDataSource (sync) ─────────┤
+       │                                                                       │
+       └─ [FullMiss]     Fetch entire range from IDataSource (sync) ───────────┤
+                                                                               │
+       Assemble and return RangeResult to user                                 │
+                                                                               │
+       Publish CacheNormalizationRequest { UsedSegments, FetchedData? } ───────┘
+       (fire-and-forget; user thread returns immediately)
+
+Background Storage Loop                                             [FIFO queue]
+────────────────────────────────────────────────────────────────────────────────
+  Dequeue CacheNormalizationRequest
+       │
+       ├─ engine.UpdateMetadata(UsedSegments)    [always; no-op when empty]
+       │
+       ├─ [FetchedData != null]
+       │    ├─ storage.Store(newSegment)
+       │    ├─ engine.InitializeSegment(newSegment)
+       │    └─ engine.EvaluateAndExecute(allSegments, justStoredSegments)
+       │         ├─ [no policy fires]  → done
+       │         └─ [policy fires]
+       │              ├─ build immune set (justStoredSegments)
+       │              ├─ loop: TrySelectCandidate → pressure.Reduce(candidate)
+       │              │        until all constraints satisfied
+       │              └─ storage.Remove(evicted); engine.OnSegmentRemoved(evicted)
+       │
+       └─ [FetchedData == null]  → done (stats-only event; no eviction)
+
+TTL Loop (only when SegmentTtl is configured)         [fire-and-forget per segment]
+───────────────────────────────────────────────────────────────────────────────
+  After storage.Store(segment):
+       Schedule TtlExpirationWorkItem → Task.Delay(SegmentTtl)
+            │
+            └─ On delay fire: segment.MarkAsRemoved()
+                 ├─ [returns true]  → storage.Remove; engine.OnSegmentRemoved; TtlSegmentExpired
+                 └─ [returns false] → segment already removed by eviction; no-op
+```
+
+**Reading the scenarios**: Each scenario in sections I–V corresponds to one or more steps in this diagram. Scenarios U1–U5 focus on the user thread portion; B1–B5 focus on the background storage loop; E1–E6 focus on the `EvaluateAndExecute` branch; T1–T3 focus on the TTL loop.
+
+---
+
 ## I. User Path Scenarios
 
 ### U1 — Cold Cache Request (Empty Cache)

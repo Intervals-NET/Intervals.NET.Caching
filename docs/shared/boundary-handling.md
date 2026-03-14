@@ -107,3 +107,4 @@ The default implementation parallelizes single-range `FetchAsync` calls. Overrid
 
 - `docs/shared/glossary.md` — `RangeResult`, `RangeChunk`, `IDataSource` definitions
 - `docs/sliding-window/boundary-handling.md` — SlidingWindow-specific boundary examples
+- `docs/visited-places/scenarios.md` — VisitedPlaces boundary behavior (physical boundary miss in U1/U5, non-contiguous segment handling)
