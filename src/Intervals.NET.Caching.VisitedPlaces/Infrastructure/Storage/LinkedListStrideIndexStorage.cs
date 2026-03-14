@@ -5,43 +5,10 @@ using Intervals.NET.Caching.VisitedPlaces.Core;
 namespace Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 
 /// <summary>
-/// Segment storage backed by a sorted doubly-linked list with a volatile stride index for
-/// accelerated range lookup. Optimised for larger caches (&gt;85 KB total data, &gt;50 segments)
-/// where LOH pressure from large snapshot arrays must be avoided.
+/// Segment storage backed by a sorted doubly-linked list with a volatile stride index.
+/// Optimised for larger caches (&gt;85 KB total data, &gt;50 segments).
+/// See docs/visited-places/ for design details.
 /// </summary>
-/// <typeparam name="TRange">The type representing range boundaries.</typeparam>
-/// <typeparam name="TData">The type of data being cached.</typeparam>
-/// <remarks>
-/// <para><strong>Data Structure:</strong></para>
-/// <list type="bullet">
-/// <item><description><c>_list</c> — doubly-linked list sorted by segment range start; mutated on Background Path only</description></item>
-/// <item><description><c>_strideIndex</c> — array of every Nth <see cref="LinkedListNode{T}"/> ("stride anchors"); published via <c>Volatile.Write</c></description></item>
-/// <item><description><c>_addsSinceLastNormalization</c> — counter of segments added since the last stride normalization; triggers normalization when it reaches the append buffer size threshold</description></item>
-/// </list>
-/// <para><strong>Soft-delete via <see cref="CachedSegment{TRange,TData}.IsRemoved"/>:</strong></para>
-/// <para>
-/// Rather than maintaining a separate <c>_softDeleted</c> collection, this implementation uses
-/// <see cref="CachedSegment{TRange,TData}.IsRemoved"/> as the primary soft-delete filter.
-/// The flag is set atomically by <see cref="CachedSegment{TRange,TData}.TryMarkAsRemoved"/>.
-/// Removed nodes are physically unlinked from <c>_list</c> during <see cref="NormalizeStrideIndex"/>,
-/// but only AFTER the new stride index is published (to preserve list integrity for any
-/// concurrent User Path walk still using the old stride index).
-/// All read paths skip segments whose <c>IsRemoved</c> flag is set without needing a shared collection.
-/// </para>
-/// <para><strong>No <c>_nodeMap</c>:</strong></para>
-/// <para>
-/// The stride index stores <see cref="LinkedListNode{T}"/> references directly, eliminating the
-/// need for a separate segment-to-node dictionary. Callers use <c>anchorNode.List != null</c>
-/// to verify the node is still linked before walking from it.
-/// </para>
-/// <para><strong>RCU semantics (Invariant VPC.B.5):</strong>
-/// User Path threads read a stable stride index via <c>Volatile.Read</c>. New stride index arrays
-/// are published atomically via <c>Volatile.Write</c> during normalization.</para>
-/// <para><strong>Threading:</strong>
-/// <see cref="ISegmentStorage{TRange,TData}.FindIntersecting"/> is called on the User Path (concurrent reads safe).
-/// All other methods are Background-Path-only (single writer).</para>
-/// <para>Alignment: Invariants VPC.A.10, VPC.B.5, VPC.C.2, VPC.C.3, S.H.4.</para>
-/// </remarks>
 internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStorageBase<TRange, TData>
     where TRange : IComparable<TRange>
 {
@@ -71,16 +38,6 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
     /// Initializes a new <see cref="LinkedListStrideIndexStorage{TRange,TData}"/> with optional
     /// append buffer size and stride values.
     /// </summary>
-    /// <param name="appendBufferSize">
-    /// Number of segments added before stride index normalization is triggered.
-    /// Must be &gt;= 1. Default: 8.
-    /// </param>
-    /// <param name="stride">
-    /// Distance between stride anchors (default 16). Must be &gt;= 1.
-    /// </param>
-    /// <exception cref="ArgumentOutOfRangeException">
-    /// Thrown when <paramref name="appendBufferSize"/> or <paramref name="stride"/> is less than 1.
-    /// </exception>
     public LinkedListStrideIndexStorage(int appendBufferSize = DefaultAppendBufferSize, int stride = DefaultStride)
     {
         if (appendBufferSize < 1)
@@ -100,20 +57,6 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
     }
 
     /// <inheritdoc/>
-    /// <remarks>
-    /// <para><strong>Algorithm (O(log(n/N) + k + N)):</strong></para>
-    /// <list type="number">
-    /// <item><description>Acquire stable stride index via <c>Volatile.Read</c></description></item>
-    /// <item><description>Binary-search stride index for the rightmost anchor whose <c>Start &lt;= range.Start</c>
-    ///   via <see cref="SegmentStorageBase{TRange,TData}.FindLastAtOrBefore{TElement,TAccessor}"/> (Start.Value-based,
-    ///   shared with <see cref="SnapshotAppendBufferStorage{TRange,TData}"/>). No step-back needed:
-    ///   Invariant VPC.C.3 guarantees <c>End[i] &lt; Start[i+1]</c> (strict), so every segment before
-    ///   the anchor has <c>End &lt; anchor.Start &lt;= range.Start</c> and cannot intersect the query.</description></item>
-    /// <item><description>Walk the list forward from the anchor node, collecting intersecting non-removed segments</description></item>
-    /// </list>
-    /// <para><strong>Allocation:</strong> The result list is lazily allocated — Full-Miss returns
-    /// the static empty array singleton with zero heap allocation.</para>
-    /// </remarks>
     public override IReadOnlyList<CachedSegment<TRange, TData>> FindIntersecting(Range<TRange> range)
     {
         var strideIndex = Volatile.Read(ref _strideIndex);
@@ -196,33 +139,6 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
     }
 
     /// <inheritdoc/>
-    /// <remarks>
-    /// <para><strong>Algorithm:</strong></para>
-    /// <list type="number">
-    /// <item><description>
-    ///   If <c>_strideIndex</c> is non-empty, pick a random anchor index and a random offset
-    ///   within the stride gap, then walk forward from the anchor node to the selected node — O(stride).
-    /// </description></item>
-    /// <item><description>
-    ///   If <c>_strideIndex</c> is empty but <c>_list</c> is non-empty (segments were added but
-    ///   stride normalization has not yet run), fall back to a linear walk from <c>_list.First</c>
-    ///   with a random skip count bounded by <c>_list.Count</c>.
-    /// </description></item>
-    /// <item><description>
-    ///   If the selected segment is soft-deleted, retry (bounded by <c>RandomRetryLimit</c>).
-    /// </description></item>
-    /// </list>
-    /// <para><strong>Sampling bias (deliberate trade-off):</strong>
-    /// Selection is <em>approximately</em> uniform, not perfectly uniform. A random stride anchor
-    /// is chosen first, then a random offset within that anchor's stride gap. Because the last
-    /// anchor's gap may contain more than <c>_stride</c> nodes (segments added after the last
-    /// normalization accumulate there), segments in the last gap are slightly under-represented
-    /// compared to segments reachable from earlier anchors. This is an intentional O(stride)
-    /// performance trade-off — true uniform selection would require counting all live nodes,
-    /// which is O(n). For eviction the approximate distribution is acceptable; the eviction
-    /// selector samples multiple candidates and chooses the worst, so the slight positional
-    /// bias has negligible impact on overall eviction quality.</para>
-    /// </remarks>
     public override CachedSegment<TRange, TData>? TryGetRandomSegment()
     {
         if (_list.Count == 0)
@@ -304,8 +220,7 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
     }
 
     /// <summary>
-    /// Inserts a segment into the linked list in sorted order by range start value,
-    /// using the stride index for an O(log(n/N)) anchor lookup followed by an O(N) walk.
+    /// Inserts a segment into the linked list in sorted order by range start.
     /// </summary>
     private void InsertSorted(CachedSegment<TRange, TData> segment)
     {
@@ -372,37 +287,8 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
     }
 
     /// <summary>
-    /// Rebuilds the stride index by walking the live linked list, collecting every Nth live
-    /// node as a stride anchor, atomically publishing the new stride index via
-    /// <c>Volatile.Write</c>, and only then physically unlinking removed nodes from the list.
+    /// Rebuilds the stride index from the live linked list and physically unlinks removed nodes.
     /// </summary>
-    /// <remarks>
-    /// <para><strong>Algorithm:</strong> O(n) list traversal + O(n/N) stride array allocation.</para>
-    /// <para>
-    /// Resets <c>_addsSinceLastNormalization</c> to 0 and publishes the new stride index atomically.
-    /// Removed segments are physically unlinked from <c>_list</c> after the new stride index
-    /// is published, reclaiming memory.
-    /// </para>
-    /// <para><strong>Order matters for thread safety (Invariant VPC.B.5):</strong></para>
-    /// <para>
-    /// The new stride index is built and published BEFORE dead nodes are physically unlinked.
-    /// Dead nodes are then unlinked one at a time, each under a brief <c>_listSyncRoot</c>
-    /// acquisition: both <c>node.Next</c> and <c>_list.Remove(node)</c> execute inside the
-    /// same per-node lock block, so the walk variable <c>next</c> is captured before
-    /// <c>Remove()</c> can null out the pointer.
-    /// </para>
-    /// <para>
-    /// The User Path (<see cref="FindIntersecting"/>) holds <c>_listSyncRoot</c> for its entire
-    /// linked-list walk, so reads and removals interleave at node granularity: each removal step
-    /// waits only for the current read to release the lock, then executes one <c>Remove()</c>,
-    /// then yields so the reader can continue.  This gives the User Path priority over the
-    /// Background Path without blocking them wholesale against each other.
-    /// </para>
-    /// <para><strong>Allocation:</strong> Uses an <see cref="ArrayPool{T}"/> rental as the
-    /// anchor accumulation buffer (returned immediately after the right-sized index array is
-    /// constructed), eliminating the intermediate <c>List&lt;T&gt;</c> and its <c>ToArray()</c>
-    /// copy. The only heap allocation is the published stride index array itself (unavoidable).</para>
-    /// </remarks>
     private void NormalizeStrideIndex()
     {
         // Upper bound on anchor count: ceil(liveCount / stride) ≤ ceil(listCount / stride).
@@ -487,9 +373,7 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
     }
 
     /// <summary>
-    /// Zero-allocation accessor that extracts <c>Range.Start.Value</c> from a
-    /// <see cref="LinkedListNode{T}"/> whose value is a <see cref="CachedSegment{TRange,TData}"/>,
-    /// for use with <see cref="SegmentStorageBase{TRange,TData}.FindLastAtOrBefore{TElement,TAccessor}"/>.
+    /// Zero-allocation accessor for extracting <c>Range.Start.Value</c> from a linked list node.
     /// </summary>
     private readonly struct LinkedListNodeAccessor
         : ISegmentAccessor<LinkedListNode<CachedSegment<TRange, TData>>>

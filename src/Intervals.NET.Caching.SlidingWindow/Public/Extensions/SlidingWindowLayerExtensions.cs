@@ -10,20 +10,6 @@ namespace Intervals.NET.Caching.SlidingWindow.Public.Extensions;
 /// Extension methods on <see cref="LayeredRangeCacheBuilder{TRange,TData,TDomain}"/> that add
 /// a <see cref="SlidingWindowCache{TRange,TData,TDomain}"/> layer to the cache stack.
 /// </summary>
-/// <remarks>
-/// <para><strong>Usage:</strong></para>
-/// <code>
-/// await using var cache = await SlidingWindowCacheBuilder.Layered(dataSource, domain)
-///     .AddSlidingWindowLayer(o =&gt; o.WithCacheSize(10.0).WithReadMode(UserCacheReadMode.CopyOnRead))
-///     .AddSlidingWindowLayer(o =&gt; o.WithCacheSize(0.5))
-///     .BuildAsync();
-/// </code>
-/// <para>
-/// Each call wraps the previous layer (or root data source) in a
-/// <see cref="RangeCacheDataSourceAdapter{TRange,TData,TDomain}"/> and passes it to a new
-/// <see cref="SlidingWindowCache{TRange,TData,TDomain}"/> instance.
-/// </para>
-/// </remarks>
 public static class SlidingWindowLayerExtensions
 {
     /// <summary>

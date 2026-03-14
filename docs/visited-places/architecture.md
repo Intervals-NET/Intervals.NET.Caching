@@ -101,6 +101,12 @@ TTL work items run **concurrently** — multiple delays may be in-flight simulta
 
 **TTL coordination:** When a TTL work item fires for a segment already evicted by the Background Path, `MarkAsRemoved()` returns `false` and the TTL actor performs a no-op (Invariant VPC.T.1). When the Background Path evicts a segment while a TTL work item is mid-delay, the TTL actor later calls `MarkAsRemoved()` which returns `false` (already removed).
 
+**TtlExpirationExecutor thread safety proof:** Both `TtlExpirationExecutor` and `CacheNormalizationExecutor` may call `ISegmentStorage.TryRemove` and `EvictionEngine.OnSegmentRemoved` concurrently. Safety is guaranteed at each point of contention:
+
+- `TryRemove` internally calls `CachedSegment.TryMarkAsRemoved()` via `Interlocked.CompareExchange` — exactly one caller wins; the other returns `false` and becomes a no-op
+- `EvictionEngine.OnSegmentRemoved` is only reached by the winner of `TryRemove`, so double-notification is impossible
+- `EvictionEngine.OnSegmentRemoved` updates `MaxTotalSpanPolicy._totalSpan` via `Interlocked.Add` — safe under concurrent calls from any thread
+
 ---
 
 ## Eventual Consistency Model

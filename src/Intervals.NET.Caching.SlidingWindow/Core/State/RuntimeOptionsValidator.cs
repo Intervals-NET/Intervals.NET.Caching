@@ -3,34 +3,8 @@ using Intervals.NET.Caching.SlidingWindow.Public.Configuration;
 namespace Intervals.NET.Caching.SlidingWindow.Core.State;
 
 /// <summary>
-/// Provides shared validation logic for runtime-updatable cache option values.
+/// Provides shared validation logic for runtime-updatable cache option values. See docs/sliding-window/ for design details.
 /// </summary>
-/// <remarks>
-/// <para><strong>Purpose:</strong></para>
-/// <para>
-/// Centralizes the validation rules that are common to both
-/// <see cref="RuntimeCacheOptions"/> and
-/// <see cref="SlidingWindowCacheOptions"/>,
-/// eliminating duplication and ensuring both classes enforce identical constraints.
-/// </para>
-/// <para><strong>Validated Rules:</strong></para>
-/// <list type="bullet">
-/// <item><description><c>leftCacheSize</c> ≥ 0</description></item>
-/// <item><description><c>rightCacheSize</c> ≥ 0</description></item>
-/// <item><description><c>leftThreshold</c> in [0, 1] when not null</description></item>
-/// <item><description><c>rightThreshold</c> in [0, 1] when not null</description></item>
-/// <item><description>Sum of both thresholds ≤ 1.0 when both are specified</description></item>
-/// </list>
-/// <para><strong>Not Validated Here:</strong></para>
-/// <para>
-/// Creation-time-only options (<c>rebalanceQueueCapacity</c>) are validated directly
-/// in <see cref="SlidingWindowCacheOptions"/>
-/// because they do not exist on <see cref="RuntimeCacheOptions"/>.
-/// <c>DebounceDelay</c> is validated on <see cref="RuntimeCacheOptions"/> and
-/// <see cref="SlidingWindowCacheOptions"/> (must be ≥ 0);
-/// this helper centralizes only cache size and threshold validation.
-/// </para>
-/// </remarks>
 internal static class RuntimeOptionsValidator
 {
     /// <summary>

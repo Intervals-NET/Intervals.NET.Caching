@@ -6,39 +6,6 @@ namespace Intervals.NET.Caching.VisitedPlaces.Public.Configuration;
 /// Configuration and factory for the Snapshot + Append Buffer storage strategy.
 /// Optimised for smaller caches (&lt;85 KB total data, &lt;~50 segments) with high read-to-write ratios.
 /// </summary>
-/// <typeparam name="TRange">The type representing range boundaries.</typeparam>
-/// <typeparam name="TData">The type of data being cached.</typeparam>
-/// <remarks>
-/// <para><strong>Selecting this strategy:</strong></para>
-/// <para>
-/// Pass an instance of this class to
-/// <see cref="VisitedPlacesCacheOptionsBuilder{TRange,TData}.WithStorageStrategy"/> to select the
-/// Snapshot + Append Buffer implementation. The object carries all tuning parameters and is
-/// responsible for constructing the storage instance at cache build time.
-/// </para>
-/// <para><strong>How the append buffer works:</strong></para>
-/// <para>
-/// New segments are written to a small fixed-size buffer rather than being immediately integrated
-/// into the main sorted snapshot. When the buffer reaches <see cref="AppendBufferSize"/> entries,
-/// a normalization pass merges the buffer into the sorted snapshot and publishes the new snapshot
-/// atomically via <c>Volatile.Write</c> (RCU semantics, Invariant VPC.B.5).
-/// </para>
-/// <para><strong>Tuning <see cref="AppendBufferSize"/>:</strong></para>
-/// <list type="bullet">
-/// <item><description>
-/// <strong>Smaller value</strong> — normalizes more frequently; the snapshot stays more
-/// up-to-date between normalizations, but normalization CPU cost is paid more often per segment added.
-/// </description></item>
-/// <item><description>
-/// <strong>Larger value</strong> — normalizes less frequently; lower amortized CPU cost,
-/// but the snapshot may lag behind recently added segments for longer between flushes.
-/// </description></item>
-/// <item><description>
-/// <strong>Default (8)</strong> — appropriate for most workloads. Only tune under profiling.
-/// </description></item>
-/// </list>
-/// <para>See <c>docs/visited-places/storage-strategies.md</c> for a full strategy comparison.</para>
-/// </remarks>
 public sealed class SnapshotAppendBufferStorageOptions<TRange, TData>
     : StorageStrategyOptions<TRange, TData>
     where TRange : IComparable<TRange>

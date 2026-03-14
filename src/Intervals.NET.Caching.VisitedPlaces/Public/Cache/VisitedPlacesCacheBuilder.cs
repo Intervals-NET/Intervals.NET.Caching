@@ -11,42 +11,6 @@ namespace Intervals.NET.Caching.VisitedPlaces.Public.Cache;
 /// instances via fluent builders. Enables full generic type inference so callers do not need
 /// to specify type parameters explicitly.
 /// </summary>
-/// <remarks>
-/// <para><strong>Entry Points:</strong></para>
-/// <list type="bullet">
-/// <item>
-///   <description>
-///     <see cref="For{TRange,TData,TDomain}"/> — returns a
-///     <see cref="VisitedPlacesCacheBuilder{TRange,TData,TDomain}"/> for building a single
-///     <see cref="VisitedPlacesCache{TRange,TData,TDomain}"/>.
-///   </description>
-/// </item>
-/// <item>
-///   <description>
-///     <see cref="Layered{TRange,TData,TDomain}"/> — returns a
-///     <see cref="LayeredRangeCacheBuilder{TRange,TData,TDomain}"/> for building a
-///     multi-layer cache stack (add layers via <c>AddVisitedPlacesLayer</c> extension method).
-///   </description>
-/// </item>
-/// </list>
-/// <para><strong>Single-Cache Example:</strong></para>
-/// <code>
-/// await using var cache = VisitedPlacesCacheBuilder.For(dataSource, domain)
-///     .WithOptions(o => o.WithStorageStrategy(new SnapshotAppendBufferStorageOptions&lt;int, MyData&gt;()))
-///     .WithEviction(
-///         policies: [new MaxSegmentCountPolicy(maxCount: 50)],
-///         selector: new LruEvictionSelector&lt;int, MyData&gt;())
-///     .Build();
-/// </code>
-/// <para><strong>Layered-Cache Example:</strong></para>
-/// <code>
-/// await using var cache = VisitedPlacesCacheBuilder.Layered(dataSource, domain)
-///     .AddVisitedPlacesLayer(
-///         policies: [new MaxSegmentCountPolicy(maxCount: 100)],
-///         selector: new LruEvictionSelector&lt;int, MyData&gt;())
-///     .Build();
-/// </code>
-/// </remarks>
 public static class VisitedPlacesCacheBuilder
 {
     /// <summary>
@@ -110,38 +74,8 @@ public static class VisitedPlacesCacheBuilder
 
 /// <summary>
 /// Fluent builder for constructing a single <see cref="VisitedPlacesCache{TRange,TData,TDomain}"/> instance.
+/// Obtain via <see cref="VisitedPlacesCacheBuilder.For{TRange,TData,TDomain}"/>.
 /// </summary>
-/// <typeparam name="TRange">
-/// The type representing range boundaries. Must implement <see cref="IComparable{T}"/>.
-/// </typeparam>
-/// <typeparam name="TData">
-/// The type of data being cached.
-/// </typeparam>
-/// <typeparam name="TDomain">
-/// The type representing the domain of the ranges. Must implement <see cref="IRangeDomain{TRange}"/>.
-/// </typeparam>
-/// <remarks>
-/// <para><strong>Construction:</strong></para>
-/// <para>
-/// Obtain an instance via <see cref="VisitedPlacesCacheBuilder.For{TRange,TData,TDomain}"/>, which enables
-/// full generic type inference — no explicit type parameters required at the call site.
-/// </para>
-/// <para><strong>Required configuration:</strong></para>
-/// <list type="bullet">
-/// <item><description><see cref="WithOptions(VisitedPlacesCacheOptions{TRange,TData})"/> or <see cref="WithOptions(Action{VisitedPlacesCacheOptionsBuilder{TRange,TData}})"/> — required</description></item>
-/// <item><description><see cref="WithEviction"/> — required</description></item>
-/// </list>
-/// <para><strong>Example:</strong></para>
-/// <code>
-/// await using var cache = VisitedPlacesCacheBuilder.For(dataSource, domain)
-///     .WithOptions(o => o.WithStorageStrategy(new SnapshotAppendBufferStorageOptions&lt;int, MyData&gt;()))
-///     .WithEviction(
-///         policies: [new MaxSegmentCountPolicy(maxCount: 50)],
-///         selector: new LruEvictionSelector&lt;int, MyData&gt;())
-///     .WithDiagnostics(myDiagnostics)
-///     .Build();
-/// </code>
-/// </remarks>
 public sealed class VisitedPlacesCacheBuilder<TRange, TData, TDomain>
     where TRange : IComparable<TRange>
     where TDomain : IRangeDomain<TRange>

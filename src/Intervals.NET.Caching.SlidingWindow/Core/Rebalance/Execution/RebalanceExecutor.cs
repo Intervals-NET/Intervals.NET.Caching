@@ -7,21 +7,11 @@ namespace Intervals.NET.Caching.SlidingWindow.Core.Rebalance.Execution;
 
 /// <summary>
 /// Executes rebalance operations by fetching missing data, merging with existing cache,
-/// and trimming to the desired range. This is the sole component responsible for cache normalization.
-/// Called exclusively by RebalanceExecutionController actor which guarantees single-threaded execution.
+/// and trimming to the desired range. See docs/sliding-window/ for design details.
 /// </summary>
 /// <typeparam name="TRange">The type representing the range boundaries.</typeparam>
 /// <typeparam name="TData">The type of data being cached.</typeparam>
 /// <typeparam name="TDomain">The type representing the domain of the ranges.</typeparam>
-/// <remarks>
-/// <para><strong>Execution Context:</strong> Background / ThreadPool (via RebalanceExecutionController actor)</para>
-/// <para><strong>Characteristics:</strong> Asynchronous, cancellable, heavyweight</para>
-/// <para><strong>Responsibility:</strong> Cache normalization (expand, trim, recompute NoRebalanceRange)</para>
-/// <para><strong>Execution Serialization:</strong> Provided by the active supersession work scheduler, which ensures
-/// only one rebalance execution runs at a time — either via task chaining (<c>UnboundedSupersessionWorkScheduler</c>, default)
-/// or via bounded channel (<c>BoundedSupersessionWorkScheduler</c>).
-/// CancellationToken provides early exit signaling. WebAssembly-compatible, async, and lightweight.</para>
-/// </remarks>
 internal sealed class RebalanceExecutor<TRange, TData, TDomain>
     where TRange : IComparable<TRange>
     where TDomain : IRangeDomain<TRange>
@@ -43,7 +33,6 @@ internal sealed class RebalanceExecutor<TRange, TData, TDomain>
 
     /// <summary>
     /// Executes rebalance by normalizing the cache to the desired range.
-    /// Called exclusively by RebalanceExecutionController actor (single-threaded).
     /// This is the ONLY component that mutates cache state (single-writer architecture).
     /// </summary>
     /// <param name="intent">The intent with data that was actually assembled in UserPath and the requested range.</param>
@@ -51,28 +40,6 @@ internal sealed class RebalanceExecutor<TRange, TData, TDomain>
     /// <param name="desiredNoRebalanceRange">The no-rebalance range for the target cache state.</param>
     /// <param name="cancellationToken">Cancellation token to support cancellation at all stages.</param>
     /// <returns>A task representing the asynchronous rebalance operation.</returns>
-    /// <remarks>
-    /// <para>
-    /// This executor is the sole writer of all cache state including:
-    /// <list type="bullet">
-    /// <item><description>Cache.Rematerialize (cache data and range)</description></item>
-    /// <item><description>LastRequested field</description></item>
-    /// <item><description>NoRebalanceRange field</description></item>
-    /// </list>
-    /// </para>
-    /// <para>
-    /// The delivered data from the intent is used as the authoritative base source,
-    /// avoiding duplicate fetches and ensuring consistency with what the user received.
-    /// </para>
-    /// <para>
-    /// This executor is intentionally simple - no analytical decisions, no necessity checks.
-    /// Decision logic has been validated by DecisionEngine before invocation.
-    /// </para>
-    /// <para><strong>Serialization:</strong> The active supersession work scheduler guarantees single-threaded
-    /// execution (via task chaining or channel-based sequential processing depending on configuration).
-    /// No semaphore needed — the scheduler ensures only one execution runs at a time.
-    /// Cancellation allows fast exit from superseded operations.</para>
-    /// </remarks>
     public async Task ExecuteAsync(
         Intent<TRange, TData, TDomain> intent,
         Range<TRange> desiredRange,

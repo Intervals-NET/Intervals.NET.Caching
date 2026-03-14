@@ -9,45 +9,11 @@ using Intervals.NET.Caching.SlidingWindow.Public.Instrumentation;
 namespace Intervals.NET.Caching.SlidingWindow.Core.Rebalance.Intent;
 
 /// <summary>
-/// Manages the lifecycle of rebalance intents using a single-threaded loop with burst resistance.
-/// This is the IntentController actor - fast, CPU-bound decision and coordination logic.
+/// Manages the lifecycle of rebalance intents using a single-threaded loop with burst resistance. See docs/sliding-window/ for design details.
 /// </summary>
 /// <typeparam name="TRange">The type representing the range boundaries.</typeparam>
 /// <typeparam name="TData">The type of data being cached.</typeparam>
 /// <typeparam name="TDomain">The type representing the domain of the ranges.</typeparam>
-/// <remarks>
-/// <para><strong>Architectural Model - Single-Threaded Intent Processing:</strong></para>
-/// <para>
-/// IntentController runs a single-threaded loop that continuously processes intents from user requests.
-/// User threads write intents using Interlocked.Exchange on _pendingIntent field, then signal a semaphore.
-/// The processing loop waits on the semaphore, reads the pending intent atomically, evaluates the decision,
-/// and enqueues execution requests to the work scheduler.
-/// </para>
-/// <para><strong>Burst Resistance:</strong></para>
-/// <para>
-/// The "latest intent wins" semantic naturally handles request bursts:
-/// <list type="bullet">
-/// <item><description>User threads atomically replace _pendingIntent with newest intent</description></item>
-/// <item><description>Only the most recent intent gets processed (older ones are discarded)</description></item>
-/// <item><description>Semaphore prevents CPU spinning while waiting for intents</description></item>
-/// <item><description>Decision evaluation happens serially, preventing thrashing</description></item>
-/// </list>
-/// </para>
-/// <para><strong>IntentController Actor Responsibilities:</strong></para>
-/// <list type="bullet">
-/// <item><description>Waits on semaphore signal from user threads</description></item>
-/// <item><description>Reads pending intent via Interlocked.Exchange (atomic)</description></item>
-/// <item><description>Evaluates DecisionEngine (CPU-only, O(1), lightweight)</description></item>
-/// <item><description>Cancels previous execution if new rebalance is needed</description></item>
-/// <item><description>Creates ExecutionRequest and publishes it to the work scheduler</description></item>
-/// <item><description>Signals idle state semaphore after processing</description></item>
-/// </list>
-/// <para><strong>Two-Phase Pipeline:</strong></para>
-/// <list type="number">
-/// <item><description><strong>Phase 1 (Intent Processing):</strong> IntentController reads pending intent, evaluates DecisionEngine (5-stage validation pipeline), and if rebalance is required: cancels previous execution and publishes new execution request to the scheduler</description></item>
-/// <item><description><strong>Phase 2 (Execution):</strong> Work scheduler debounces, executes, mutates cache</description></item>
-/// </list>
-/// </remarks>
 internal sealed class IntentController<TRange, TData, TDomain>
     where TRange : IComparable<TRange>
     where TDomain : IRangeDomain<TRange>
@@ -77,17 +43,13 @@ internal sealed class IntentController<TRange, TData, TDomain>
     private int _disposeState;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="IntentController{TRange,TData,TDomain}"/> class.
+    /// Initializes a new instance of the <see cref="IntentController{TRange,TData,TDomain}"/> class and starts the processing loop.
     /// </summary>
     /// <param name="state">The cache state.</param>
     /// <param name="decisionEngine">The decision engine for rebalance logic.</param>
-    /// <param name="scheduler">The supersession work scheduler for serializing and executing rebalance work items, with automatic cancel-previous semantics.</param>
-    /// <param name="cacheDiagnostics">The diagnostics interface for recording cache metrics and events related to rebalance intents.</param>
+    /// <param name="scheduler">The supersession work scheduler for serializing and executing rebalance work items.</param>
+    /// <param name="cacheDiagnostics">The diagnostics interface for recording cache metrics and events.</param>
     /// <param name="activityCounter">Activity counter for tracking active operations.</param>
-    /// <remarks>
-    /// This constructor initializes the single-threaded processing loop infrastructure.
-    /// The loop starts immediately and runs for the lifetime of the cache instance.
-    /// </remarks>
     public IntentController(
         CacheState<TRange, TData, TDomain> state,
         RebalanceDecisionEngine<TRange, TDomain> decisionEngine,
@@ -107,29 +69,9 @@ internal sealed class IntentController<TRange, TData, TDomain>
     }
 
     /// <summary>
-    /// Publishes a rebalance intent triggered by a user request.
-    /// This method is fire-and-forget and returns immediately after setting the intent.
+    /// Publishes a rebalance intent triggered by a user request. Fire-and-forget, returns immediately.
     /// </summary>
     /// <param name="intent">The intent containing the requested range and delivered data.</param>
-    /// <remarks>
-    /// <para><strong>Burst-Resistant Pattern:</strong></para>
-    /// <para>
-    /// This method executes in the user thread and performs minimal work:
-    /// <list type="number">
-    /// <item><description>Atomically replace _pendingIntent with new intent (latest wins)</description></item>
-    /// <item><description>Increment activity counter (tracks intent processing activity)</description></item>
-    /// <item><description>Signal intent semaphore to wake up processing loop</description></item>
-    /// <item><description>Record diagnostic event</description></item>
-    /// <item><description>Return immediately</description></item>
-    /// </list>
-    /// </para>
-    /// <para><strong>Latest Intent Wins:</strong></para>
-    /// <para>
-    /// If multiple user threads publish intents rapidly (burst scenario), only the most recent
-    /// intent is processed. Older intents are atomically discarded via Interlocked.Exchange.
-    /// This prevents intent queue buildup and naturally handles bursts.
-    /// </para>
-    /// </remarks>
     public void PublishIntent(Intent<TRange, TData, TDomain> intent)
     {
         // Check disposal state using Volatile.Read (lock-free)
@@ -155,29 +97,7 @@ internal sealed class IntentController<TRange, TData, TDomain>
 
     /// <summary>
     /// Processing loop that continuously reads intents and coordinates rebalance execution.
-    /// Runs on a single background thread for the lifetime of the cache instance.
     /// </summary>
-    /// <remarks>
-    /// <para><strong>Single-Threaded Loop Semantics:</strong></para>
-    /// <para>
-    /// This loop waits on _intentSignal semaphore (blocks without CPU spinning), then atomically
-    /// reads _pendingIntent via Interlocked.Exchange. For each intent:
-    /// <list type="number">
-    /// <item><description>Wait on semaphore (blocks until user thread signals)</description></item>
-    /// <item><description>Atomically read and clear _pendingIntent</description></item>
-    /// <item><description>Evaluate DecisionEngine (CPU-only, lightweight)</description></item>
-    /// <item><description>If skip: record diagnostic and signal idle state</description></item>
-    /// <item><description>If schedule: cancel previous execution, create ExecutionRequest, publish to scheduler</description></item>
-    /// <item><description>Signal idle state semaphore after processing</description></item>
-    /// </list>
-    /// </para>
-    /// <para><strong>Burst Handling:</strong></para>
-    /// <para>
-    /// The "latest intent wins" semantic via Interlocked.Exchange naturally handles bursts.
-    /// Multiple rapid user requests will atomically replace _pendingIntent, and only the
-    /// most recent intent gets processed. This prevents queue buildup and thrashing.
-    /// </para>
-    /// </remarks>
     private async Task ProcessIntentsAsync()
     {
         try
@@ -282,8 +202,7 @@ internal sealed class IntentController<TRange, TData, TDomain>
     }
 
     /// <summary>
-    /// Records the skip reason for diagnostic and observability purposes.
-    /// Maps decision reasons to diagnostic events.
+    /// Records the decision outcome for diagnostic and observability purposes.
     /// </summary>
     private void RecordDecisionOutcome(RebalanceReason reason)
     {
@@ -307,30 +226,9 @@ internal sealed class IntentController<TRange, TData, TDomain>
     }
 
     /// <summary>
-    /// Disposes the intent controller and releases all managed resources.
-    /// Gracefully shuts down the intent processing loop and execution scheduler.
+    /// Disposes the intent controller, shutting down the processing loop and execution scheduler.
     /// </summary>
     /// <returns>A ValueTask representing the asynchronous disposal operation.</returns>
-    /// <remarks>
-    /// <para><strong>Disposal Sequence:</strong></para>
-    /// <list type="number">
-    /// <item><description>Mark as disposed (prevents new intents)</description></item>
-    /// <item><description>Cancel the processing loop via CancellationTokenSource</description></item>
-    /// <item><description>Wait for processing loop to complete gracefully</description></item>
-    /// <item><description>Dispose work scheduler (cascades to execution loop)</description></item>
-    /// <item><description>Dispose synchronization primitives (CancellationTokenSource, SemaphoreSlim)</description></item>
-    /// </list>
-    /// <para><strong>Thread Safety:</strong></para>
-    /// <para>
-    /// This method is thread-safe and idempotent using lock-free Interlocked operations.
-    /// Multiple concurrent calls will execute disposal only once.
-    /// </para>
-    /// <para><strong>Exception Handling:</strong></para>
-    /// <para>
-    /// Uses best-effort cleanup. Exceptions during loop completion are logged via diagnostics
-    /// but do not prevent subsequent cleanup steps.
-    /// </para>
-    /// </remarks>
     public async ValueTask DisposeAsync()
     {
         // Idempotent check using lock-free Interlocked.CompareExchange

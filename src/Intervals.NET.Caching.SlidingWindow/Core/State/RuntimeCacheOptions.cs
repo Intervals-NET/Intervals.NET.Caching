@@ -3,34 +3,8 @@ using Intervals.NET.Caching.SlidingWindow.Public.Configuration;
 namespace Intervals.NET.Caching.SlidingWindow.Core.State;
 
 /// <summary>
-/// An immutable snapshot of the runtime-updatable cache configuration values.
+/// An immutable snapshot of the runtime-updatable cache configuration values. See docs/sliding-window/ for design details.
 /// </summary>
-/// <remarks>
-/// <para><strong>Architectural Context:</strong></para>
-/// <para>
-/// <see cref="RuntimeCacheOptions"/> holds the five configuration values that may be changed on a live
-/// cache instance via <c>ISlidingWindowCache.UpdateRuntimeOptions</c>. It is always treated as an immutable
-/// snapshot: updates create a new instance which is then atomically published via
-/// <see cref="RuntimeCacheOptionsHolder"/>.
-/// </para>
-/// <para><strong>Snapshot Consistency:</strong></para>
-/// <para>
-/// Because the holder swaps the entire reference atomically (Volatile.Write), all five values are always
-/// observed as a consistent set by background threads reading <see cref="RuntimeCacheOptionsHolder.Current"/>.
-/// There is never a window where some values belong to an old update and others to a new one.
-/// </para>
-/// <para><strong>Validation:</strong></para>
-/// <para>
-/// Applies the same validation rules as
-/// <see cref="SlidingWindowCacheOptions"/>:
-/// cache sizes ≥ 0, thresholds in [0, 1], threshold sum ≤ 1.0.
-/// </para>
-/// <para><strong>Threading:</strong></para>
-/// <para>
-/// Instances are read-only after construction and therefore inherently thread-safe.
-/// The holder manages the visibility of the current snapshot across threads.
-/// </para>
-/// </remarks>
 internal sealed class RuntimeCacheOptions
 {
     /// <summary>

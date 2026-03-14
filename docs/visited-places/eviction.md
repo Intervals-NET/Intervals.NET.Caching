@@ -240,6 +240,7 @@ Selectors must NOT:
 - Optimizes for total domain coverage: retains large (wide) segments over small ones
 - Best for workloads where wide segments are more valuable
 - Captures `TDomain` internally for span computation; does not use `TimeProvider`
+- **Non-finite span fallback:** If `segment.Range.Span(domain)` is not finite, a span of `0` is stored as a safe fallback — the segment will be treated as the worst eviction candidate (smallest span)
 
 #### Farthest-From-Access (planned)
 

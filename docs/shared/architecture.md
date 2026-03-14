@@ -62,7 +62,17 @@ All cache implementations implement `IAsyncDisposable`. Disposal is:
 
 Multiple cache instances may be composed into a stack where each layer uses the layer below it as its `IDataSource`. The outermost layer is user-facing (small, fast window); inner layers provide progressively larger buffers to amortize high-latency data source access.
 
-`WaitForIdleAsync` on a `LayeredRangeCache` awaits all layers sequentially (outermost first) so that the full stack converges before returning.
+`WaitForIdleAsync` on a `LayeredRangeCache` awaits all layers sequentially, **outermost first**. The outermost layer is awaited first because its rebalance drives fetch requests into inner layers; only after it is idle can inner layers be known to have received all pending work. Each inner layer is then awaited in turn until the deepest layer is idle, guaranteeing the entire stack has converged.
+
+### RangeCacheDataSourceAdapter
+
+`RangeCacheDataSourceAdapter<TRange, TData, TDomain>` is the composition point for multi-layer stacks. It adapts any `IRangeCache` as an `IDataSource`, allowing a cache instance to act as the backing store for a higher (closer-to-user) layer.
+
+**Design details:**
+
+- **Zero-copy data flow:** The `ReadOnlyMemory<TData>` from `RangeResult` is wrapped in a `ReadOnlyMemoryEnumerable<TData>` and passed directly as `RangeChunk.Data`. This avoids allocating a temporary `TData[]` proportional to the data range.
+- **Consistency model:** The adapter uses `GetDataAsync` (eventual consistency), not the strong consistency variants. Each layer manages its own rebalance lifecycle independently — the user always gets correct data immediately, and background optimization happens asynchronously at each layer.
+- **Non-ownership lifecycle:** The adapter does NOT own the inner cache. It holds a reference but does not dispose it. Lifecycle management is the responsibility of `LayeredRangeCache`.
 
 ---
 

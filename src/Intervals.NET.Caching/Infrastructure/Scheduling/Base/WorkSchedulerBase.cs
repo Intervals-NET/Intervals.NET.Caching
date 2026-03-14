@@ -5,63 +5,13 @@ namespace Intervals.NET.Caching.Infrastructure.Scheduling.Base;
 
 /// <summary>
 /// Abstract base class providing the shared execution pipeline for all work scheduler implementations.
+/// Handles debounce, cancellation check, executor call, diagnostics, and cleanup.
+/// See docs/shared/components/infrastructure.md for design details.
 /// </summary>
 /// <typeparam name="TWorkItem">
 /// The type of work item processed by this scheduler.
 /// Must implement <see cref="ISchedulableWorkItem"/> so the scheduler can cancel and dispose items.
 /// </typeparam>
-/// <remarks>
-/// <para><strong>Purpose:</strong></para>
-/// <para>
-/// Centralizes the logic that is identical across ALL <see cref="IWorkScheduler{TWorkItem}"/>
-/// implementations — regardless of whether they are serial or concurrent: shared fields,
-/// the per-item execution pipeline (debounce → cancellation check → executor call →
-/// diagnostics → cleanup), and the disposal guard. Each concrete subclass provides only its
-/// scheduling mechanism (<see cref="PublishWorkItemAsync"/>) and strategy-specific teardown
-/// (<see cref="DisposeAsyncCore"/>).
-/// </para>
-/// <para><strong>Hierarchy:</strong></para>
-/// <code>
-/// WorkSchedulerBase&lt;TWorkItem&gt;              — generic execution pipeline, disposal guard
-///   ├── SerialWorkSchedulerBase&lt;TWorkItem&gt;  — serial-specific: LastWorkItem, cancel-on-dispose
-///   │     ├── UnboundedSerialWorkScheduler   — task chaining
-///   │     └── BoundedSerialWorkScheduler     — channel-based
-///   └── ConcurrentWorkScheduler             — independent ThreadPool dispatch
-/// </code>
-/// <para><strong>Shared Execution Pipeline (<see cref="ExecuteWorkItemCoreAsync"/>):</strong></para>
-/// <list type="number">
-/// <item><description>Signal <c>WorkStarted</c> diagnostic</description></item>
-/// <item><description>Snapshot debounce delay from the provider delegate ("next cycle" semantics)</description></item>
-/// <item><description>Await <c>Task.Delay(debounceDelay, cancellationToken)</c> (skipped when <c>debounceDelay == TimeSpan.Zero</c>)</description></item>
-/// <item><description>Explicit <c>IsCancellationRequested</c> check after debounce (Task.Delay race guard; skipped when debounce is zero)</description></item>
-/// <item><description>Invoke the executor delegate with the work item and its cancellation token</description></item>
-/// <item><description>Catch <c>OperationCanceledException</c> → <c>WorkCancelled</c> diagnostic</description></item>
-/// <item><description>Catch all other exceptions → <c>WorkFailed</c> diagnostic</description></item>
-/// <item><description><c>finally</c>: dispose the item, decrement the activity counter</description></item>
-/// </list>
-/// <para>
-/// The <c>finally</c> block in step 8 is the canonical S.H.2 call site for scheduler-owned
-/// decrements. Every work item is disposed here (or in <see cref="PublishWorkItemAsync"/>'s
-/// error handler) — no separate dispose-last-item step is needed during disposal.
-/// </para>
-/// <para><strong>Disposal Protocol:</strong></para>
-/// <para>
-/// <see cref="DisposeAsync"/> handles the idempotent guard (Interlocked) and then delegates
-/// to <see cref="DisposeAsyncCore"/> for strategy-specific teardown. Serial subclasses
-/// extend this via <see cref="SerialWorkSchedulerBase{TWorkItem}"/>, which cancels the last
-/// work item before calling their own <c>DisposeSerialAsyncCore</c>.
-/// </para>
-/// <para><strong>Cache-Agnostic Design:</strong></para>
-/// <para>
-/// All cache-type-specific logic is injected as delegates or interfaces:
-/// </para>
-/// <list type="bullet">
-/// <item><description><c>executor</c> — <c>Func&lt;TWorkItem, CancellationToken, Task&gt;</c></description></item>
-/// <item><description><c>debounceProvider</c> — <c>Func&lt;TimeSpan&gt;</c></description></item>
-/// <item><description><c>diagnostics</c> — <see cref="IWorkSchedulerDiagnostics"/></description></item>
-/// <item><description><c>activityCounter</c> — <see cref="AsyncActivityCounter"/></description></item>
-/// </list>
-/// </remarks>
 internal abstract class WorkSchedulerBase<TWorkItem> : IWorkScheduler<TWorkItem>
     where TWorkItem : class, ISchedulableWorkItem
 {
@@ -109,23 +59,8 @@ internal abstract class WorkSchedulerBase<TWorkItem> : IWorkScheduler<TWorkItem>
     public abstract ValueTask PublishWorkItemAsync(TWorkItem workItem, CancellationToken loopCancellationToken);
 
     /// <summary>
-    /// Executes a single work item: debounce → cancellation check → executor call → diagnostics → cleanup.
-    /// This is the canonical execution pipeline shared by all strategy implementations.
+    /// Executes a single work item: debounce, cancellation check, executor call, diagnostics, cleanup.
     /// </summary>
-    /// <remarks>
-    /// <para><strong>Execution Steps:</strong></para>
-    /// <list type="number">
-    /// <item><description>Signal <c>WorkStarted</c> diagnostic</description></item>
-    /// <item><description>Read cancellation token from the work item's <see cref="ISchedulableWorkItem.CancellationToken"/></description></item>
-    /// <item><description>Snapshot debounce delay from provider at execution time ("next cycle" semantics)</description></item>
-    /// <item><description>Await <c>Task.Delay(debounceDelay, cancellationToken)</c> (skipped entirely when <c>debounceDelay == TimeSpan.Zero</c>)</description></item>
-    /// <item><description>Explicit <c>IsCancellationRequested</c> check after debounce (Task.Delay race guard; skipped when debounce is zero)</description></item>
-    /// <item><description>Invoke executor delegate</description></item>
-    /// <item><description>Catch <c>OperationCanceledException</c> → signal <c>WorkCancelled</c></description></item>
-    /// <item><description>Catch other exceptions → signal <c>WorkFailed</c></description></item>
-    /// <item><description><c>finally</c>: dispose item, decrement activity counter</description></item>
-    /// </list>
-    /// </remarks>
     private protected async Task ExecuteWorkItemCoreAsync(TWorkItem workItem)
     {
         try
@@ -189,18 +124,6 @@ internal abstract class WorkSchedulerBase<TWorkItem> : IWorkScheduler<TWorkItem>
     /// Performs strategy-specific teardown during disposal.
     /// Called by <see cref="DisposeAsync"/> after the disposal guard has fired.
     /// </summary>
-    /// <remarks>
-    /// Implementations should stop their scheduling mechanism here:
-    /// <list type="bullet">
-    /// <item><description><strong>Task-based (serial):</strong> await the current task chain</description></item>
-    /// <item><description><strong>Channel-based (serial):</strong> complete the channel writer and await the loop task</description></item>
-    /// <item><description><strong>Concurrent:</strong> no-op — cancellation and drain are owned by the caller</description></item>
-    /// </list>
-    /// <para>
-    /// Serial schedulers override this via <see cref="SerialWorkSchedulerBase{TWorkItem}"/>,
-    /// which cancels the last work item before delegating to <c>DisposeSerialAsyncCore</c>.
-    /// </para>
-    /// </remarks>
     private protected abstract ValueTask DisposeAsyncCore();
 
     /// <summary>

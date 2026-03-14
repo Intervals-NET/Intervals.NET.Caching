@@ -4,46 +4,17 @@ using Intervals.NET.Domain.Abstractions;
 namespace Intervals.NET.Caching.Layered;
 
 /// <summary>
-/// A thin wrapper around a stack of <see cref="IRangeCache{TRange,TData,TDomain}"/> instances
-/// that form a multi-layer cache pipeline. Implements <see cref="IRangeCache{TRange,TData,TDomain}"/>
-/// by delegating to the outermost (user-facing) layer, and disposes all layers from outermost
-/// to innermost when itself is disposed.
+/// A wrapper around a stack of <see cref="IRangeCache{TRange,TData,TDomain}"/> instances
+/// that form a multi-layer cache pipeline. Delegates to the outermost (user-facing) layer,
+/// and disposes all layers from outermost to innermost.
 /// </summary>
 /// <typeparam name="TRange">
 /// The type representing range boundaries. Must implement <see cref="IComparable{T}"/>.
 /// </typeparam>
-/// <typeparam name="TData">
-/// The type of data being cached.
-/// </typeparam>
+/// <typeparam name="TData">The type of data being cached.</typeparam>
 /// <typeparam name="TDomain">
 /// The type representing the domain of the ranges. Must implement <see cref="IRangeDomain{TRange}"/>.
 /// </typeparam>
-/// <remarks>
-/// <para><strong>Construction:</strong></para>
-/// <para>
-/// Instances are created exclusively by <see cref="LayeredRangeCacheBuilder{TRange,TData,TDomain}"/>.
-/// Do not construct directly; use the builder to ensure correct wiring of layers.
-/// </para>
-/// <para><strong>Layer Order:</strong></para>
-/// <para>
-/// Layers are ordered from deepest (index 0, closest to the real data source) to outermost
-/// (index <see cref="LayerCount"/> - 1, user-facing). All public cache operations
-/// delegate to the outermost layer. Inner layers operate independently and are driven
-/// by the outer layer's data source requests via <see cref="RangeCacheDataSourceAdapter{TRange,TData,TDomain}"/>.
-/// </para>
-/// <para><strong>Disposal:</strong></para>
-/// <para>
-/// Disposing this instance disposes all managed layers from outermost to innermost.
-/// The outermost layer is disposed first to stop new user requests from reaching inner layers.
-/// </para>
-/// <para><strong>WaitForIdleAsync Semantics:</strong></para>
-/// <para>
-/// <see cref="WaitForIdleAsync"/> awaits all layers sequentially, from outermost to innermost.
-/// This guarantees that the entire cache stack has converged: the outermost layer finishes its
-/// rebalance first (which drives fetch requests into inner layers), then each inner layer is
-/// awaited in turn until the deepest layer is idle.
-/// </para>
-/// </remarks>
 public sealed class LayeredRangeCache<TRange, TData, TDomain>
     : IRangeCache<TRange, TData, TDomain>
     where TRange : IComparable<TRange>
@@ -91,11 +62,6 @@ public sealed class LayeredRangeCache<TRange, TData, TDomain>
         => _userFacingLayer.GetDataAsync(requestedRange, cancellationToken);
 
     /// <inheritdoc/>
-    /// <remarks>
-    /// Awaits all layers sequentially from outermost to innermost. The outermost layer is awaited
-    /// first because its rebalance drives fetch requests into inner layers; only after it is idle
-    /// can inner layers be known to have received all pending work.
-    /// </remarks>
     public async Task WaitForIdleAsync(CancellationToken cancellationToken = default)
     {
         for (var i = _layers.Count - 1; i >= 0; i--)

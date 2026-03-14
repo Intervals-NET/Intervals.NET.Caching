@@ -15,10 +15,6 @@ namespace Intervals.NET.Caching.SlidingWindow.Infrastructure.Storage;
 /// <typeparam name="TDomain">
 /// The type representing the domain of the ranges. Must implement <see cref="IRangeDomain{TRange}"/>.
 /// </typeparam>
-/// <remarks>
-/// This interface is an implementation detail of the window cache.
-/// It represents behavior over internal state, not a public service.
-/// </remarks>
 internal interface ICacheStorage<TRange, TData, TDomain>
     where TRange : IComparable<TRange>
     where TDomain : IRangeDomain<TRange>
@@ -34,10 +30,6 @@ internal interface ICacheStorage<TRange, TData, TDomain>
     /// <param name="rangeData">
     /// The range data to materialize into internal storage.
     /// </param>
-    /// <remarks>
-    /// This method is called during cache initialization and rebalancing.
-    /// All elements from the range data are rewritten into internal storage.
-    /// </remarks>
     void Rematerialize(RangeData<TRange, TData, TDomain> rangeData);
 
     /// <summary>
@@ -49,11 +41,6 @@ internal interface ICacheStorage<TRange, TData, TDomain>
     /// <returns>
     /// A <see cref="ReadOnlyMemory{T}"/> containing the data for the specified range.
     /// </returns>
-    /// <remarks>
-    /// The behavior of this method depends on the strategy:
-    /// - Snapshot: Returns a view directly over internal array (zero allocations).
-    /// - CopyOnRead: Allocates a new array and copies the requested data.
-    /// </remarks>
     ReadOnlyMemory<TData> Read(Range<TRange> range);
 
     /// <summary>

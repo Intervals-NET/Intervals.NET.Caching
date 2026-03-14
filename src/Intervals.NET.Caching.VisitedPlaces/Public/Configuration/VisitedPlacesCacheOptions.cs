@@ -1,25 +1,9 @@
-using Intervals.NET.Caching.Infrastructure.Scheduling.Serial;
-
 namespace Intervals.NET.Caching.VisitedPlaces.Public.Configuration;
 
 /// <summary>
 /// Immutable configuration options for <see cref="Cache.VisitedPlacesCache{TRange,TData,TDomain}"/>.
 /// All properties are validated in the constructor and are immutable after construction.
 /// </summary>
-/// <typeparam name="TRange">The type representing range boundaries.</typeparam>
-/// <typeparam name="TData">The type of data being cached.</typeparam>
-/// <remarks>
-/// <para><strong>All options are construction-time only.</strong> There are no runtime-updatable
-/// options on the visited places cache. Construct a new cache instance to change configuration.</para>
-/// <para><strong>Storage strategy</strong> is specified by passing a typed options object
-/// (e.g., <see cref="SnapshotAppendBufferStorageOptions{TRange,TData}"/> or
-/// <see cref="LinkedListStrideIndexStorageOptions{TRange,TData}"/>) via
-/// <see cref="StorageStrategy"/>. The options object carries both the tuning parameters and
-/// the responsibility for constructing the storage implementation.</para>
-/// <para><strong>Eviction configuration</strong> is supplied separately via
-/// <see cref="Cache.VisitedPlacesCacheBuilder{TRange,TData,TDomain}.WithEviction"/>, not here.
-/// This keeps storage strategy and eviction concerns cleanly separated.</para>
-/// </remarks>
 public sealed class VisitedPlacesCacheOptions<TRange, TData> : IEquatable<VisitedPlacesCacheOptions<TRange, TData>>
     where TRange : IComparable<TRange>
 {
@@ -31,37 +15,16 @@ public sealed class VisitedPlacesCacheOptions<TRange, TData> : IEquatable<Visite
 
     /// <summary>
     /// The bounded capacity of the internal background event channel, or <see langword="null"/>
-    /// to use unbounded task-chaining scheduling instead.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// When <see langword="null"/> (the default), an <see cref="UnboundedSerialWorkScheduler{TWorkItem}"/> is used:
-    /// unbounded, no backpressure, minimal memory overhead — suitable for most scenarios.
-    /// </para>
-    /// <para>
-    /// When set to a positive integer, a <see cref="BoundedSerialWorkScheduler{TWorkItem}"/> with that capacity
-    /// is used: bounded, applies backpressure to the user path when the queue is full.
+    /// to use unbounded task-chaining scheduling instead (the default).
     /// Must be &gt;= 1 when non-null.
-    /// </para>
-    /// </remarks>
+    /// </summary>
     public int? EventChannelCapacity { get; }
 
     /// <summary>
     /// The time-to-live for each cached segment after it is stored, or <see langword="null"/>
     /// to disable TTL-based expiration (the default).
+    /// Must be &gt; <see cref="TimeSpan.Zero"/> when non-null.
     /// </summary>
-    /// <remarks>
-    /// <para>
-    /// When set, each segment is scheduled for removal after this duration elapses from the
-    /// moment the segment is stored. The TTL actor fires an independent background removal via
-    /// <c>TtlExpirationExecutor</c>, dispatched fire-and-forget on the thread pool.
-    /// </para>
-    /// <para>
-    /// Removal is idempotent: if the segment was already evicted before the TTL fires, the
-    /// removal is a no-op (guarded by <see cref="Core.CachedSegment{TRange,TData}.IsRemoved"/>).
-    /// </para>
-    /// <para>Must be &gt; <see cref="TimeSpan.Zero"/> when non-null.</para>
-    /// </remarks>
     public TimeSpan? SegmentTtl { get; }
 
     /// <summary>

@@ -118,16 +118,8 @@ public sealed class EventCounterCacheDiagnostics : ISlidingWindowCacheDiagnostic
     }
 
     /// <summary>
-    /// Resets all counters to zero. Use this before each test to ensure clean state.
+    /// Resets all counters to zero. Only call when no other thread is mutating the counters.
     /// </summary>
-    /// <remarks>
-    /// <para><strong>Warning — not atomic:</strong> This method resets each counter individually using
-    /// <see cref="Volatile.Write"/>. In a concurrent environment, another thread may increment a counter
-    /// between two consecutive resets, leaving the object in a partially-reset state. Only call this
-    /// method when you can guarantee that no other thread is mutating the counters (e.g., after
-    /// <c>WaitForIdleAsync</c> in tests).
-    /// </para>
-    /// </remarks>
     public void Reset()
     {
         Volatile.Write(ref _userRequestServed, 0);

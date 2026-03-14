@@ -2,13 +2,8 @@ namespace Intervals.NET.Caching.VisitedPlaces.Public.Configuration;
 
 /// <summary>
 /// Fluent builder for constructing <see cref="VisitedPlacesCacheOptions{TRange,TData}"/>.
+/// Obtain via <see cref="Cache.VisitedPlacesCacheBuilder{TRange,TData,TDomain}.WithOptions(Action{VisitedPlacesCacheOptionsBuilder{TRange,TData}})"/>.
 /// </summary>
-/// <typeparam name="TRange">The type representing range boundaries.</typeparam>
-/// <typeparam name="TData">The type of data being cached.</typeparam>
-/// <remarks>
-/// Obtain an instance via
-/// <see cref="Cache.VisitedPlacesCacheBuilder{TRange,TData,TDomain}.WithOptions(Action{VisitedPlacesCacheOptionsBuilder{TRange,TData}})"/>.
-/// </remarks>
 public sealed class VisitedPlacesCacheOptionsBuilder<TRange, TData>
     where TRange : IComparable<TRange>
 {

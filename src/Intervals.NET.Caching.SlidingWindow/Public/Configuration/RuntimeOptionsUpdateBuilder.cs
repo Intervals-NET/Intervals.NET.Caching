@@ -4,40 +4,8 @@ namespace Intervals.NET.Caching.SlidingWindow.Public.Configuration;
 /// Fluent builder for specifying runtime option updates on a live <see cref="ISlidingWindowCache{TRange,TData,TDomain}"/> instance.
 /// </summary>
 /// <remarks>
-/// <para><strong>Usage:</strong></para>
-/// <code>
-/// cache.UpdateRuntimeOptions(update =>
-///     update.WithLeftCacheSize(2.0)
-///           .WithRightCacheSize(3.0)
-///           .WithDebounceDelay(TimeSpan.FromMilliseconds(50)));
-/// </code>
-/// <para><strong>Partial Updates:</strong></para>
-/// <para>
-/// Only the fields explicitly set on the builder are changed. All other fields retain their current values.
-/// For example, calling only <c>WithLeftCacheSize</c> leaves <c>RightCacheSize</c>, thresholds, and
-/// <c>DebounceDelay</c> unchanged.
-/// </para>
-/// <para><strong>Double-Nullable Thresholds:</strong></para>
-/// <para>
-/// Because <c>LeftThreshold</c> and <c>RightThreshold</c> are <c>double?</c>, three states must be
-/// distinguishable for each:
-/// <list type="bullet">
-/// <item><description><em>Not specified</em> — keep existing value (default)</description></item>
-/// <item><description><em>Set to a value</em> — use <see cref="WithLeftThreshold"/> / <see cref="WithRightThreshold"/></description></item>
-/// <item><description><em>Set to null (disabled)</em> — use <see cref="ClearLeftThreshold"/> / <see cref="ClearRightThreshold"/></description></item>
-/// </list>
-/// </para>
-/// <para><strong>Validation:</strong></para>
-/// <para>
-/// Validation of the merged options (current + deltas) is performed inside
-/// <c>ISlidingWindowCache.UpdateRuntimeOptions</c> before publishing. If validation fails, an exception is thrown
-/// and the current options are left unchanged.
-/// </para>
-/// <para><strong>"Next Cycle" Semantics:</strong></para>
-/// <para>
-/// Published updates take effect on the next rebalance decision/execution cycle. In-flight operations
-/// continue with the options that were active when they started.
-/// </para>
+/// Only the fields explicitly set on the builder are changed; all others retain their current values.
+/// Use <see cref="ClearLeftThreshold"/>/<see cref="ClearRightThreshold"/> to explicitly set a threshold to <c>null</c>.
 /// </remarks>
 public sealed class RuntimeOptionsUpdateBuilder
 {

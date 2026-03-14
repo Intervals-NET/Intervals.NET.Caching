@@ -18,21 +18,6 @@ using Intervals.NET.Caching.SlidingWindow.Public.Instrumentation;
 namespace Intervals.NET.Caching.SlidingWindow.Public.Cache;
 
 /// <inheritdoc cref="ISlidingWindowCache{TRange,TData,TDomain}"/>
-/// <remarks>
-/// <para><strong>Architecture:</strong></para>
-/// <para>
-/// SlidingWindowCache acts as a <strong>Public Facade</strong> and <strong>Composition Root</strong>.
-/// It wires together all internal actors but does not implement business logic itself.
-/// All user requests are delegated to the internal <see cref="UserRequestHandler{TRange,TData,TDomain}"/> actor.
-/// </para>
-/// <para><strong>Internal Actors:</strong></para>
-/// <list type="bullet">
-/// <item><description><strong>UserRequestHandler</strong> - Fast Path Actor (User Thread)</description></item>
-/// <item><description><strong>IntentController</strong> - Temporal Authority (Background)</description></item>
-/// <item><description><strong>RebalanceDecisionEngine</strong> - Pure Decision Logic (Background)</description></item>
-/// <item><description><strong>RebalanceExecutor</strong> - Mutating Actor (Background)</description></item>
-/// </list>
-/// </remarks>
 public sealed class SlidingWindowCache<TRange, TData, TDomain>
     : ISlidingWindowCache<TRange, TData, TDomain>
     where TRange : IComparable<TRange>
@@ -199,10 +184,6 @@ public sealed class SlidingWindowCache<TRange, TData, TDomain>
     };
 
     /// <inheritdoc cref="ISlidingWindowCache{TRange,TData,TDomain}.GetDataAsync"/>
-    /// <remarks>
-    /// This method acts as a thin delegation layer to the internal <see cref="UserRequestHandler{TRange,TData,TDomain}"/> actor.
-    /// SlidingWindowCache itself implements no business logic - it is a pure facade.
-    /// </remarks>
     public ValueTask<RangeResult<TRange, TData>> GetDataAsync(
         Range<TRange> requestedRange,
         CancellationToken cancellationToken)
@@ -228,43 +209,6 @@ public sealed class SlidingWindowCache<TRange, TData, TDomain>
     }
 
     /// <inheritdoc cref="ISlidingWindowCache{TRange,TData,TDomain}.WaitForIdleAsync"/>
-    /// <remarks>
-    /// <para><strong>Implementation Strategy:</strong></para>
-    /// <para>
-    /// Delegates to AsyncActivityCounter which tracks active operations using lock-free atomic operations:
-    /// <list type="bullet">
-    /// <item><description>Counter increments atomically when intent published or execution enqueued</description></item>
-    /// <item><description>Counter decrements atomically when intent processing completes or execution finishes</description></item>
-    /// <item><description>TaskCompletionSource signaled when counter reaches 0 (idle state)</description></item>
-    /// <item><description>Returns Task that completes when system idle (state-based, supports multiple awaiters)</description></item>
-    /// </list>
-    /// </para>
-    /// <para><strong>Idle State Definition:</strong></para>
-    /// <para>
-    /// Cache is idle when activity counter is 0, meaning:
-    /// <list type="bullet">
-    /// <item><description>No intent processing in progress</description></item>
-    /// <item><description>No rebalance execution running</description></item>
-    /// </list>
-    /// </para>
-    /// <para><strong>Idle State Semantics - "Was Idle" NOT "Is Idle":</strong></para>
-    /// <para>
-    /// This method completes when the system <strong>was idle at some point in time</strong>.
-    /// It does NOT guarantee the system is still idle after completion (new activity may start immediately).
-    /// This is correct behavior for eventual consistency models - callers must re-check state if needed.
-    /// </para>
-    /// <para><strong>Typical Usage (Testing):</strong></para>
-    /// <code>
-    /// // Trigger operation that schedules rebalance
-    /// await cache.GetDataAsync(newRange);
-    /// 
-    /// // Wait for system to stabilize
-    /// await cache.WaitForIdleAsync();
-    /// 
-    /// // Cache WAS idle at some point - assert on converged state
-    /// Assert.Equal(expectedRange, cache.CurrentCacheRange);
-    /// </code>
-    /// </remarks>
     public Task WaitForIdleAsync(CancellationToken cancellationToken = default)
     {
         // Check disposal state using Volatile.Read (lock-free)
@@ -279,18 +223,6 @@ public sealed class SlidingWindowCache<TRange, TData, TDomain>
     }
 
     /// <inheritdoc cref="ISlidingWindowCache{TRange,TData,TDomain}.UpdateRuntimeOptions"/>
-    /// <remarks>
-    /// <para><strong>Implementation:</strong></para>
-    /// <para>
-    /// Reads the current snapshot from <see cref="_runtimeOptionsHolder"/>, applies the builder deltas,
-    /// validates the merged result (via <see cref="RuntimeCacheOptions"/> constructor), then publishes
-    /// the new snapshot via <see cref="RuntimeCacheOptionsHolder.Update"/> using a Volatile.Write
-    /// (release fence). Background threads pick up the new snapshot on their next read cycle.
-    /// </para>
-    /// <para>
-    /// If validation throws, the holder is not updated and the current options remain active.
-    /// </para>
-    /// </remarks>
     public void UpdateRuntimeOptions(Action<RuntimeOptionsUpdateBuilder> configure)
     {
         // Check disposal state using Volatile.Read (lock-free)
@@ -335,49 +267,7 @@ public sealed class SlidingWindowCache<TRange, TData, TDomain>
     /// A task that represents the asynchronous disposal operation.
     /// </returns>
     /// <remarks>
-    /// <para><strong>Disposal Sequence:</strong></para>
-    /// <list type="number">
-    /// <item><description>Atomically transitions disposal state from 0 (active) to 1 (disposing)</description></item>
-    /// <item><description>Disposes UserRequestHandler which cascades to IntentController and RebalanceExecutionController</description></item>
-    /// <item><description>Waits for all background processing loops to complete gracefully</description></item>
-    /// <item><description>Transitions disposal state to 2 (disposed)</description></item>
-    /// </list>
-    /// <para><strong>Idempotency:</strong></para>
-    /// <para>
-    /// Safe to call multiple times. Subsequent calls will wait for the first disposal to complete
-    /// using a three-state pattern (0=active, 1=disposing, 2=disposed). This ensures exactly-once
-    /// disposal execution while allowing concurrent disposal attempts to complete successfully.
-    /// </para>
-    /// <para><strong>Thread Safety:</strong></para>
-    /// <para>
-    /// Uses lock-free synchronization via <see cref="Interlocked.CompareExchange"/>, <see cref="Volatile"/>,
-    /// and <see cref="TaskCompletionSource"/> operations, consistent with the project's 
-    /// "Mostly Lock-Free Concurrency" architecture principle.
-    /// </para>
-    /// <para><strong>Concurrent Disposal Coordination:</strong></para>
-    /// <para>
-    /// When multiple threads call DisposeAsync concurrently:
-    /// <list type="bullet">
-    /// <item><description>Winner thread (first to transition 0>1): Creates TCS, performs disposal, signals completion</description></item>
-    /// <item><description>Loser threads (see state=1): Await TCS.Task to wait asynchronously without CPU burn</description></item>
-    /// <item><description>All threads observe the same disposal outcome (success or exception propagation)</description></item>
-    /// </list>
-    /// This pattern prevents CPU spinning while the winner thread performs async disposal operations.
-    /// Similar to <see cref="AsyncActivityCounter"/> idle coordination pattern.
-    /// </para>
-    /// <para><strong>Architectural Context:</strong></para>
-    /// <para>
-    /// SlidingWindowCache acts as the Composition Root and owns all internal actors. Disposal follows
-    /// the ownership hierarchy: SlidingWindowCache > UserRequestHandler > IntentController > RebalanceExecutionController.
-    /// Each actor disposes its owned resources in reverse order of initialization.
-    /// </para>
-    /// <para><strong>Exception Handling:</strong></para>
-    /// <para>
-    /// Any exceptions during disposal are propagated to ALL callers (both winner and losers). 
-    /// This aligns with the "Background Path Exceptions" pattern where cleanup failures should be 
-    /// observable but not crash the application. Loser threads will observe and re-throw the same 
-    /// exception that occurred during disposal.
-    /// </para>
+    /// Safe to call multiple times (idempotent). Concurrent callers wait for the first disposal to complete.
     /// </remarks>
     public async ValueTask DisposeAsync()
     {

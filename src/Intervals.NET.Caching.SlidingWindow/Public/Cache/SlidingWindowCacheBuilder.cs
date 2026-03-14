@@ -9,40 +9,6 @@ namespace Intervals.NET.Caching.SlidingWindow.Public.Cache;
 /// Non-generic entry point for creating cache instances via fluent builders.
 /// Enables full generic type inference so callers do not need to specify type parameters explicitly.
 /// </summary>
-/// <remarks>
-/// <para><strong>Entry Points:</strong></para>
-/// <list type="bullet">
-/// <item>
-///   <description>
-///     <see cref="For{TRange,TData,TDomain}"/> — returns a
-///     <see cref="SlidingWindowCacheBuilder{TRange,TData,TDomain}"/> for building a single
-///     <see cref="SlidingWindowCache{TRange,TData,TDomain}"/>.
-///   </description>
-/// </item>
-/// <item>
-///   <description>
-///     <see cref="Layered{TRange,TData,TDomain}"/> — returns a
-///     <see cref="LayeredRangeCacheBuilder{TRange,TData,TDomain}"/> for building a
-///     multi-layer cache stack (add layers via <c>AddSlidingWindowLayer</c> extension method).
-///   </description>
-/// </item>
-/// </list>
-/// <para><strong>Single-Cache Example:</strong></para>
-/// <code>
-/// await using var cache = SlidingWindowCacheBuilder.For(dataSource, domain)
-///     .WithOptions(o =&gt; o
-///         .WithCacheSize(1.0)
-///         .WithThresholds(0.2))
-///     .Build();
-/// </code>
-/// <para><strong>Layered-Cache Example:</strong></para>
-/// <code>
-/// await using var cache = SlidingWindowCacheBuilder.Layered(dataSource, domain)
-///     .AddSlidingWindowLayer(o =&gt; o.WithCacheSize(10.0).WithReadMode(UserCacheReadMode.CopyOnRead))
-///     .AddSlidingWindowLayer(o =&gt; o.WithCacheSize(0.5))
-///     .Build();
-/// </code>
-/// </remarks>
 public static class SlidingWindowCacheBuilder
 {
     /// <summary>
@@ -112,38 +78,6 @@ public static class SlidingWindowCacheBuilder
 /// <typeparam name="TDomain">
 /// The type representing the domain of the ranges. Must implement <see cref="IRangeDomain{TRange}"/>.
 /// </typeparam>
-/// <remarks>
-/// <para><strong>Construction:</strong></para>
-/// <para>
-/// Obtain an instance via <see cref="SlidingWindowCacheBuilder.For{TRange,TData,TDomain}"/>, which enables
-/// full generic type inference — no explicit type parameters required at the call site.
-/// </para>
-/// <para><strong>Options:</strong></para>
-/// <para>
-/// Call <see cref="WithOptions(SlidingWindowCacheOptions)"/> to supply a pre-built
-/// <see cref="SlidingWindowCacheOptions"/> instance, or <see cref="WithOptions(Action{SlidingWindowCacheOptionsBuilder})"/>
-/// to configure options inline using a fluent <see cref="SlidingWindowCacheOptionsBuilder"/>.
-/// Options are required; <see cref="Build"/> throws if they have not been set.
-/// </para>
-/// <para><strong>Example — Inline Options:</strong></para>
-/// <code>
-/// await using var cache = SlidingWindowCacheBuilder.For(dataSource, domain)
-///     .WithOptions(o =&gt; o
-///         .WithCacheSize(1.0)
-///         .WithReadMode(UserCacheReadMode.Snapshot)
-///         .WithThresholds(0.2))
-///     .WithDiagnostics(myDiagnostics)
-///     .Build();
-/// </code>
-/// <para><strong>Example — Pre-built Options:</strong></para>
-/// <code>
-/// var options = new SlidingWindowCacheOptions(1.0, 2.0, UserCacheReadMode.Snapshot, 0.2, 0.2);
-///
-/// await using var cache = SlidingWindowCacheBuilder.For(dataSource, domain)
-///     .WithOptions(options)
-///     .Build();
-/// </code>
-/// </remarks>
 public sealed class SlidingWindowCacheBuilder<TRange, TData, TDomain>
     where TRange : IComparable<TRange>
     where TDomain : IRangeDomain<TRange>

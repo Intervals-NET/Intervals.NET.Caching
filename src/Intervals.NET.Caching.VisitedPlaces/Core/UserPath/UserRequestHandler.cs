@@ -14,54 +14,9 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.UserPath;
 
 /// <summary>
 /// Handles user requests on the User Path: reads cached segments, computes gaps, fetches missing
-/// data from <c>IDataSource</c>, assembles the result, and publishes a
-/// <see cref="CacheNormalizationRequest{TRange,TData}"/> (fire-and-forget) for the Background Storage Loop.
+/// data, assembles the result, and publishes a normalization request for the Background Storage Loop.
+/// See docs/visited-places/ for design details.
 /// </summary>
-/// <typeparam name="TRange">The type representing range boundaries.</typeparam>
-/// <typeparam name="TData">The type of data being cached.</typeparam>
-/// <typeparam name="TDomain">The type representing the range domain.</typeparam>
-/// <remarks>
-/// <para><strong>Execution Context:</strong> User Thread</para>
-/// <para><strong>Critical Contract — User Path is READ-ONLY (Invariant VPC.A.10):</strong></para>
-/// <para>
-/// This handler NEVER mutates <see cref="ISegmentStorage{TRange,TData}"/>. All cache writes are
-/// performed exclusively by the Background Storage Loop (single writer).
-/// </para>
-/// <para><strong>Responsibilities:</strong></para>
-/// <list type="bullet">
-/// <item><description>Read intersecting segments from storage</description></item>
-/// <item><description>Compute coverage gaps within the requested range</description></item>
-/// <item><description>Fetch gap data from <c>IDataSource</c> (User Path — inline, synchronous w.r.t. the request)</description></item>
-/// <item><description>Assemble and return a <see cref="RangeResult{TRange,TData}"/></description></item>
-/// <item><description>Publish a <see cref="CacheNormalizationRequest{TRange,TData}"/> (fire-and-forget)</description></item>
-/// </list>
-/// <para><strong>Allocation strategy:</strong></para>
-/// <list type="bullet">
-/// <item><description>
-///   <c>hittingRangeData</c> and the merged sources buffer are plain heap arrays (<c>new T[]</c>).
-///   Both cross <c>await</c> points, making <c>ArrayPool</c> or <c>ref struct</c> approaches
-///   structurally unsound. In the typical case (1–2 hitting segments) the arrays are tiny and
-///   short-lived (Gen0). If benchmarks reveal pressure at very large segment counts, a
-///   threshold-switched buffer type (plain allocation ≤ N, <see cref="ArrayPool{T}"/> &gt; N)
-///   can be introduced without changing the surrounding logic.
-/// </description></item>
-/// <item><description>
-///   The <c>pieces</c> working buffer inside <see cref="Assemble"/> is rented from
-///   <see cref="ArrayPool{T}.Shared"/> and returned before the method exits — <c>Assemble</c>
-///   is synchronous, so the rental scope is tight and pool overhead is minimal.
-/// </description></item>
-/// <item><description>
-///   <c>ComputeGaps</c> returns a deferred <see cref="IEnumerable{T}"/>; the caller probes it
-///   with a single <c>MoveNext()</c> call. On Partial Hit, <c>PrependAndResume</c> resumes the
-///   same enumerator inside <c>FetchAsync</c> — the chain is walked exactly once, no
-///   intermediate array is ever materialized for gaps.
-/// </description></item>
-/// <item><description>
-///   The final result arrays (<see cref="ReadOnlyMemory{T}"/> payload returned to the caller) are
-///   irreducible heap allocations — they must outlive this method.
-/// </description></item>
-/// </list>
-/// </remarks>
 internal sealed class UserRequestHandler<TRange, TData, TDomain>
     where TRange : IComparable<TRange>
     where TDomain : IRangeDomain<TRange>
@@ -103,34 +58,6 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     /// <summary>
     /// Handles a user request for the specified range.
     /// </summary>
-    /// <param name="requestedRange">The range requested by the user.</param>
-    /// <param name="cancellationToken">A cancellation token to cancel the operation.</param>
-    /// <returns>
-    /// A <see cref="ValueTask{T}"/> containing the assembled <see cref="RangeResult{TRange,TData}"/>.
-    /// </returns>
-    /// <remarks>
-    /// <para><strong>Algorithm:</strong></para>
-    /// <list type="number">
-    /// <item><description>Find intersecting segments via <c>storage.FindIntersecting</c></description></item>
-    /// <item><description>
-    ///   If no segments hit (Full Miss): fetch full range from IDataSource directly — <c>ComputeGaps</c>
-    ///   is never called, saving its allocation entirely.
-    /// </description></item>
-    /// <item><description>
-    ///   Otherwise: map segments to <see cref="RangeData{TRangeType,TDataType,TRangeDomain}"/> into a
-    ///   heap array, compute gaps, and branch on Full Hit vs Partial Hit.
-    /// </description></item>
-    /// <item><description>Assemble result data from sources via a pooled buffer</description></item>
-    /// <item><description>Publish CacheNormalizationRequest (fire-and-forget)</description></item>
-    /// <item><description>Return RangeResult immediately</description></item>
-    /// </list>
-    /// <para><strong>Allocation profile per scenario:</strong></para>
-    /// <list type="bullet">
-    /// <item><description><strong>Full Hit:</strong> storage snapshot (irreducible) + <c>hittingRangeData</c> array + <c>pieces</c> pool rental + result array = 3 heap allocations (pool rental is bucket-local)</description></item>
-    /// <item><description><strong>Full Miss:</strong> storage snapshot + <c>[chunk]</c> wrapper + result data array = 3 allocations</description></item>
-    /// <item><description><strong>Partial Hit:</strong> storage snapshot + <c>hittingRangeData</c> array + <c>PrependAndResume</c> state machine + chunks array + <c>merged</c> array + <c>pieces</c> pool rental + result array = 6 heap allocations</description></item>
-    /// </list>
-    /// </remarks>
     public async ValueTask<RangeResult<TRange, TData>> HandleRequestAsync(
         Range<TRange> requestedRange,
         CancellationToken cancellationToken)
@@ -275,23 +202,8 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     }
 
     /// <summary>
-    /// Yields <paramref name="first"/> followed by the remaining elements of
-    /// <paramref name="enumerator"/> (which must have already had <c>MoveNext()</c> called once
-    /// and returned <see langword="true"/>).
+    /// Yields <paramref name="first"/> followed by the remaining elements of <paramref name="enumerator"/>.
     /// </summary>
-    /// <remarks>
-    /// <para>
-    /// This allows the caller to use a single <see cref="IEnumerator{T}"/> for both an empty-check
-    /// probe (<c>MoveNext()</c> returns <see langword="false"/> → Full Hit) and as the source for
-    /// <c>FetchAsync</c> (Partial Hit) — without re-evaluating the upstream LINQ chain or
-    /// allocating an intermediate array.
-    /// </para>
-    /// <para>
-    /// The compiler generates a state-machine class for this iterator; that object is
-    /// constructed when <see cref="IDataSource{TRange,TData}.FetchAsync(IEnumerable{Range{TRange}},CancellationToken)"/>
-    /// calls <c>GetEnumerator()</c> on the returned sequence.
-    /// </para>
-    /// </remarks>
     private static IEnumerable<Range<TRange>> PrependAndResume(
         Range<TRange> first,
         IEnumerator<Range<TRange>> enumerator)
@@ -307,19 +219,6 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     /// Lazily computes the gaps in <paramref name="requestedRange"/> not covered by
     /// <paramref name="hittingSegments"/>.
     /// </summary>
-    /// <returns>
-    /// A deferred <see cref="IEnumerable{T}"/> of uncovered sub-ranges. The caller obtains the
-    /// enumerator directly via <c>GetEnumerator()</c> and probes with a single <c>MoveNext()</c>
-    /// call — no array allocation. On Partial Hit, <see cref="PrependAndResume"/> resumes the
-    /// same enumerator so the chain is walked exactly once in total.
-    /// </returns>
-    /// <remarks>
-    /// <para>
-    /// Each iteration passes the current <c>remaining</c> sequence and the segment range to the
-    /// static local <c>Subtract</c> — no closure is created, eliminating one heap allocation per
-    /// hitting segment compared to an equivalent <c>SelectMany</c> lambda.
-    /// </para>
-    /// </remarks>
     private static IEnumerable<Range<TRange>> ComputeGaps(
         Range<TRange> requestedRange,
         IReadOnlyList<CachedSegment<TRange, TData>> hittingSegments)
@@ -364,35 +263,8 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     }
 
     /// <summary>
-    /// Assembles result data from a contiguous slice of a <see cref="RangeData{TRangeType,TDataType,TRangeDomain}"/>
-    /// buffer (cached segments and/or fetched chunks) clipped to <paramref name="requestedRange"/>.
+    /// Assembles result data from sources clipped to <paramref name="requestedRange"/>.
     /// </summary>
-    /// <param name="requestedRange">The range to assemble data for.</param>
-    /// <param name="sources">
-    /// Buffer containing domain-aware data sources in positions <c>[0..sourceCount)</c>. The buffer
-    /// is typically a pooled <see cref="ArrayPool{T}"/> rental — only the first <paramref name="sourceCount"/>
-    /// elements are valid; the rest must be ignored.
-    /// </param>
-    /// <param name="sourceCount">Number of valid entries at the start of <paramref name="sources"/>.</param>
-    /// <returns>
-    /// The assembled <see cref="ReadOnlyMemory{T}"/> and the actual available range
-    /// (<see langword="null"/> when no source intersects <paramref name="requestedRange"/>).
-    /// </returns>
-    /// <remarks>
-    /// <para>
-    /// Each source is intersected with <paramref name="requestedRange"/> and sliced lazily in
-    /// domain space via the <see cref="RangeData{TRangeType,TDataType,TRangeDomain}"/> indexer.
-    /// </para>
-    /// <para>
-    /// Total length is computed from domain spans (no enumeration required), then a single
-    /// result array is allocated and each slice is enumerated directly into it at the correct
-    /// offset — one allocation, one pass per source, no intermediate arrays, no redundant copies.
-    /// </para>
-    /// <para>
-    /// The internal <c>pieces</c> working buffer is rented from <see cref="ArrayPool{T}.Shared"/>
-    /// and returned before this method exits — no <c>List&lt;T&gt;</c> allocation.
-    /// </para>
-    /// </remarks>
     private static (ReadOnlyMemory<TData> Data, Range<TRange>? ActualRange) Assemble(
         Range<TRange> requestedRange,
         RangeData<TRange, TData, TDomain>[] sources,

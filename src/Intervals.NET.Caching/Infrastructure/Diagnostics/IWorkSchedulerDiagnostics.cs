@@ -1,33 +1,8 @@
-using Intervals.NET.Caching.Infrastructure.Scheduling.Base;
-
 namespace Intervals.NET.Caching.Infrastructure.Diagnostics;
 
 /// <summary>
 /// Diagnostics callbacks for a work scheduler's execution lifecycle.
 /// </summary>
-/// <remarks>
-/// <para><strong>Purpose:</strong></para>
-/// <para>
-/// Provides the scheduler-level subset of diagnostics that
-/// <see cref="WorkSchedulerBase{TWorkItem}"/> needs to report:
-/// work started, cancelled, and failed.
-/// This keeps the generic schedulers in <c>Intervals.NET.Caching</c>
-/// fully decoupled from any cache-type-specific diagnostics interface
-/// (e.g. <c>ICacheDiagnostics</c> in SlidingWindow).
-/// </para>
-/// <para><strong>Adapter Pattern:</strong></para>
-/// <para>
-/// Concrete cache implementations supply a thin adapter that bridges their own
-/// diagnostics interface to <see cref="IWorkSchedulerDiagnostics"/>. For SlidingWindow
-/// this adapter is <c>SlidingWindowWorkSchedulerDiagnostics</c>, which delegates to
-/// <c>ICacheDiagnostics.RebalanceExecution*</c> methods.
-/// </para>
-/// <para><strong>Thread Safety:</strong></para>
-/// <para>
-/// All methods must be safe to call concurrently from background threads.
-/// Implementations must not throw.
-/// </para>
-/// </remarks>
 internal interface IWorkSchedulerDiagnostics
 {
     /// <summary>

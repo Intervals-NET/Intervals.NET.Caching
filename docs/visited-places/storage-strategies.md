@@ -123,6 +123,8 @@ SnapshotAppendBufferStorage
 
 **Normalization cost**: O(n + m) merge of two sorted sequences (snapshot already sorted; append buffer sorted before merge)
 
+**Publish-before-reset ordering:** The snapshot is published via `Volatile.Write` BEFORE `_appendCount` is reset to zero. This eliminates the race where the User Path could observe `_appendCount == 0` but still read the old snapshot (missing new segments that were in the append buffer).
+
 **RCU safety**: User Path threads that read `_snapshot` via `Volatile.Read` before normalization continue to see the old, valid snapshot until their read completes. The new snapshot is published atomically; no intermediate state is ever visible.
 
 ### Memory Behavior
@@ -181,6 +183,8 @@ LinkedListStrideIndexStorage
 
 > Logical removal is tracked via `CachedSegment.IsRemoved` (an `int` field on each segment, set atomically via `Interlocked.CompareExchange`). No separate mask array is maintained; all reads and stride-index walks filter out segments where `IsRemoved == true`. Physical unlinking of removed nodes from `_list` happens during stride normalization.
 
+**No `_nodeMap`:** The stride index stores `LinkedListNode<T>` references directly, eliminating the need for a separate segment-to-node dictionary. Callers use `anchorNode.List != null` to verify the node is still linked before walking from it.
+
 **Stride**: A configurable integer N (default N=16) defining how often a stride anchor is placed. A stride anchor is a reference to the 1st, (N+1)th, (2N+1)th... live node in the sorted linked list.
 
 ### Read Path (User Thread)
@@ -219,6 +223,10 @@ Pass 2 — physical cleanup (safe only after new index is live):
 5. Reset `_addsSinceLastNormalization = 0`
 
 > **Why two passes?** Any User Path thread that read the *old* stride index before the swap may still be walking through `_list` using old anchor nodes as starting points. Those old anchors may point to nodes that are about to be physically removed. If we unlinked removed nodes *before* publishing the new index, a concurrent walk starting from a stale anchor could follow a node whose `Next` pointer was already set to `null` by physical removal, truncating the walk prematurely and missing live segments. Publishing first ensures all walkers using old anchors will complete correctly before those nodes disappear.
+
+**Per-node lock granularity during physical cleanup:** Dead nodes are unlinked one at a time, each under a brief `_listSyncRoot` acquisition: both `node.Next` capture and `_list.Remove(node)` execute inside the same per-node lock block, so the walk variable `next` is captured before `Remove()` can null out the pointer. The User Path (`FindIntersecting`) holds `_listSyncRoot` for its entire linked-list walk, so reads and removals interleave at node granularity: each removal step waits only for the current read to release the lock, then executes one `Remove()`, then yields so the reader can continue. This gives the User Path priority without blocking either path wholesale.
+
+**ArrayPool rental for anchor accumulation:** `NormalizeStrideIndex` uses an `ArrayPool<T>` rental as the anchor accumulation buffer (returned immediately after the right-sized index array is constructed), eliminating the intermediate `List<T>` and its `ToArray()` copy. The only heap allocation is the published stride index array itself (unavoidable).
 
 **Normalization cost**: O(n) list traversal (two passes) + O(n/N) for new stride array allocation
 

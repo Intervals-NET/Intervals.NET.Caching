@@ -11,22 +11,6 @@ namespace Intervals.NET.Caching.VisitedPlaces.Public.Extensions;
 /// Extension methods on <see cref="LayeredRangeCacheBuilder{TRange,TData,TDomain}"/> that add
 /// a <see cref="VisitedPlacesCache{TRange,TData,TDomain}"/> layer to the cache stack.
 /// </summary>
-/// <remarks>
-/// <para><strong>Usage:</strong></para>
-/// <code>
-/// await using var cache = await VisitedPlacesCacheBuilder.Layered(dataSource, domain)
-///     .AddVisitedPlacesLayer(
-///         options: new VisitedPlacesCacheOptions&lt;int, MyData&gt;(),
-///         policies: [new MaxSegmentCountPolicy(maxCount: 100)],
-///         selector: new LruEvictionSelector&lt;int, MyData&gt;())
-///     .BuildAsync();
-/// </code>
-/// <para>
-/// Each call wraps the previous layer (or root data source) in a
-/// <see cref="RangeCacheDataSourceAdapter{TRange,TData,TDomain}"/> and passes it to a new
-/// <see cref="VisitedPlacesCache{TRange,TData,TDomain}"/> instance.
-/// </para>
-/// </remarks>
 public static class VisitedPlacesLayerExtensions
 {
     /// <summary>

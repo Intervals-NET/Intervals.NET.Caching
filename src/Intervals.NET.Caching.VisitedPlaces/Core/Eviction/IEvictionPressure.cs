@@ -3,24 +3,10 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 /// <summary>
 /// Tracks whether an eviction constraint is satisfied. Updated incrementally as segments
 /// are removed during eviction execution.
+/// See docs/visited-places/ for design details.
 /// </summary>
 /// <typeparam name="TRange">The type representing range boundaries.</typeparam>
 /// <typeparam name="TData">The type of data being cached.</typeparam>
-/// <remarks>
-/// <para><strong>Execution Context:</strong> Background Path (single writer thread)</para>
-/// <para><strong>Lifecycle:</strong></para>
-/// <list type="bullet">
-/// <item><description>Created by an <see cref="IEvictionPolicy{TRange,TData}"/> during evaluation</description></item>
-/// <item><description>Queried and updated by the <see cref="EvictionExecutor{TRange,TData}"/> during execution</description></item>
-/// <item><description>Discarded after the eviction pass completes</description></item>
-/// </list>
-/// <para><strong>Contract:</strong></para>
-/// <list type="bullet">
-/// <item><description><see cref="IsExceeded"/> must be <c>true</c> when the constraint is violated</description></item>
-/// <item><description><see cref="Reduce"/> must update internal state to reflect the removal of a segment</description></item>
-/// <item><description>Implementations must be lightweight and allocation-free in <see cref="Reduce"/></description></item>
-/// </list>
-/// </remarks>
 public interface IEvictionPressure<TRange, TData>
     where TRange : IComparable<TRange>
 {

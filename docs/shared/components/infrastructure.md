@@ -46,9 +46,55 @@ All three invariants from `docs/shared/invariants.md` group **S.H** apply:
 - **S.H.2 — Decrement-in-Finally:** `DecrementActivity()` must be called in a `finally` block — unconditional cleanup regardless of success, failure, or cancellation. Unbalanced calls cause counter underflow and `WaitForIdleAsync` hangs.
 - **S.H.3 — "Was Idle" Semantics:** `WaitForIdleAsync` completes when the system **was idle at some point in time**, not necessarily when it is currently idle. New activity may start immediately after. This is correct for eventual-consistency callers (tests, disposal).
 
+### Race Analysis
+
+The lock-free design admits benign races between concurrent `IncrementActivity` and `DecrementActivity` calls. Two key interleavings are worth examining:
+
+**Decrement + Increment interleaving (busy-period boundary):**
+
+If T1 decrements to 0 while T2 increments to 1:
+1. T1 observes `count = 0`, reads `TCS_old` via `Volatile.Read`, signals `TCS_old` (completes the old busy period)
+2. T2 observes `count = 1`, creates `TCS_new`, publishes via `Volatile.Write` (starts a new busy period)
+3. Result: `TCS_old` = completed, `_idleTcs` = `TCS_new` (uncompleted), `count = 1` — all correct
+
+The old busy period ends and a new one begins. No corruption occurs.
+
+**WaitForIdleAsync reading a completed TCS:**
+
+T1 decrements to 0 and signals `TCS_old`. T2 increments to 1 and creates `TCS_new`. T3 calls `WaitForIdleAsync` and reads `TCS_old` (already completed). Result: `WaitForIdleAsync` completes immediately even though `count = 1`. This is correct — the system *was* idle between T1 and T2, which satisfies S.H.3 "was idle" semantics.
+
+### Memory Barrier Semantics
+
+TCS lifecycle uses explicit memory barriers:
+
+- **`Volatile.Write` (release fence)** in `IncrementActivity` on the `0 → 1` transition: all prior writes (TCS construction, field initialization) are visible to any thread that subsequently reads via `Volatile.Read`. This ensures readers observe a fully-constructed `TaskCompletionSource`.
+- **`Volatile.Read` (acquire fence)** in `DecrementActivity` and `WaitForIdleAsync`: ensures the reader observes the TCS published by the most recent `Volatile.Write`.
+
+**Concurrent `0 → 1` transitions:** If multiple threads call `IncrementActivity` concurrently from idle state, `Interlocked.Increment` guarantees exactly one thread observes `newCount == 1`. That thread creates and publishes the TCS for the new busy period.
+
 ### Counter Underflow Protection
 
 `DecrementActivity` checks for negative counter values. If a decrement would go below zero, it restores the counter to `0` via `Interlocked.CompareExchange` and throws `InvalidOperationException`. This surfaces unbalanced `Increment`/`Decrement` call sites immediately.
+
+---
+
+## ReadOnlyMemoryEnumerable
+
+**Location:** `src/Intervals.NET.Caching/Infrastructure/ReadOnlyMemoryEnumerable.cs`
+**Namespace:** `Intervals.NET.Caching.Infrastructure` (internal)
+
+### Purpose
+
+`ReadOnlyMemoryEnumerable<T>` wraps a `ReadOnlyMemory<T>` as an `IEnumerable<T>` without allocating a temporary `T[]` or copying the underlying data.
+
+### Allocation Characteristics
+
+The class exposes both a concrete `GetEnumerator()` returning the `Enumerator` struct and the interface `IEnumerable<T>.GetEnumerator()`:
+
+- **Concrete type (`var` / `ReadOnlyMemoryEnumerable<T>`):** `foreach` resolves to the struct `GetEnumerator()` — zero allocation.
+- **Interface type (`IEnumerable<T>`):** `GetEnumerator()` returns `IEnumerator<T>`, which boxes the struct enumerator — one heap allocation per call.
+
+Callers should hold the concrete type to keep enumeration allocation-free.
 
 ---
 

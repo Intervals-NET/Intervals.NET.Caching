@@ -27,27 +27,12 @@ internal sealed class SnapshotReadStorage<TRange, TData, TDomain> : ICacheStorag
     // the user thread always observes the latest array reference published by the rebalance thread.
     private volatile TData[] _storage = [];
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="SnapshotReadStorage{TRange,TData,TDomain}"/> class.
-    /// </summary>
-    /// <param name="domain">
-    /// The domain defining the range characteristics.
-    /// </param>
     public SnapshotReadStorage(TDomain domain)
     {
         _domain = domain;
     }
 
     /// <inheritdoc />
-    /// <remarks>
-    /// <strong>Write-ordering contract (thread safety — do not reorder):</strong>
-    /// <c>Range</c> MUST always be written <em>before</em> <c>_storage</c> in
-    /// <see cref="Rematerialize"/>. The volatile write on <c>_storage</c> acts as a
-    /// release fence that makes the preceding <c>Range</c> store visible to any thread
-    /// that subsequently performs the volatile read of <c>_storage</c> in <see cref="Read"/>.
-    /// Swapping the two assignments would silently break thread safety under the .NET
-    /// memory model.
-    /// </remarks>
     public Range<TRange> Range { get; private set; }
 
     /// <inheritdoc />

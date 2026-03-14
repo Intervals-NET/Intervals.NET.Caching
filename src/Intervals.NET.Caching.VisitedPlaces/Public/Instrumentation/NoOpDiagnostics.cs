@@ -4,9 +4,6 @@ namespace Intervals.NET.Caching.VisitedPlaces.Public.Instrumentation;
 /// No-op implementation of <see cref="IVisitedPlacesCacheDiagnostics"/> that silently discards all events.
 /// Used as the default when no diagnostics are configured.
 /// </summary>
-/// <remarks>
-/// Access the singleton via <see cref="Instance"/>. Do not construct additional instances.
-/// </remarks>
 public sealed class NoOpDiagnostics : NoOpCacheDiagnostics, IVisitedPlacesCacheDiagnostics
 {
     /// <summary>The singleton no-op diagnostics instance.</summary>

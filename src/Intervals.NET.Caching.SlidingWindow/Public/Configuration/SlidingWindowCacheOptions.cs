@@ -6,18 +6,10 @@ namespace Intervals.NET.Caching.SlidingWindow.Public.Configuration;
 /// Options for configuring the behavior of the sliding window cache.
 /// </summary>
 /// <remarks>
-/// <para><strong>Immutability:</strong></para>
-/// <para>
-/// <see cref="SlidingWindowCacheOptions"/> is a <c>sealed class</c> with get-only properties. All values
-/// are validated at construction time and cannot be changed on this object afterwards.
-/// Runtime-updatable options (cache sizes, thresholds, debounce delay) may be changed on a live
-/// cache instance via <see cref="ISlidingWindowCache{TRange,TData,TDomain}.UpdateRuntimeOptions"/>.
-/// </para>
-/// <para><strong>Creation-time vs Runtime options:</strong></para>
-/// <list type="bullet">
-/// <item><description><strong>Creation-time only</strong> � <see cref="ReadMode"/>, <see cref="RebalanceQueueCapacity"/>: determine which concrete classes are instantiated and cannot change after construction.</description></item>
-/// <item><description><strong>Runtime-updatable</strong> � <see cref="LeftCacheSize"/>, <see cref="RightCacheSize"/>, <see cref="LeftThreshold"/>, <see cref="RightThreshold"/>, <see cref="DebounceDelay"/>: configure sliding window geometry and execution timing; may be updated on a live cache instance.</description></item>
-/// </list>
+/// All values are validated at construction time. Runtime-updatable options (cache sizes, thresholds,
+/// debounce delay) may be changed on a live cache via
+/// <see cref="ISlidingWindowCache{TRange,TData,TDomain}.UpdateRuntimeOptions"/>.
+/// <see cref="ReadMode"/> and <see cref="RebalanceQueueCapacity"/> are creation-time only.
 /// </remarks>
 public sealed class SlidingWindowCacheOptions : IEquatable<SlidingWindowCacheOptions>
 {
@@ -129,35 +121,8 @@ public sealed class SlidingWindowCacheOptions : IEquatable<SlidingWindowCacheOpt
     /// The rebalance execution queue capacity that controls the execution strategy and backpressure behavior.
     /// </summary>
     /// <remarks>
-    /// <para><strong>Strategy Selection:</strong></para>
-    /// <list type="bullet">
-    /// <item><description>
-    /// <strong>null (default)</strong> - Unbounded task-based serialization:
-    /// Uses task chaining for execution serialization. Lightweight with minimal overhead.
-    /// No queue capacity limits. Recommended for most scenarios (standard web APIs, IoT processing, background jobs).
-    /// </description></item>
-    /// <item><description>
-    /// <strong>>= 1</strong> - Bounded channel-based serialization:
-    /// Uses System.Threading.Channels with the specified capacity for execution serialization.
-    /// Provides backpressure by blocking intent processing when queue is full.
-    /// Recommended for high-frequency scenarios or resource-constrained environments (real-time dashboards, streaming data).
-    /// </description></item>
-    /// </list>
-    /// <para><strong>Trade-offs:</strong></para>
-    /// <para>
-    /// <strong>Unbounded (null):</strong> Simple, sufficient for typical workloads, no backpressure overhead.
-    /// May accumulate requests under extreme sustained load.
-    /// </para>
-    /// <para>
-    /// <strong>Bounded (>= 1):</strong> Predictable memory usage, natural backpressure throttles upstream.
-    /// Intent processing blocks when queue is full (intentional throttling mechanism).
-    /// </para>
-    /// <para><strong>Typical Values:</strong></para>
-    /// <list type="bullet">
-    /// <item><description>null - Most scenarios (recommended default)</description></item>
-    /// <item><description>5-10 - High-frequency updates with moderate backpressure</description></item>
-    /// <item><description>3-5 - Resource-constrained environments requiring strict memory control</description></item>
-    /// </list>
+    /// When <c>null</c> (default), uses unbounded task-based serialization.
+    /// When <c>>= 1</c>, uses bounded channel-based serialization with backpressure.
     /// </remarks>
     public int? RebalanceQueueCapacity { get; }
 

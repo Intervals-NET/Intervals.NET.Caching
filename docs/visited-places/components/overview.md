@@ -132,6 +132,20 @@ UserRequestHandler.HandleRequestAsync(requestedRange, ct)
   7. Return RangeResult to caller
 ```
 
+**Allocation profile per scenario:**
+
+| Scenario    | Heap allocations | Details                                                                                                                                              |
+|-------------|------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Full Hit    | 3                | Storage snapshot (irreducible) + `hittingRangeData` array + `pieces` pool rental + result array                                                      |
+| Full Miss   | 3                | Storage snapshot + `[chunk]` wrapper + result data array                                                                                             |
+| Partial Hit | 6                | Storage snapshot + `hittingRangeData` array + `PrependAndResume` state machine + chunks array + `merged` array + `pieces` pool rental + result array |
+
+**Allocation strategy notes:**
+- `hittingRangeData` and merged sources buffer are plain heap arrays (`new T[]`). Both cross `await` points, making `ArrayPool` or `ref struct` approaches structurally unsound. In the typical case (1–2 hitting segments) the arrays are tiny and short-lived (Gen0).
+- The `pieces` working buffer inside `Assemble` is rented from `ArrayPool<T>.Shared` and returned before the method exits — `Assemble` is synchronous, so the rental scope is tight.
+- `ComputeGaps` returns a deferred `IEnumerable<T>`; the caller probes it with a single `MoveNext()` call. On Partial Hit, `PrependAndResume` resumes the same enumerator — the chain is walked exactly once, no intermediate array is materialized for gaps.
+- Each iteration in `ComputeGaps` passes the current remaining sequence and the segment range to a static local `Subtract` — no closure is created, eliminating one heap allocation per hitting segment compared to an equivalent `SelectMany` lambda.
+
 ---
 
 ## Subsystem 4 — Core: Background Path

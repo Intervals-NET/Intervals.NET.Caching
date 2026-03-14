@@ -12,43 +12,10 @@ namespace Intervals.NET.Caching.Layered;
 /// <typeparam name="TRange">
 /// The type representing range boundaries. Must implement <see cref="IComparable{T}"/>.
 /// </typeparam>
-/// <typeparam name="TData">
-/// The type of data being cached.
-/// </typeparam>
+/// <typeparam name="TData">The type of data being cached.</typeparam>
 /// <typeparam name="TDomain">
 /// The type representing the domain of the ranges. Must implement <see cref="IRangeDomain{TRange}"/>.
 /// </typeparam>
-/// <remarks>
-/// <para><strong>Purpose:</strong></para>
-/// <para>
-/// This adapter is the composition point for building multi-layer (L1/L2/L3/...) caches.
-/// It bridges the gap between <see cref="IRangeCache{TRange,TData,TDomain}"/> (the consumer API)
-/// and <see cref="IDataSource{TRange,TData}"/> (the producer API), allowing any cache instance
-/// to act as a backing store for a higher (closer-to-user) cache layer.
-/// </para>
-/// <para><strong>Data Flow:</strong></para>
-/// <para>
-/// When the outer (higher) cache needs to fetch data, it calls this adapter's
-/// <see cref="FetchAsync(Range{TRange}, CancellationToken)"/> method. The adapter
-/// delegates to the inner (deeper) cache's <see cref="IRangeCache{TRange,TData,TDomain}.GetDataAsync"/>,
-/// which returns data from the inner cache's window. The <see cref="ReadOnlyMemory{T}"/> from
-/// <see cref="RangeResult{TRange,TData}"/> is wrapped in a <see cref="ReadOnlyMemoryEnumerable{T}"/>
-/// and passed directly as <see cref="RangeChunk{TRange,TData}.Data"/>, avoiding a temporary
-/// <typeparamref name="TData"/>[] allocation proportional to the data range.
-/// </para>
-/// <para><strong>Consistency Model:</strong></para>
-/// <para>
-/// The adapter uses <c>GetDataAsync</c> (eventual consistency). Each layer manages its own
-/// rebalance lifecycle independently. This is the correct model for layered caches: the user
-/// always gets correct data immediately, and prefetch optimization happens asynchronously at each layer.
-/// </para>
-/// <para><strong>Lifecycle:</strong></para>
-/// <para>
-/// The adapter does NOT own the inner cache. It holds a reference but does not dispose it.
-/// Lifecycle management is the responsibility of the caller (typically
-/// <see cref="LayeredRangeCacheBuilder{TRange,TData,TDomain}"/> via <see cref="LayeredRangeCache{TRange,TData,TDomain}"/>).
-/// </para>
-/// </remarks>
 public sealed class RangeCacheDataSourceAdapter<TRange, TData, TDomain>
     : IDataSource<TRange, TData>
     where TRange : IComparable<TRange>

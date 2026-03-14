@@ -61,22 +61,6 @@ internal sealed class CacheDataExtensionService<TRange, TData, TDomain>
     /// <returns>
     /// Extended cache containing all existing data plus newly fetched data to cover the requested range.
     /// </returns>
-    /// <remarks>
-    /// <para><strong>Operation:</strong> Extends cache to cover requested range (NO trimming of existing data).</para>
-    /// <para><strong>Use case:</strong> User requests (GetDataAsync) where we want to preserve all cached data for future rebalancing.</para>
-    /// <para><strong>Optimization:</strong> Only fetches data not already in cache (partial cache hit optimization).</para>
-    /// <para><strong>Note:</strong> This is an internal component that does not perform input validation or short-circuit checks. 
-    /// All parameters are assumed to be pre-validated by the caller. Duplicating validation here would be unnecessary overhead.</para>
-    /// <para><strong>Example:</strong></para>
-    /// <code>
-    /// Cache: [100, 200], Requested: [150, 250]
-    /// - Already cached: [150, 200]
-    /// - Missing (fetched): (200, 250]
-    /// - Result: [100, 250] (ALL existing data preserved + newly fetched)
-    /// 
-    /// Later rebalance to [50, 300] can reuse [100, 250] without re-fetching!
-    /// </code>
-    /// </remarks>
     public async Task<RangeData<TRange, TData, TDomain>> ExtendCacheAsync(
         RangeData<TRange, TData, TDomain> currentCache,
         Range<TRange> requested,
@@ -142,31 +126,8 @@ internal sealed class CacheDataExtensionService<TRange, TData, TDomain>
     }
 
     /// <summary>
-    /// Combines the existing cached data with the newly fetched data,
-    /// ensuring that the resulting range data is correctly merged and consistent with the domain.
+    /// Combines the existing cached data with the newly fetched data.
     /// </summary>
-    /// <remarks>
-    /// <para><strong>Boundary Handling:</strong></para>
-    /// <para>
-    /// Segments with null Range (unavailable data from DataSource) are filtered out
-    /// before union. This ensures cache only contains contiguous available data,
-    /// preserving Invariant SWC.A.12b (Cache Contiguity).
-    /// </para>
-    /// <para>
-    /// When DataSource returns RangeChunk with Range = null (e.g., request beyond database boundaries),
-    /// those segments are skipped and do not affect the cache. The cache converges to maximum
-    /// available data without gaps.
-    /// </para>
-    /// <para><strong>Allocation note (architectural limitation):</strong></para>
-    /// <para>
-    /// Each <c>current.Union(...)</c> call builds a new <see cref="Intervals.NET.Data.RangeData{TRange,TData,TDomain}"/>
-    /// chained enumerable wrapper, resulting in N allocations for N fetched chunks on a partial hit.
-    /// This is an inherent constraint of the <see cref="IEnumerable{T}"/>-based
-    /// <c>RangeData</c> contract: zero-copy slice merging without materialisation is not possible
-    /// at this layer. The chain is walked exactly once during <c>Rematerialize</c> on the
-    /// rebalance (background) path and is never on the user path, so the cost is acceptable.
-    /// </para>
-    /// </remarks>
     private RangeData<TRange, TData, TDomain> UnionAll(
         RangeData<TRange, TData, TDomain> current,
         IEnumerable<RangeChunk<TRange, TData>> rangeChunks

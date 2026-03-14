@@ -4,32 +4,9 @@ namespace Intervals.NET.Caching.SlidingWindow.Public.Configuration;
 /// A read-only snapshot of the current runtime-updatable cache option values.
 /// </summary>
 /// <remarks>
-/// <para><strong>Purpose:</strong></para>
-/// <para>
-/// Exposes the current values of the five runtime-updatable options on a live cache instance.
 /// Obtained via <see cref="ISlidingWindowCache{TRange,TData,TDomain}.CurrentRuntimeOptions"/>.
-/// </para>
-/// <para><strong>Usage:</strong></para>
-/// <code>
-/// // Inspect current values
-/// var current = cache.CurrentRuntimeOptions;
-/// Console.WriteLine($"Left: {current.LeftCacheSize}, Right: {current.RightCacheSize}");
-///
-/// // Perform a relative update (e.g. double the left size)
-/// var current = cache.CurrentRuntimeOptions;
-/// cache.UpdateRuntimeOptions(u => u.WithLeftCacheSize(current.LeftCacheSize * 2));
-/// </code>
-/// <para><strong>Snapshot Semantics:</strong></para>
-/// <para>
-/// This object captures the option values at the moment the property was read.
-/// It is not updated if <see cref="ISlidingWindowCache{TRange,TData,TDomain}.UpdateRuntimeOptions"/>
-/// is called afterward — obtain a new snapshot to see updated values.
-/// </para>
-/// <para><strong>Relationship to RuntimeCacheOptions:</strong></para>
-/// <para>
-/// This is a public projection of the internal <c>RuntimeCacheOptions</c> snapshot.
-/// It contains the same five values but is exposed as a public, user-facing type.
-/// </para>
+/// Captures values at the moment the property was read; not updated by subsequent calls to
+/// <see cref="ISlidingWindowCache{TRange,TData,TDomain}.UpdateRuntimeOptions"/>.
 /// </remarks>
 public sealed class RuntimeOptionsSnapshot
 {

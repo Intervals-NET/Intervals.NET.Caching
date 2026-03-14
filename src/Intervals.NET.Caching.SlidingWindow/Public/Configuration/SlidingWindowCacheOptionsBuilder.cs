@@ -1,44 +1,11 @@
 namespace Intervals.NET.Caching.SlidingWindow.Public.Configuration;
 
 /// <summary>
-/// Fluent builder for constructing <see cref="SlidingWindowCacheOptions"/> instances with a clean,
-/// discoverable API.
+/// Fluent builder for constructing <see cref="SlidingWindowCacheOptions"/> instances.
 /// </summary>
 /// <remarks>
-/// <para><strong>Purpose:</strong></para>
-/// <para>
-/// Provides a fluent alternative to the <see cref="SlidingWindowCacheOptions"/> constructor, especially
-/// useful for inline configuration via <see cref="Cache.SlidingWindowCacheBuilder{TRange,TData,TDomain}"/>.
-/// </para>
-/// <para><strong>Required Fields:</strong></para>
-/// <para>
-/// <see cref="WithLeftCacheSize"/> and <see cref="WithRightCacheSize"/> (or a convenience overload
-/// such as <see cref="WithCacheSize(double)"/>) must be called before <see cref="Build"/>.
-/// All other fields have sensible defaults.
-/// </para>
-/// <para><strong>Defaults:</strong></para>
-/// <list type="bullet">
-/// <item><description><strong>ReadMode</strong>: <see cref="UserCacheReadMode.Snapshot"/></description></item>
-/// <item><description><strong>LeftThreshold / RightThreshold</strong>: <c>null</c> (disabled)</description></item>
-/// <item><description><strong>DebounceDelay</strong>: 100 ms (applied by <see cref="SlidingWindowCacheOptions"/>)</description></item>
-/// <item><description><strong>RebalanceQueueCapacity</strong>: <c>null</c> (unbounded task-based)</description></item>
-/// </list>
-/// <para><strong>Standalone Usage:</strong></para>
-/// <code>
-/// var options = new SlidingWindowCacheOptionsBuilder()
-///     .WithCacheSize(1.0)
-///     .WithReadMode(UserCacheReadMode.Snapshot)
-///     .WithThresholds(0.2)
-///     .Build();
-/// </code>
-/// <para><strong>Inline Usage (via cache builder):</strong></para>
-/// <code>
-/// var cache = SlidingWindowCacheBuilder.For(dataSource, domain)
-///     .WithOptions(o =&gt; o
-///         .WithCacheSize(1.0)
-///         .WithThresholds(0.2))
-///     .Build();
-/// </code>
+/// <see cref="WithLeftCacheSize"/> and <see cref="WithRightCacheSize"/> (or <see cref="WithCacheSize(double)"/>)
+/// must be called before <see cref="Build"/>. All other fields have sensible defaults.
 /// </remarks>
 public sealed class SlidingWindowCacheOptionsBuilder
 {

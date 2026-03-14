@@ -6,19 +6,6 @@ namespace Intervals.NET.Caching.VisitedPlaces.Public.Configuration;
 /// Fluent builder for assembling an eviction configuration (policies + selector) for a
 /// <see cref="Cache.VisitedPlacesCache{TRange,TData,TDomain}"/>.
 /// </summary>
-/// <typeparam name="TRange">The type representing range boundaries.</typeparam>
-/// <typeparam name="TData">The type of data being cached.</typeparam>
-/// <remarks>
-/// <para><strong>Usage:</strong></para>
-/// <code>
-/// .WithEviction(e => e
-///     .AddPolicy(MaxSegmentCountPolicy.Create&lt;int, MyData&gt;(50))
-///     .WithSelector(LruEvictionSelector.Create&lt;int, MyData&gt;()))
-/// </code>
-/// <para><strong>OR semantics:</strong> Eviction fires when ANY added policy produces an exceeded
-/// pressure. At least one policy and exactly one selector must be configured before
-/// <see cref="Build"/> is called (enforced by the consuming builder).</para>
-/// </remarks>
 public sealed class EvictionConfigBuilder<TRange, TData>
     where TRange : IComparable<TRange>
 {

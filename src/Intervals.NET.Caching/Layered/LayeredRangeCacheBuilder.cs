@@ -3,48 +3,17 @@ using Intervals.NET.Domain.Abstractions;
 namespace Intervals.NET.Caching.Layered;
 
 /// <summary>
-/// Factory-based fluent builder for constructing a multi-layer (L1/L2/L3/...) cache stack,
+/// Fluent builder for constructing a multi-layer cache stack,
 /// where each layer is any <see cref="IRangeCache{TRange,TData,TDomain}"/> implementation
 /// backed by the layer below it via a <see cref="RangeCacheDataSourceAdapter{TRange,TData,TDomain}"/>.
 /// </summary>
 /// <typeparam name="TRange">
 /// The type representing range boundaries. Must implement <see cref="IComparable{T}"/>.
 /// </typeparam>
-/// <typeparam name="TData">
-/// The type of data being cached.
-/// </typeparam>
+/// <typeparam name="TData">The type of data being cached.</typeparam>
 /// <typeparam name="TDomain">
 /// The type representing the domain of the ranges. Must implement <see cref="IRangeDomain{TRange}"/>.
 /// </typeparam>
-/// <remarks>
-/// <para><strong>Layer Ordering:</strong></para>
-/// <para>
-/// Layers are added from deepest (first call to <see cref="AddLayer"/>) to outermost (last call).
-/// The first layer factory receives the real root <see cref="IDataSource{TRange,TData}"/>.
-/// Each subsequent factory receives the previous layer wrapped in a
-/// <see cref="RangeCacheDataSourceAdapter{TRange,TData,TDomain}"/>.
-/// </para>
-/// <para><strong>Extension Methods:</strong></para>
-/// <para>
-/// Cache-specific packages provide extension methods on this builder (e.g.,
-/// <c>AddSlidingWindowLayer</c> from <c>Intervals.NET.Caching.SlidingWindow</c>)
-/// that close over their own configuration and create the correct cache type.
-/// </para>
-/// <para><strong>Example — Two-Layer SlidingWindow cache (via extension method):</strong></para>
-/// <code>
-/// await using var cache = await SlidingWindowCacheBuilder.Layered(realDataSource, domain)
-///     .AddSlidingWindowLayer(o => o.WithCacheSize(10.0).WithReadMode(UserCacheReadMode.CopyOnRead))
-///     .AddSlidingWindowLayer(o => o.WithCacheSize(0.5))
-///     .BuildAsync();
-/// </code>
-/// <para><strong>Direct usage with a custom factory:</strong></para>
-/// <code>
-/// await using var cache = await new LayeredRangeCacheBuilder&lt;int, byte[], MyDomain&gt;(rootSource, domain)
-///     .AddLayer(src => new MyCache(src, myOptions))
-///     .AddLayer(src => new MyCache(src, outerOptions))
-///     .BuildAsync();
-/// </code>
-/// </remarks>
 public sealed class LayeredRangeCacheBuilder<TRange, TData, TDomain>
     where TRange : IComparable<TRange>
     where TDomain : IRangeDomain<TRange>
@@ -95,23 +64,17 @@ public sealed class LayeredRangeCacheBuilder<TRange, TData, TDomain>
     /// <summary>
     /// Builds the layered cache stack and returns an <see cref="IRangeCache{TRange,TData,TDomain}"/>
     /// that owns all created layers.
+    /// If a factory throws during construction, all previously created layers are disposed
+    /// before the exception propagates.
     /// </summary>
     /// <returns>
     /// A <see cref="ValueTask{TResult}"/> that completes with a
     /// <see cref="LayeredRangeCache{TRange,TData,TDomain}"/> whose
     /// <see cref="IRangeCache{TRange,TData,TDomain}.GetDataAsync"/> delegates to the outermost layer.
-    /// Dispose the returned instance to release all layer resources.
     /// </returns>
     /// <exception cref="InvalidOperationException">
     /// Thrown when no layers have been added via <see cref="AddLayer"/>.
     /// </exception>
-    /// <remarks>
-    /// <para><strong>Failure Safety:</strong></para>
-    /// <para>
-    /// If a factory throws during construction, all previously created layers are disposed
-    /// before the exception propagates, preventing resource leaks.
-    /// </para>
-    /// </remarks>
     public async ValueTask<IRangeCache<TRange, TData, TDomain>> BuildAsync()
     {
         if (_factories.Count == 0)

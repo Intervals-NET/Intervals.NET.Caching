@@ -11,38 +11,11 @@ using Intervals.NET.Caching.SlidingWindow.Public.Instrumentation;
 namespace Intervals.NET.Caching.SlidingWindow.Core.UserPath;
 
 /// <summary>
-/// Handles user requests synchronously, serving data from cache or data source.
-/// This is the Fast Path Actor that operates in the User Thread.
+/// Handles user requests synchronously, serving data from cache or data source. See docs/sliding-window/ for design details.
 /// </summary>
 /// <typeparam name="TRange">The type representing the range boundaries.</typeparam>
 /// <typeparam name="TData">The type of data being cached.</typeparam>
 /// <typeparam name="TDomain">The type representing the domain of the ranges.</typeparam>
-/// <remarks>
-/// <para><strong>Execution Context:</strong> User Thread</para>
-/// <para><strong>Critical Contract:</strong></para>
-/// <para>
-/// Every user access that results in assembled data publishes a rebalance intent.
-/// Requests where IDataSource returns null for the requested range (physical boundary misses)
-/// do not publish an intent, as there is no delivered data to embed (see Invariant SWC.C.8e).
-/// The UserRequestHandler NEVER invokes decision logic.
-/// </para>
-/// <para><strong>Responsibilities:</strong></para>
-/// <list type="bullet">
-/// <item><description>Handles user requests synchronously</description></item>
-/// <item><description>Decides how to serve RequestedRange (from cache, from IDataSource, or mixed)</description></item>
-/// <item><description>Assembles data for the requested range (from cache, IDataSource, or combined) without mutating cache state</description></item>
-/// <item><description>Triggers rebalance intent (fire-and-forget)</description></item>
-/// <item><description>Never blocks on rebalance</description></item>
-/// </list>
-/// <para><strong>Explicit Non-Responsibilities:</strong></para>
-/// <list type="bullet">
-/// <item><description>? NEVER checks NoRebalanceRange (belongs to DecisionEngine)</description></item>
-/// <item><description>? NEVER computes DesiredCacheRange (belongs to GeometryPolicy)</description></item>
-/// <item><description>? NEVER decides whether to rebalance (belongs to DecisionEngine)</description></item>
-/// <item><description>? No cache normalization</description></item>
-/// <item><description>? No trimming or shrinking</description></item>
-/// </list>
-/// </remarks>
 internal sealed class UserRequestHandler<TRange, TData, TDomain>
     where TRange : IComparable<TRange>
     where TDomain : IRangeDomain<TRange>
@@ -63,8 +36,8 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     /// <param name="state">The cache state.</param>
     /// <param name="cacheExtensionService">The cache data fetcher for extending cache coverage.</param>
     /// <param name="intentController">The intent controller for publishing rebalance intents.</param>
-    /// <param name="dataSource"> The data source to request missing data from.</param>
-    /// <param name="cacheDiagnostics">The diagnostics interface for recording cache metrics and events related to user requests.</param>
+    /// <param name="dataSource">The data source to request missing data from.</param>
+    /// <param name="cacheDiagnostics">The diagnostics interface for recording cache metrics and events.</param>
     public UserRequestHandler(CacheState<TRange, TData, TDomain> state,
         CacheDataExtensionService<TRange, TData, TDomain> cacheExtensionService,
         IntentController<TRange, TData, TDomain> intentController,
@@ -89,35 +62,6 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     /// <see cref="RangeResult{TRange, TData}"/> with the actual available range and data.
     /// The Range may be null if no data is available, or a subset of requestedRange if truncated at boundaries.
     /// </returns>
-    /// <remarks>
-    /// <para>This method implements the User Path logic (READ-ONLY with respect to cache state):</para>
-    /// <list type="number">
-    /// <item><description>Determine which of the four scenarios applies (cold start, full hit, partial hit, full miss)</description></item>
-    /// <item><description>Fetch missing data from IDataSource as needed</description></item>
-    /// <item><description>Compute actual available range (intersection of requested and available)</description></item>
-    /// <item><description>Materialise assembled data into a <see cref="ReadOnlyMemory{T}"/> buffer</description></item>
-    /// <item><description>Publish rebalance intent with delivered data (fire-and-forget)</description></item>
-    /// <item><description>Return RangeResult immediately</description></item>
-    /// </list>
-    /// <para><strong>CRITICAL: User Path is READ-ONLY</strong></para>
-    /// <para>
-    /// User Path NEVER writes to cache state. All cache mutations are performed exclusively
-    /// by Rebalance Execution Path (single-writer architecture). The User Path:
-    /// <list type="bullet">
-    /// <item><description>? May READ from cache</description></item>
-    /// <item><description>? May READ from IDataSource</description></item>
-    /// <item><description>? NEVER writes to Cache (no Rematerialize calls)</description></item>
-    /// <item><description>? NEVER writes to IsInitialized</description></item>
-    /// <item><description>? NEVER writes to NoRebalanceRange</description></item>
-    /// </list>
-    /// </para>
-    /// <para><strong>Boundary Handling:</strong></para>
-    /// <para>
-    /// When DataSource has physical boundaries (e.g., database min/max IDs), the returned
-    /// RangeResult.Range indicates what portion of the request was actually available.
-    /// This allows graceful handling of out-of-bounds requests without exceptions.
-    /// </para>
-    /// </remarks>
     public async ValueTask<RangeResult<TRange, TData>> HandleRequestAsync(
         Range<TRange> requestedRange,
         CancellationToken cancellationToken)
@@ -214,22 +158,9 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     }
 
     /// <summary>
-    /// Disposes the user request handler and releases all managed resources.
-    /// Gracefully shuts down the intent controller.
+    /// Disposes the user request handler, shutting down the intent controller.
     /// </summary>
     /// <returns>A ValueTask representing the asynchronous disposal operation.</returns>
-    /// <remarks>
-    /// <para><strong>Disposal Sequence:</strong></para>
-    /// <list type="number">
-    /// <item><description>Mark as disposed (prevents new user requests)</description></item>
-    /// <item><description>Dispose intent controller (cascades to execution controller)</description></item>
-    /// </list>
-    /// <para><strong>Thread Safety:</strong></para>
-    /// <para>
-    /// This method is thread-safe and idempotent using lock-free Interlocked operations.
-    /// Multiple concurrent calls will execute disposal only once.
-    /// </para>
-    /// </remarks>
     internal async ValueTask DisposeAsync()
     {
         // Idempotent check using lock-free Interlocked.CompareExchange
@@ -244,23 +175,13 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
 
     /// <summary>
     /// Fetches data for a single range directly from the data source, without involving the cache.
-    /// Used by Scenario 1 (cold start) and Scenario 4 (full cache miss / non-intersecting jump).
     /// </summary>
     /// <param name="requestedRange">The range to fetch.</param>
     /// <param name="cancellationToken">A cancellation token to cancel the operation.</param>
     /// <returns>
     /// A named tuple of (AssembledData, ActualRange, ResultData). <c>AssembledData</c> is null and
-    /// <c>ActualRange</c> is null when the data source reports no data is available for the range
-    /// (physical boundary miss).
+    /// <c>ActualRange</c> is null when the data source reports no data is available for the range.
     /// </returns>
-    /// <remarks>
-    /// <para><strong>Execution Context:</strong> User Thread (called from <see cref="HandleRequestAsync"/>)</para>
-    /// <para>
-    /// This helper centralises the fetch-and-materialise pattern shared by the cold-start and
-    /// full-miss scenarios. It emits the <c>DataSourceFetchSingleRange</c> diagnostic event and
-    /// handles the null-Range contract of <see cref="IDataSource{TRange,TData}"/>.
-    /// </para>
-    /// </remarks>
     private async ValueTask<(RangeData<TRange, TData, TDomain>? AssembledData, Range<TRange>? ActualRange, ReadOnlyMemory<TData> ResultData)>
         FetchSingleRangeAsync(Range<TRange> requestedRange, CancellationToken cancellationToken)
     {

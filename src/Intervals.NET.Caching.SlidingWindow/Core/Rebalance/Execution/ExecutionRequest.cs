@@ -5,34 +5,11 @@ using Intervals.NET.Caching.SlidingWindow.Core.Rebalance.Intent;
 namespace Intervals.NET.Caching.SlidingWindow.Core.Rebalance.Execution;
 
 /// <summary>
-/// Execution request message sent from IntentController to the supersession work scheduler.
-/// Contains all information needed to execute a rebalance operation.
+/// Execution request message sent from IntentController to the supersession work scheduler. See docs/sliding-window/ for design details.
 /// </summary>
 /// <typeparam name="TRange">The type representing the range boundaries.</typeparam>
 /// <typeparam name="TData">The type of data being cached.</typeparam>
 /// <typeparam name="TDomain">The type representing the domain of the ranges.</typeparam>
-/// <remarks>
-/// <para><strong>Architectural Role:</strong></para>
-/// <para>
-/// This record encapsulates the validated rebalance decision from IntentController and carries it
-/// through the execution pipeline. It owns a <see cref="CancellationTokenSource"/> (held as a private
-/// field) and exposes only the derived <see cref="CancellationToken"/> to consumers, ensuring that
-/// only this class controls cancellation and disposal of the token source.
-/// </para>
-/// <para><strong>Lifecycle:</strong></para>
-/// <list type="number">
-/// <item><description>Created by the supersession work scheduler</description></item>
-/// <item><description>Stored as LastExecutionRequest for cancellation coordination</description></item>
-/// <item><description>Processed by execution strategy (task chain or channel loop)</description></item>
-/// <item><description>Cancelled if superseded by newer request (Cancel() method)</description></item>
-/// <item><description>Disposed after execution completes/cancels (Dispose() method)</description></item>
-/// </list>
-/// <para><strong>Thread Safety:</strong></para>
-/// <para>
-/// The Cancel() and Dispose() methods are designed to be safe for multiple calls and handle
-/// disposal races gracefully by catching and ignoring ObjectDisposedException.
-/// </para>
-/// </remarks>
 internal sealed class ExecutionRequest<TRange, TData, TDomain> : ISchedulableWorkItem
     where TRange : IComparable<TRange>
     where TDomain : IRangeDomain<TRange>
@@ -79,21 +56,8 @@ internal sealed class ExecutionRequest<TRange, TData, TDomain> : ISchedulableWor
     }
 
     /// <summary>
-    /// Cancels this execution request by cancelling its CancellationTokenSource.
-    /// Safe to call multiple times and handles disposal races gracefully.
+    /// Cancels this execution request. Safe to call multiple times.
     /// </summary>
-    /// <remarks>
-    /// <para><strong>Usage Context:</strong></para>
-    /// <para>
-    /// Called by IntentController when a newer rebalance request supersedes this one,
-    /// or during disposal to signal early exit from pending operations.
-    /// </para>
-    /// <para><strong>Exception Handling:</strong></para>
-    /// <para>
-    /// Catches and ignores ObjectDisposedException to handle disposal races gracefully.
-    /// This follows the "best-effort cancellation" pattern for background operations.
-    /// </para>
-    /// </remarks>
     public void Cancel()
     {
         try
@@ -107,21 +71,8 @@ internal sealed class ExecutionRequest<TRange, TData, TDomain> : ISchedulableWor
     }
 
     /// <summary>
-    /// Disposes the CancellationTokenSource associated with this execution request.
-    /// Safe to call multiple times.
+    /// Disposes the CancellationTokenSource associated with this execution request. Safe to call multiple times.
     /// </summary>
-    /// <remarks>
-    /// <para><strong>Usage Context:</strong></para>
-    /// <para>
-    /// Called after execution completes/cancels/fails to clean up the CancellationTokenSource.
-    /// Always called in the finally block of execution processing.
-    /// </para>
-    /// <para><strong>Exception Handling:</strong></para>
-    /// <para>
-    /// Catches and ignores ObjectDisposedException to ensure cleanup always completes without
-    /// propagating exceptions during disposal.
-    /// </para>
-    /// </remarks>
     public void Dispose()
     {
         try
