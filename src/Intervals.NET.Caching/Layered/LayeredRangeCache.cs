@@ -42,7 +42,7 @@ public sealed class LayeredRangeCache<TRange, TData, TDomain>
             throw new ArgumentException("At least one layer is required.", nameof(layers));
         }
 
-        _layers = [..layers];
+        _layers = [.. layers];
         _layersReadOnly = _layers.AsReadOnly();
         _userFacingLayer = _layers[^1];
     }
