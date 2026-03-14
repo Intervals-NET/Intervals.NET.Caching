@@ -265,7 +265,7 @@ public static class TestHelpers
     /// Asserts that User Path did not trigger cache extension analysis (single-writer architecture).
     /// </summary>
     /// <remarks>
-    /// Note: CacheExpanded and CacheReplaced counters are incremented by the shared CacheDataExtensionService
+    /// Note: CacheExpanded and CacheReplaced counters are incremented by the shared CacheDataExtender
     /// during range analysis (when determining what data needs to be fetched). They track planning, not actual
     /// cache mutations. This assertion verifies that User Path didn't call ExtendCacheAsync, which would
     /// increment these counters. Actual cache mutations (via Rematerialize) only occur in Rebalance Execution.

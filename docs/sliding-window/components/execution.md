@@ -6,28 +6,28 @@ The execution subsystem performs debounced, cancellable background work and is t
 
 ## Key Components
 
-| Component                                                          | File                                                                                                       | Role                                                               |
-|--------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------|
-| `IWorkScheduler<TWorkItem>`                                        | `src/Intervals.NET.Caching/Infrastructure/Scheduling/IWorkScheduler.cs`                                   | Cache-agnostic serialization contract                              |
-| `WorkSchedulerBase<TWorkItem>`                                     | `src/Intervals.NET.Caching/Infrastructure/Scheduling/WorkSchedulerBase.cs`                                | Shared execution pipeline: debounce, cancellation, diagnostics, cleanup |
-| `UnboundedSerialWorkScheduler<TWorkItem>`                          | `src/Intervals.NET.Caching/Infrastructure/Scheduling/UnboundedSerialWorkScheduler.cs`                     | Default: async task-chaining with per-item cancellation            |
-| `BoundedSerialWorkScheduler<TWorkItem>`                            | `src/Intervals.NET.Caching/Infrastructure/Scheduling/BoundedSerialWorkScheduler.cs`                       | Optional: bounded channel-based queue with backpressure            |
-| `ISchedulableWorkItem`                                             | `src/Intervals.NET.Caching/Infrastructure/Scheduling/ISchedulableWorkItem.cs`                             | `TWorkItem` constraint: `Cancel()` + `IDisposable` + `CancellationToken` |
-| `IWorkSchedulerDiagnostics`                                        | `src/Intervals.NET.Caching/Infrastructure/Scheduling/IWorkSchedulerDiagnostics.cs`                        | Scheduler-level diagnostic events (`WorkStarted`, `WorkCancelled`, `WorkFailed`) |
-| `ExecutionRequest<TRange, TData, TDomain>`                         | `src/Intervals.NET.Caching.SlidingWindow/Core/Rebalance/Execution/ExecutionRequest.cs`                    | SWC work item; implements `ISchedulableWorkItem`                   |
-| `SlidingWindowWorkSchedulerDiagnostics`                            | `src/Intervals.NET.Caching.SlidingWindow/Infrastructure/Adapters/SlidingWindowWorkSchedulerDiagnostics.cs` | Adapter bridging `ICacheDiagnostics` → `IWorkSchedulerDiagnostics` |
-| `RebalanceExecutor<TRange, TData, TDomain>`                        | `src/Intervals.NET.Caching.SlidingWindow/Core/Rebalance/Execution/RebalanceExecutor.cs`                   | Sole writer; performs `Rematerialize`; the single-writer authority |
-| `CacheDataExtensionService<TRange, TData, TDomain>`                | `src/Intervals.NET.Caching.SlidingWindow/Infrastructure/Services/CacheDataExtensionService.cs`            | Incremental data fetching; range gap analysis                      |
+| Component                                   | File                                                                                                       | Role                                                                             |
+|---------------------------------------------|------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------|
+| `IWorkScheduler<TWorkItem>`                 | `src/Intervals.NET.Caching/Infrastructure/Scheduling/IWorkScheduler.cs`                                    | Cache-agnostic serialization contract                                            |
+| `WorkSchedulerBase<TWorkItem>`              | `src/Intervals.NET.Caching/Infrastructure/Scheduling/WorkSchedulerBase.cs`                                 | Shared execution pipeline: debounce, cancellation, diagnostics, cleanup          |
+| `UnboundedSerialWorkScheduler<TWorkItem>`   | `src/Intervals.NET.Caching/Infrastructure/Scheduling/UnboundedSerialWorkScheduler.cs`                      | Default: async task-chaining with per-item cancellation                          |
+| `BoundedSerialWorkScheduler<TWorkItem>`     | `src/Intervals.NET.Caching/Infrastructure/Scheduling/BoundedSerialWorkScheduler.cs`                        | Optional: bounded channel-based queue with backpressure                          |
+| `ISchedulableWorkItem`                      | `src/Intervals.NET.Caching/Infrastructure/Scheduling/ISchedulableWorkItem.cs`                              | `TWorkItem` constraint: `Cancel()` + `IDisposable` + `CancellationToken`         |
+| `IWorkSchedulerDiagnostics`                 | `src/Intervals.NET.Caching/Infrastructure/Scheduling/IWorkSchedulerDiagnostics.cs`                         | Scheduler-level diagnostic events (`WorkStarted`, `WorkCancelled`, `WorkFailed`) |
+| `ExecutionRequest<TRange, TData, TDomain>`  | `src/Intervals.NET.Caching.SlidingWindow/Core/Rebalance/Execution/ExecutionRequest.cs`                     | SWC work item; implements `ISchedulableWorkItem`                                 |
+| `SlidingWindowWorkSchedulerDiagnostics`     | `src/Intervals.NET.Caching.SlidingWindow/Infrastructure/Adapters/SlidingWindowWorkSchedulerDiagnostics.cs` | Adapter bridging `ICacheDiagnostics` → `IWorkSchedulerDiagnostics`               |
+| `RebalanceExecutor<TRange, TData, TDomain>` | `src/Intervals.NET.Caching.SlidingWindow/Core/Rebalance/Execution/RebalanceExecutor.cs`                    | Sole writer; performs `Rematerialize`; the single-writer authority               |
+| `CacheDataExtender<TRange, TData, TDomain>` | `src/Intervals.NET.Caching.SlidingWindow/Core/Rebalance/Execution/CacheDataExtender.cs`                    | Incremental data fetching; range gap analysis                                    |
 
 ## Work Schedulers
 
 The generic work schedulers live in `Intervals.NET.Caching` and have **zero coupling to SWC-specific types**. All SWC-specific concerns are injected via delegates:
 
-| Dependency        | Type                                       | Replaces (old design)         |
-|-------------------|--------------------------------------------|-------------------------------|
-| Executor          | `Func<TWorkItem, CancellationToken, Task>` | `RebalanceExecutor` direct reference |
-| Debounce provider | `Func<TimeSpan>`                           | `RuntimeCacheOptionsHolder`   |
-| Diagnostics       | `IWorkSchedulerDiagnostics`                | `ICacheDiagnostics`           |
+| Dependency        | Type                                       | Replaces (old design)                 |
+|-------------------|--------------------------------------------|---------------------------------------|
+| Executor          | `Func<TWorkItem, CancellationToken, Task>` | `RebalanceExecutor` direct reference  |
+| Debounce provider | `Func<TimeSpan>`                           | `RuntimeCacheOptionsHolder`           |
+| Diagnostics       | `IWorkSchedulerDiagnostics`                | `ICacheDiagnostics`                   |
 | Activity counter  | `AsyncActivityCounter`                     | (shared from `Intervals.NET.Caching`) |
 
 `SlidingWindowCache.CreateExecutionController` wires these together when constructing the scheduler.
@@ -77,7 +77,7 @@ The generic work schedulers live in `Intervals.NET.Caching` and have **zero coup
 
 1. `ThrowIfCancellationRequested` — before any I/O (pre-I/O checkpoint)
 2. Compute desired range gaps: `DesiredRange \ CurrentCacheRange`
-3. Call `CacheDataExtensionService.ExtendCacheDataAsync` — fetches only missing subranges
+3. Call `CacheDataExtender.ExtendCacheDataAsync` — fetches only missing subranges
 4. `ThrowIfCancellationRequested` — after I/O, before mutations (pre-mutation checkpoint)
 5. Call `CacheState.Rematerialize(newRangeData)` — atomic cache update
 6. Update `CacheState.NoRebalanceRange` — new stability zone
@@ -88,9 +88,9 @@ The generic work schedulers live in `Intervals.NET.Caching` and have **zero coup
 - After I/O: discards fetched data if superseded
 - Before mutation: guarantees only latest validated execution applies changes
 
-## CacheDataExtensionService — Incremental Fetching
+## CacheDataExtender — Incremental Fetching
 
-**File**: `src/Intervals.NET.Caching.SlidingWindow/Infrastructure/Services/CacheDataExtensionService.cs`
+**File**: `src/Intervals.NET.Caching.SlidingWindow/Core/Rebalance/Execution/CacheDataExtender.cs`
 
 - Computes missing ranges via range algebra: `DesiredRange \ CachedRange`
 - Fetches only the gaps (not the full desired range)
@@ -129,23 +129,23 @@ In both cases, `OperationCanceledException` is reported via `IWorkSchedulerDiagn
 
 ## Invariants
 
-| Invariant         | Description                                                                                            |
-|-------------------|--------------------------------------------------------------------------------------------------------|
-| SWC.A.12a/SWC.F.2 | Only `RebalanceExecutor` writes to `CacheState` (single-writer)                                        |
-| SWC.A.4           | User path never blocks waiting for rebalance                                                           |
-| SWC.B.2           | Cache updates are atomic (all-or-nothing via `Rematerialize`)                                          |
-| SWC.B.3           | Consistency under cancellation: mutations discarded if cancelled                                       |
-| SWC.B.5           | Cancelled rebalance cannot violate `CacheData ↔ CurrentCacheRange` consistency                        |
-| SWC.B.6           | Obsolete results never applied (cancellation token identity check)                                     |
-| SWC.C.5           | Serial execution: at most one active rebalance at a time                                               |
-| SWC.F.1           | Multiple cancellation checkpoints: before I/O, after I/O, before mutation                              |
-| SWC.F.1a          | Cancellation-before-mutation guarantee                                                                 |
-| SWC.F.3           | `Rematerialize` accepts arbitrary range and data (full replacement)                                    |
-| SWC.F.4           | Incremental fetching: only missing subranges fetched                                                   |
-| SWC.F.5           | Data preservation: existing cached data merged during expansion                                        |
+| Invariant         | Description                                                                                                                                        |
+|-------------------|----------------------------------------------------------------------------------------------------------------------------------------------------|
+| SWC.A.12a/SWC.F.2 | Only `RebalanceExecutor` writes to `CacheState` (single-writer)                                                                                    |
+| SWC.A.4           | User path never blocks waiting for rebalance                                                                                                       |
+| SWC.B.2           | Cache updates are atomic (all-or-nothing via `Rematerialize`)                                                                                      |
+| SWC.B.3           | Consistency under cancellation: mutations discarded if cancelled                                                                                   |
+| SWC.B.5           | Cancelled rebalance cannot violate `CacheData ↔ CurrentCacheRange` consistency                                                                     |
+| SWC.B.6           | Obsolete results never applied (cancellation token identity check)                                                                                 |
+| SWC.C.5           | Serial execution: at most one active rebalance at a time                                                                                           |
+| SWC.F.1           | Multiple cancellation checkpoints: before I/O, after I/O, before mutation                                                                          |
+| SWC.F.1a          | Cancellation-before-mutation guarantee                                                                                                             |
+| SWC.F.3           | `Rematerialize` accepts arbitrary range and data (full replacement)                                                                                |
+| SWC.F.4           | Incremental fetching: only missing subranges fetched                                                                                               |
+| SWC.F.5           | Data preservation: existing cached data merged during expansion                                                                                    |
 | SWC.G.3           | I/O isolation: User Path MAY call `IDataSource` for U1/U5 (cold start / full miss); Rebalance Execution calls it for background normalization only |
-| S.H.1             | Activity counter incremented before channel write / task chain step                                    |
-| S.H.2             | Activity counter decremented in `finally` blocks                                                       |
+| S.H.1             | Activity counter incremented before channel write / task chain step                                                                                |
+| S.H.2             | Activity counter decremented in `finally` blocks                                                                                                   |
 
 See `docs/sliding-window/invariants.md` (Sections SWC.A, SWC.B, SWC.C, SWC.F, SWC.G, S.H) for full specification.
 

@@ -32,14 +32,8 @@ public sealed class SlidingWindowCache<TRange, TData, TDomain>
     // Activity counter for tracking active intents and executions
     private readonly AsyncActivityCounter _activityCounter = new();
 
-    // Disposal state tracking (lock-free using Interlocked)
-    // 0 = not disposed, 1 = disposing, 2 = disposed
-    private int _disposeState;
-
-    // TaskCompletionSource for coordinating concurrent DisposeAsync calls
-    // Allows loser threads to await disposal completion without CPU burn
-    // Published via Volatile.Write when winner thread starts disposal
-    private TaskCompletionSource? _disposalCompletionSource;
+    // Disposal state: tracks active/disposing/disposed states and coordinates concurrent callers.
+    private readonly DisposalState _disposal = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SlidingWindowCache{TRange,TData,TDomain}"/> class.
@@ -88,7 +82,7 @@ public sealed class SlidingWindowCache<TRange, TData, TDomain>
         var rebalancePolicy = new NoRebalanceSatisfactionPolicy<TRange>();
         var rangePlanner = new ProportionalRangePlanner<TRange, TDomain>(_runtimeOptionsHolder, domain);
         var noRebalancePlanner = new NoRebalanceRangePlanner<TRange, TDomain>(_runtimeOptionsHolder, domain);
-        var cacheFetcher = new CacheDataExtensionService<TRange, TData, TDomain>(dataSource, domain, cacheDiagnostics);
+        var cacheFetcher = new CacheDataExtender<TRange, TData, TDomain>(dataSource, domain, cacheDiagnostics);
 
         var decisionEngine =
             new RebalanceDecisionEngine<TRange, TDomain>(rebalancePolicy, rangePlanner, noRebalancePlanner);
@@ -189,13 +183,7 @@ public sealed class SlidingWindowCache<TRange, TData, TDomain>
         Range<TRange> requestedRange,
         CancellationToken cancellationToken)
     {
-        // Check disposal state using Volatile.Read (lock-free)
-        if (Volatile.Read(ref _disposeState) != 0)
-        {
-            throw new ObjectDisposedException(
-                nameof(SlidingWindowCache<TRange, TData, TDomain>),
-                "Cannot retrieve data from a disposed cache.");
-        }
+        _disposal.ThrowIfDisposed(nameof(SlidingWindowCache<TRange, TData, TDomain>));
 
         // Invariant S.R.1: requestedRange must be bounded (finite on both ends).
         if (!requestedRange.IsBounded())
@@ -212,13 +200,7 @@ public sealed class SlidingWindowCache<TRange, TData, TDomain>
     /// <inheritdoc cref="ISlidingWindowCache{TRange,TData,TDomain}.WaitForIdleAsync"/>
     public Task WaitForIdleAsync(CancellationToken cancellationToken = default)
     {
-        // Check disposal state using Volatile.Read (lock-free)
-        if (Volatile.Read(ref _disposeState) != 0)
-        {
-            throw new ObjectDisposedException(
-                nameof(SlidingWindowCache<TRange, TData, TDomain>),
-                "Cannot access a disposed SlidingWindowCache instance.");
-        }
+        _disposal.ThrowIfDisposed(nameof(SlidingWindowCache<TRange, TData, TDomain>));
 
         return _activityCounter.WaitForIdleAsync(cancellationToken);
     }
@@ -226,13 +208,7 @@ public sealed class SlidingWindowCache<TRange, TData, TDomain>
     /// <inheritdoc cref="ISlidingWindowCache{TRange,TData,TDomain}.UpdateRuntimeOptions"/>
     public void UpdateRuntimeOptions(Action<RuntimeOptionsUpdateBuilder> configure)
     {
-        // Check disposal state using Volatile.Read (lock-free)
-        if (Volatile.Read(ref _disposeState) != 0)
-        {
-            throw new ObjectDisposedException(
-                nameof(SlidingWindowCache<TRange, TData, TDomain>),
-                "Cannot update runtime options on a disposed cache.");
-        }
+        _disposal.ThrowIfDisposed(nameof(SlidingWindowCache<TRange, TData, TDomain>));
 
         // ApplyTo reads the current snapshot, merges deltas, and validates �
         // throws if validation fails (holder not updated in that case).
@@ -249,13 +225,7 @@ public sealed class SlidingWindowCache<TRange, TData, TDomain>
     {
         get
         {
-            // Check disposal state using Volatile.Read (lock-free)
-            if (Volatile.Read(ref _disposeState) != 0)
-            {
-                throw new ObjectDisposedException(
-                    nameof(SlidingWindowCache<TRange, TData, TDomain>),
-                    "Cannot access runtime options on a disposed cache.");
-            }
+            _disposal.ThrowIfDisposed(nameof(SlidingWindowCache<TRange, TData, TDomain>));
 
             return _runtimeOptionsHolder.Current.ToSnapshot();
         }
@@ -270,57 +240,11 @@ public sealed class SlidingWindowCache<TRange, TData, TDomain>
     /// <remarks>
     /// Safe to call multiple times (idempotent). Concurrent callers wait for the first disposal to complete.
     /// </remarks>
-    public async ValueTask DisposeAsync()
-    {
-        // Three-state disposal pattern for idempotency and concurrent disposal support
-        // States: 0 = active, 1 = disposing, 2 = disposed
-
-        // Attempt to transition from active (0) to disposing (1)
-        var previousState = Interlocked.CompareExchange(ref _disposeState, 1, 0);
-
-        if (previousState == 0)
+    public ValueTask DisposeAsync() =>
+        _disposal.DisposeAsync(async () =>
         {
-            // Winner thread - create TCS and perform disposal
-            var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            Volatile.Write(ref _disposalCompletionSource, tcs);
-
-            try
-            {
-                // Dispose the UserRequestHandler which cascades to all internal actors
-                // Disposal order: UserRequestHandler -> IntentController -> RebalanceExecutionController
-                await _userRequestHandler.DisposeAsync().ConfigureAwait(false);
-
-                // Signal successful completion
-                tcs.TrySetResult();
-            }
-            catch (Exception ex)
-            {
-                // Signal failure - loser threads will observe this exception
-                tcs.TrySetException(ex);
-                throw;
-            }
-            finally
-            {
-                // Mark disposal as complete (transition to state 2)
-                Volatile.Write(ref _disposeState, 2);
-            }
-        }
-        else if (previousState == 1)
-        {
-            // Loser thread - await disposal completion asynchronously
-            // Brief spin-wait for TCS publication (should be very fast - CPU-only operation)
-            TaskCompletionSource? tcs;
-            var spinWait = new SpinWait();
-
-            while ((tcs = Volatile.Read(ref _disposalCompletionSource)) == null)
-            {
-                spinWait.SpinOnce();
-            }
-
-            // Await disposal completion without CPU burn
-            // If winner threw exception, this will re-throw the same exception
-            await tcs.Task.ConfigureAwait(false);
-        }
-        // If previousState == 2, disposal already completed - return immediately (idempotent)
-    }
+            // Dispose the UserRequestHandler which cascades to all internal actors
+            // Disposal order: UserRequestHandler -> IntentController -> RebalanceExecutionController
+            await _userRequestHandler.DisposeAsync().ConfigureAwait(false);
+        });
 }

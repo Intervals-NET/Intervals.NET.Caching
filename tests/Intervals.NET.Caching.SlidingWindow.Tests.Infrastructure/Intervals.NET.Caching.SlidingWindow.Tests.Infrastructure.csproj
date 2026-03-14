@@ -24,6 +24,7 @@
     <ItemGroup>
         <ProjectReference Include="..\..\src\Intervals.NET.Caching\Intervals.NET.Caching.csproj" />
         <ProjectReference Include="..\..\src\Intervals.NET.Caching.SlidingWindow\Intervals.NET.Caching.SlidingWindow.csproj" />
+        <ProjectReference Include="..\Intervals.NET.Caching.Tests.SharedInfrastructure\Intervals.NET.Caching.Tests.SharedInfrastructure.csproj" />
     </ItemGroup>
 
 </Project>

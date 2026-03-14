@@ -25,11 +25,8 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
     private readonly AsyncActivityCounter _activityCounter;
     private readonly TtlEngine<TRange, TData>? _ttlEngine;
 
-    // Disposal state: 0 = active, 1 = disposing, 2 = disposed (three-state for idempotency)
-    private int _disposeState;
-
-    // TaskCompletionSource for concurrent disposal coordination (loser threads await this)
-    private TaskCompletionSource? _disposalCompletionSource;
+    // Disposal state: tracks active/disposing/disposed states and coordinates concurrent callers.
+    private readonly DisposalState _disposal = new();
 
     /// <summary>
     /// Initializes a new instance of <see cref="VisitedPlacesCache{TRange,TData,TDomain}"/>.
@@ -122,12 +119,7 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
         Range<TRange> requestedRange,
         CancellationToken cancellationToken)
     {
-        if (Volatile.Read(ref _disposeState) != 0)
-        {
-            throw new ObjectDisposedException(
-                nameof(VisitedPlacesCache<TRange, TData, TDomain>),
-                "Cannot retrieve data from a disposed cache.");
-        }
+        _disposal.ThrowIfDisposed(nameof(VisitedPlacesCache<TRange, TData, TDomain>));
 
         // Invariant S.R.1: requestedRange must be bounded (finite on both ends).
         if (!requestedRange.IsBounded())
@@ -143,12 +135,7 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
     /// <inheritdoc/>
     public Task WaitForIdleAsync(CancellationToken cancellationToken = default)
     {
-        if (Volatile.Read(ref _disposeState) != 0)
-        {
-            throw new ObjectDisposedException(
-                nameof(VisitedPlacesCache<TRange, TData, TDomain>),
-                "Cannot access a disposed cache instance.");
-        }
+        _disposal.ThrowIfDisposed(nameof(VisitedPlacesCache<TRange, TData, TDomain>));
 
         return _activityCounter.WaitForIdleAsync(cancellationToken);
     }
@@ -157,50 +144,17 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
     /// Asynchronously disposes the cache and releases all background resources.
     /// </summary>
     /// <returns>A <see cref="ValueTask"/> that completes when all background work has stopped.</returns>
-    public async ValueTask DisposeAsync()
-    {
-        var previousState = Interlocked.CompareExchange(ref _disposeState, 1, 0);
-
-        if (previousState == 0)
+    /// <remarks>
+    /// Safe to call multiple times (idempotent). Concurrent callers wait for the first disposal to complete.
+    /// </remarks>
+    public ValueTask DisposeAsync() =>
+        _disposal.DisposeAsync(async () =>
         {
-            // Winner thread: perform disposal and signal completion.
-            var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            Volatile.Write(ref _disposalCompletionSource, tcs);
+            await _userRequestHandler.DisposeAsync().ConfigureAwait(false);
 
-            try
+            if (_ttlEngine != null)
             {
-                await _userRequestHandler.DisposeAsync().ConfigureAwait(false);
-
-                if (_ttlEngine != null)
-                {
-                    await _ttlEngine.DisposeAsync().ConfigureAwait(false);
-                }
-
-                tcs.TrySetResult();
+                await _ttlEngine.DisposeAsync().ConfigureAwait(false);
             }
-            catch (Exception ex)
-            {
-                tcs.TrySetException(ex);
-                throw;
-            }
-            finally
-            {
-                Volatile.Write(ref _disposeState, 2);
-            }
-        }
-        else if (previousState == 1)
-        {
-            // Loser thread: wait for winner to finish (brief spin until TCS is published).
-            TaskCompletionSource? tcs;
-            var spinWait = new SpinWait();
-
-            while ((tcs = Volatile.Read(ref _disposalCompletionSource)) == null)
-            {
-                spinWait.SpinOnce();
-            }
-
-            await tcs.Task.ConfigureAwait(false);
-        }
-        // previousState == 2: already disposed — return immediately (idempotent).
-    }
+        });
 }

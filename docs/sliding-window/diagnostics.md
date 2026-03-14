@@ -134,7 +134,7 @@ Assert.Equal(1, diagnostics.UserRequestServed);
 
 #### `CacheExpanded()`
 **Tracks:** Cache expansion during partial cache hit  
-**Location:** `CacheDataExtensionService.CalculateMissingRanges` (intersection path)  
+**Location:** `CacheDataExtender.CalculateMissingRanges` (intersection path)  
 **Context:** User Thread (Partial Cache Hit — Scenario U4) or Background Thread (Rebalance Execution)  
 **Scenarios:** U4 (partial cache hit)  
 **Invariant:** SWC.A.12b (Cache Contiguity Rule — preserves contiguity)
@@ -149,7 +149,7 @@ Assert.Equal(1, diagnostics.CacheExpanded);
 
 #### `CacheReplaced()`
 **Tracks:** Cache replacement during non-intersecting jump  
-**Location:** `CacheDataExtensionService.CalculateMissingRanges` (no intersection path)  
+**Location:** `CacheDataExtender.CalculateMissingRanges` (no intersection path)  
 **Context:** User Thread (Full Cache Miss — Scenario U5) or Background Thread (Rebalance Execution)  
 **Scenarios:** U5 (full cache miss — jump)  
 **Invariant:** SWC.A.12b (Cache Contiguity Rule — prevents gaps)
@@ -228,7 +228,7 @@ Assert.Equal(1, diagnostics.DataSourceFetchSingleRange);
 
 #### `DataSourceFetchMissingSegments()`
 **Tracks:** Missing segments fetch (gap filling optimization)  
-**Location:** `CacheDataExtensionService.ExtendCacheAsync`  
+**Location:** `CacheDataExtender.ExtendCacheAsync`  
 **Context:** User Thread (Partial Cache Hit — Scenario U4) or Background Thread (Rebalance Execution)  
 **API Called:** `IDataSource.FetchAsync(IEnumerable<Range<TRange>>, CancellationToken)`
 
@@ -242,7 +242,7 @@ Assert.Equal(1, diagnostics.DataSourceFetchMissingSegments);
 
 #### `DataSegmentUnavailable()`
 **Tracks:** A fetched chunk returned a `null` Range — the requested segment does not exist in the data source  
-**Location:** `CacheDataExtensionService.UnionAll` (when a `RangeChunk.Range` is null)  
+**Location:** `CacheDataExtender.UnionAll` (when a `RangeChunk.Range` is null)  
 **Context:** User Thread (Partial Cache Hit — Scenario U4) **and** Background Thread (Rebalance Execution)  
 **Invariants:** SWC.G.5 (`IDataSource` Boundary Semantics), SWC.A.12b (Cache Contiguity)  
 **Interpretation:** Physical boundary encountered; the unavailable segment is silently skipped to preserve cache contiguity

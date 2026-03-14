@@ -20,7 +20,7 @@ namespace Intervals.NET.Caching.SlidingWindow.Core.Rebalance.Execution;
 /// <typeparam name="TDomain">
 /// The type representing the domain of the ranges. Must implement <see cref="IRangeDomain{TRange}"/>.
 /// </typeparam>
-internal sealed class CacheDataExtensionService<TRange, TData, TDomain>
+internal sealed class CacheDataExtender<TRange, TData, TDomain>
     where TRange : IComparable<TRange>
     where TDomain : IRangeDomain<TRange>
 {
@@ -29,7 +29,7 @@ internal sealed class CacheDataExtensionService<TRange, TData, TDomain>
     private readonly ISlidingWindowCacheDiagnostics _cacheDiagnostics;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="CacheDataExtensionService{TRange,TData,TDomain}"/> class.
+    /// Initializes a new instance of the <see cref="CacheDataExtender{TRange,TData,TDomain}"/> class.
     /// </summary>
     /// <param name="dataSource">
     /// The data source from which to fetch data.
@@ -40,7 +40,7 @@ internal sealed class CacheDataExtensionService<TRange, TData, TDomain>
     /// <param name="cacheDiagnostics">
     /// The diagnostics interface for recording cache operation metrics and events.
     /// </param>
-    public CacheDataExtensionService(
+    public CacheDataExtender(
         IDataSource<TRange, TData> dataSource,
         TDomain domain,
         ISlidingWindowCacheDiagnostics cacheDiagnostics

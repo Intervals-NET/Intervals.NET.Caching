@@ -21,7 +21,7 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     where TDomain : IRangeDomain<TRange>
 {
     private readonly CacheState<TRange, TData, TDomain> _state;
-    private readonly CacheDataExtensionService<TRange, TData, TDomain> _cacheExtensionService;
+    private readonly CacheDataExtender<TRange, TData, TDomain> _cacheExtensionService;
     private readonly IntentController<TRange, TData, TDomain> _intentController;
     private readonly IDataSource<TRange, TData> _dataSource;
     private readonly ISlidingWindowCacheDiagnostics _cacheDiagnostics;
@@ -34,12 +34,12 @@ internal sealed class UserRequestHandler<TRange, TData, TDomain>
     /// Initializes a new instance of the <see cref="UserRequestHandler{TRange,TData,TDomain}"/> class.
     /// </summary>
     /// <param name="state">The cache state.</param>
-    /// <param name="cacheExtensionService">The cache data fetcher for extending cache coverage.</param>
+    /// <param name="cacheExtensionService">The cache data extender for extending cache coverage.</param>
     /// <param name="intentController">The intent controller for publishing rebalance intents.</param>
     /// <param name="dataSource">The data source to request missing data from.</param>
     /// <param name="cacheDiagnostics">The diagnostics interface for recording cache metrics and events.</param>
     public UserRequestHandler(CacheState<TRange, TData, TDomain> state,
-        CacheDataExtensionService<TRange, TData, TDomain> cacheExtensionService,
+        CacheDataExtender<TRange, TData, TDomain> cacheExtensionService,
         IntentController<TRange, TData, TDomain> intentController,
         IDataSource<TRange, TData> dataSource,
         ISlidingWindowCacheDiagnostics cacheDiagnostics

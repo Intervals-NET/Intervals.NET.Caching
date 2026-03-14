@@ -44,7 +44,7 @@ This document is the canonical actor catalog for `SlidingWindowCache`. For the s
 **Components**
 - `SlidingWindowCache<TRange, TData, TDomain>` — facade / composition root; also owns `RuntimeCacheOptionsHolder` and exposes `UpdateRuntimeOptions`
 - `UserRequestHandler<TRange, TData, TDomain>`
-- `CacheDataExtensionService<TRange, TData, TDomain>`
+- `CacheDataExtender<TRange, TData, TDomain>`
 
 ---
 
@@ -207,18 +207,18 @@ This document is the canonical actor catalog for `SlidingWindowCache`. For the s
 
 ## Actor Execution Context Summary
 
-| Actor | Execution Context | Invoked By |
-|---|---|---|
-| `UserRequestHandler` | User Thread | User (public API) |
-| `IntentController.PublishIntent` | User Thread (atomic publish only) | `UserRequestHandler` |
-| `IntentController.ProcessIntentsAsync` | Background Loop #1 (intent processing) | Background task (awaits semaphore) |
-| `RebalanceDecisionEngine` | Background Loop #1 (intent processing) | `IntentController.ProcessIntentsAsync` |
-| `CacheGeometryPolicy` (both components) | Background Loop #1 (intent processing) | `RebalanceDecisionEngine` |
-| `IWorkScheduler.PublishWorkItemAsync` | Background Loop #1 (intent processing) | `IntentController.ProcessIntentsAsync` |
-| `UnboundedSerialWorkScheduler` | Background (ThreadPool task chain) | Via interface (default strategy) |
-| `BoundedSerialWorkScheduler` | Background Loop #2 (channel reader) | Via interface (optional strategy) |
-| `RebalanceExecutor` | Background Execution (both strategies) | `IWorkScheduler` implementations |
-| `CacheState` | Both (User: reads; Background execution: writes) | Both paths (single-writer) |
+| Actor                                   | Execution Context                                | Invoked By                             |
+|-----------------------------------------|--------------------------------------------------|----------------------------------------|
+| `UserRequestHandler`                    | User Thread                                      | User (public API)                      |
+| `IntentController.PublishIntent`        | User Thread (atomic publish only)                | `UserRequestHandler`                   |
+| `IntentController.ProcessIntentsAsync`  | Background Loop #1 (intent processing)           | Background task (awaits semaphore)     |
+| `RebalanceDecisionEngine`               | Background Loop #1 (intent processing)           | `IntentController.ProcessIntentsAsync` |
+| `CacheGeometryPolicy` (both components) | Background Loop #1 (intent processing)           | `RebalanceDecisionEngine`              |
+| `IWorkScheduler.PublishWorkItemAsync`   | Background Loop #1 (intent processing)           | `IntentController.ProcessIntentsAsync` |
+| `UnboundedSerialWorkScheduler`          | Background (ThreadPool task chain)               | Via interface (default strategy)       |
+| `BoundedSerialWorkScheduler`            | Background Loop #2 (channel reader)              | Via interface (optional strategy)      |
+| `RebalanceExecutor`                     | Background Execution (both strategies)           | `IWorkScheduler` implementations       |
+| `CacheState`                            | Both (User: reads; Background execution: writes) | Both paths (single-writer)             |
 
 **Critical:** The user thread ends at `PublishIntent()` return (after atomic operations only). Decision evaluation runs in the background intent loop. Cache mutations run in a separate background execution loop.
 
@@ -226,36 +226,36 @@ This document is the canonical actor catalog for `SlidingWindowCache`. For the s
 
 ## Actors vs Scenarios Reference
 
-| Scenario | User Path | Decision Engine | Geometry Policy | Intent Management | Rebalance Executor | Cache State Manager |
-|---|---|---|---|---|---|---|
-| **U1 – Cold Cache** | Requests from `IDataSource`, returns data, publishes intent | — | Computes `DesiredCacheRange` | Receives intent | Executes rebalance (writes `IsInitialized`, `CurrentCacheRange`, `CacheData`) | Validates atomic update |
-| **U2 – Full Cache Hit (Exact)** | Reads from cache, publishes intent | Checks `NoRebalanceRange` | Computes `DesiredCacheRange` | Receives intent | Executes if required | Monitors consistency |
-| **U3 – Full Cache Hit (Shifted)** | Reads subrange from cache, publishes intent | Checks `NoRebalanceRange` | Computes `DesiredCacheRange` | Receives intent | Executes if required | Monitors consistency |
-| **U4 – Partial Cache Hit** | Reads intersection, requests missing from `IDataSource`, merges, publishes intent | Checks `NoRebalanceRange` | Computes `DesiredCacheRange` | Receives intent | Executes merge and normalization | Ensures atomic merge |
-| **U5 – Full Cache Miss (Jump)** | Requests full range from `IDataSource`, publishes intent | Checks `NoRebalanceRange` | Computes `DesiredCacheRange` | Receives intent | Executes full normalization | Ensures atomic replacement |
-| **D1 – NoRebalanceRange Block** | — | Checks `NoRebalanceRange`, decides no execution | — | Receives intent (blocked) | — | — |
-| **D2 – Desired == Current** | — | Computes `DesiredCacheRange`, decides no execution | Computes `DesiredCacheRange` | Receives intent (no-op) | — | — |
-| **D3 – Rebalance Required** | — | Computes `DesiredCacheRange`, confirms execution | Computes `DesiredCacheRange` | Issues rebalance request | Executes rebalance | Ensures consistency |
-| **R1 – Build from Scratch** | — | — | Defines `DesiredCacheRange` | Receives intent | Requests full range, replaces cache | Atomic replacement |
-| **R2 – Expand Cache** | — | — | Defines `DesiredCacheRange` | Receives intent | Requests missing subranges, merges | Atomic merge |
-| **R3 – Shrink / Normalize** | — | — | Defines `DesiredCacheRange` | Receives intent | Trims cache to `DesiredCacheRange` | Atomic trim |
-| **C1 – Rebalance Trigger Pending** | Executes normally | — | — | Debounces, allows only latest | Cancels obsolete | Ensures atomicity |
-| **C2 – Rebalance Executing** | Executes normally | — | — | Marks latest intent | Cancels or discards obsolete | Ensures atomicity |
-| **C3 – Spike / Multiple Requests** | Executes normally | — | — | Debounces & coordinates intents | Executes only latest | Ensures atomicity |
+| Scenario                           | User Path                                                                         | Decision Engine                                    | Geometry Policy              | Intent Management               | Rebalance Executor                                                            | Cache State Manager        |
+|------------------------------------|-----------------------------------------------------------------------------------|----------------------------------------------------|------------------------------|---------------------------------|-------------------------------------------------------------------------------|----------------------------|
+| **U1 – Cold Cache**                | Requests from `IDataSource`, returns data, publishes intent                       | —                                                  | Computes `DesiredCacheRange` | Receives intent                 | Executes rebalance (writes `IsInitialized`, `CurrentCacheRange`, `CacheData`) | Validates atomic update    |
+| **U2 – Full Cache Hit (Exact)**    | Reads from cache, publishes intent                                                | Checks `NoRebalanceRange`                          | Computes `DesiredCacheRange` | Receives intent                 | Executes if required                                                          | Monitors consistency       |
+| **U3 – Full Cache Hit (Shifted)**  | Reads subrange from cache, publishes intent                                       | Checks `NoRebalanceRange`                          | Computes `DesiredCacheRange` | Receives intent                 | Executes if required                                                          | Monitors consistency       |
+| **U4 – Partial Cache Hit**         | Reads intersection, requests missing from `IDataSource`, merges, publishes intent | Checks `NoRebalanceRange`                          | Computes `DesiredCacheRange` | Receives intent                 | Executes merge and normalization                                              | Ensures atomic merge       |
+| **U5 – Full Cache Miss (Jump)**    | Requests full range from `IDataSource`, publishes intent                          | Checks `NoRebalanceRange`                          | Computes `DesiredCacheRange` | Receives intent                 | Executes full normalization                                                   | Ensures atomic replacement |
+| **D1 – NoRebalanceRange Block**    | —                                                                                 | Checks `NoRebalanceRange`, decides no execution    | —                            | Receives intent (blocked)       | —                                                                             | —                          |
+| **D2 – Desired == Current**        | —                                                                                 | Computes `DesiredCacheRange`, decides no execution | Computes `DesiredCacheRange` | Receives intent (no-op)         | —                                                                             | —                          |
+| **D3 – Rebalance Required**        | —                                                                                 | Computes `DesiredCacheRange`, confirms execution   | Computes `DesiredCacheRange` | Issues rebalance request        | Executes rebalance                                                            | Ensures consistency        |
+| **R1 – Build from Scratch**        | —                                                                                 | —                                                  | Defines `DesiredCacheRange`  | Receives intent                 | Requests full range, replaces cache                                           | Atomic replacement         |
+| **R2 – Expand Cache**              | —                                                                                 | —                                                  | Defines `DesiredCacheRange`  | Receives intent                 | Requests missing subranges, merges                                            | Atomic merge               |
+| **R3 – Shrink / Normalize**        | —                                                                                 | —                                                  | Defines `DesiredCacheRange`  | Receives intent                 | Trims cache to `DesiredCacheRange`                                            | Atomic trim                |
+| **C1 – Rebalance Trigger Pending** | Executes normally                                                                 | —                                                  | —                            | Debounces, allows only latest   | Cancels obsolete                                                              | Ensures atomicity          |
+| **C2 – Rebalance Executing**       | Executes normally                                                                 | —                                                  | —                            | Marks latest intent             | Cancels or discards obsolete                                                  | Ensures atomicity          |
+| **C3 – Spike / Multiple Requests** | Executes normally                                                                 | —                                                  | —                            | Debounces & coordinates intents | Executes only latest                                                          | Ensures atomicity          |
 
 ---
 
 ## Architectural Summary
 
-| Actor | Primary Concern |
-|---|---|
-| User Path | Speed and availability |
-| Cache Geometry Policy | Deterministic cache shape |
-| Rebalance Decision | Correctness of necessity determination |
-| Intent Management | Time, concurrency, and pipeline orchestration |
-| Mutation (Single Writer) | Physical cache mutation |
-| Cache State Manager | Safety and consistency |
-| Resource Management | Lifecycle and cleanup |
+| Actor                    | Primary Concern                               |
+|--------------------------|-----------------------------------------------|
+| User Path                | Speed and availability                        |
+| Cache Geometry Policy    | Deterministic cache shape                     |
+| Rebalance Decision       | Correctness of necessity determination        |
+| Intent Management        | Time, concurrency, and pipeline orchestration |
+| Mutation (Single Writer) | Physical cache mutation                       |
+| Cache State Manager      | Safety and consistency                        |
+| Resource Management      | Lifecycle and cleanup                         |
 
 ---
 

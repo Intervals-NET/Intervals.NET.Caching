@@ -67,7 +67,7 @@ The system is easier to reason about when components are grouped by:
     │   ├── owns → 🟦 NoRebalanceSatisfactionPolicy<TRange>
     │   └── owns → 🟦 ProportionalRangePlanner<TRange, TDomain>
     ├── 🟦 RebalanceExecutor<TRange, TData, TDomain>
-    └── 🟦 CacheDataExtensionService<TRange, TData, TDomain>
+    └── 🟦 CacheDataExtender<TRange, TData, TDomain>
         └── uses → 🟧 IDataSource<TRange, TData> (user-provided)
 
 ──────────────────────────── Work Schedulers (Intervals.NET.Caching) ───────────────────────────
@@ -162,7 +162,7 @@ The system is easier to reason about when components are grouped by:
 │  • CacheState (shared mutable)                                             │
 │  • RuntimeCacheOptionsHolder (shared, volatile — runtime option updates)   │
 │  • UserRequestHandler                                                      │
-│  • CacheDataExtensionService                                               │
+│  • CacheDataExtender                                                       │
 │  • IntentController                                                        │
 │      └─ IWorkScheduler<ExecutionRequest<...>>                              │
 │  • RebalanceDecisionEngine                                                 │
@@ -186,7 +186,7 @@ The system is easier to reason about when components are grouped by:
 │                                                                            │
 │ HandleRequestAsync(range, ct):                                             │
 │  1. Check cold start / cache coverage                                      │
-│  2. Fetch missing via CacheDataExtensionService                            │
+│  2. Fetch missing via CacheDataExtender                                    │
 │  3. Publish intent with assembled data                                     │
 │  4. Return ReadOnlyMemory<TData>                                           │
 │                                                                            │
@@ -250,7 +250,7 @@ The system is easier to reason about when components are grouped by:
 │                                                                            │
 │ ExecuteAsync(intent, desiredRange, desiredNRR, ct):                        │
 │  1. Validate cancellation                                                  │
-│  2. Extend cache via CacheDataExtensionService                             │
+│  2. Extend cache via CacheDataExtender                                     │
 │  3. Trim to desiredRange                                                   │
 │  4. Update NoRebalanceRange                                                │
 │  5. Set IsInitialized = true                                               │
@@ -362,7 +362,7 @@ Each intent has a unique `CancellationToken`. Execution checks if cancellation i
 `CancellationToken` passed through the entire pipeline. Multiple checkpoints: before I/O, after I/O, before mutations. Results from cancelled operations are never applied.
 
 - `src/Intervals.NET.Caching.SlidingWindow/Core/Rebalance/Execution/RebalanceExecutor.cs` — multiple `ThrowIfCancellationRequested` calls
-- `src/Intervals.NET.Caching.SlidingWindow/Infrastructure/Services/CacheDataExtensionService.cs` — cancellation token propagated to `IDataSource`
+- `src/Intervals.NET.Caching.SlidingWindow/Core/Rebalance/Execution/CacheDataExtender.cs` — cancellation token propagated to `IDataSource`
 
 ### Early Exit Validation
 **Invariants**: SWC.C.4, SWC.D.5
@@ -444,16 +444,16 @@ Three checkpoints: before `IDataSource.FetchAsync`, after data fetching, before 
 ### Incremental Data Fetching
 **Invariant**: SWC.F.4
 
-`CacheDataExtensionService.ExtendCacheDataAsync` computes missing ranges via range subtraction (`DesiredRange \ CachedRange`). Fetches only missing subranges via `IDataSource`.
+`CacheDataExtender.ExtendCacheDataAsync` computes missing ranges via range subtraction (`DesiredRange \ CachedRange`). Fetches only missing subranges via `IDataSource`.
 
-- `src/Intervals.NET.Caching.SlidingWindow/Infrastructure/Services/CacheDataExtensionService.cs` — range gap logic in `ExtendCacheDataAsync`
+- `src/Intervals.NET.Caching.SlidingWindow/Core/Rebalance/Execution/CacheDataExtender.cs` — range gap logic in `ExtendCacheDataAsync`
 
 ### Data Preservation During Expansion
 **Invariant**: SWC.F.5
 
 New data merged with existing via range union. Existing data enumerated and preserved during rematerialization. New data only fills gaps; does not replace existing.
 
-- `src/Intervals.NET.Caching.SlidingWindow/Infrastructure/Services/CacheDataExtensionService.cs` — union logic in `ExtendCacheDataAsync`
+- `src/Intervals.NET.Caching.SlidingWindow/Core/Rebalance/Execution/CacheDataExtender.cs` — union logic in `ExtendCacheDataAsync`
 
 ### I/O Isolation
 **Invariant**: SWC.G.3

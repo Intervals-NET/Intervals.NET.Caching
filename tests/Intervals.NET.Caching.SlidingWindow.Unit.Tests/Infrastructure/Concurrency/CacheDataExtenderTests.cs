@@ -9,10 +9,10 @@ using Intervals.NET.Caching.SlidingWindow.Tests.Infrastructure.DataSources;
 namespace Intervals.NET.Caching.SlidingWindow.Unit.Tests.Infrastructure.Concurrency;
 
 /// <summary>
-/// Unit tests for CacheDataExtensionService.
+/// Unit tests for CacheDataExtender.
 /// Validates cache replacement diagnostics on non-overlapping requests.
 /// </summary>
-public sealed class CacheDataExtensionServiceTests
+public sealed class CacheDataExtenderTests
 {
     [Fact]
     public async Task ExtendCacheAsync_NoOverlap_RecordsCacheReplaced()
@@ -36,7 +36,7 @@ public sealed class CacheDataExtensionServiceTests
                 return chunks;
             });
 
-        var service = new CacheDataExtensionService<int, int, IntegerFixedStepDomain>(
+        var service = new CacheDataExtender<int, int, IntegerFixedStepDomain>(
             dataSource.Object,
             domain,
             diagnostics

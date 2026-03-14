@@ -84,8 +84,8 @@ Converted tests:
 
 - **Counter Types** (with Invariant References):
   - `UserRequestServed` - User requests completed
-  - `CacheExpanded` - Range analysis determined expansion needed (called by shared CacheDataExtensionService)
-  - `CacheReplaced` - Range analysis determined replacement needed (called by shared CacheDataExtensionService)
+  - `CacheExpanded` - Range analysis determined expansion needed (called by shared CacheDataExtender)
+  - `CacheReplaced` - Range analysis determined replacement needed (called by shared CacheDataExtender)
   - `RebalanceIntentPublished` - Rebalance intent published (every user request with delivered data)
   - `RebalanceIntentCancelled` - Rebalance intent cancelled (new request supersedes old)
   - `RebalanceExecutionStarted` - Rebalance execution began
@@ -95,7 +95,7 @@ Converted tests:
   - `RebalanceSkippedPendingNoRebalanceRange` - **Policy-based skip (Stage 2)** - Request within pending NoRebalanceRange threshold
   - `RebalanceSkippedSameRange` - **Optimization-based skip** (Invariant SWC.D.4) - DesiredRange == CurrentRange
 
-**Note**: `CacheExpanded` and `CacheReplaced` are incremented during range analysis by the shared `CacheDataExtensionService` 
+**Note**: `CacheExpanded` and `CacheReplaced` are incremented during range analysis by the shared `CacheDataExtender` 
 (used by both User Path and Rebalance Path) when determining what data needs to be fetched. They track analysis/planning, 
 not actual cache mutations. Actual mutations only occur in Rebalance Execution via `Rematerialize()`.
 

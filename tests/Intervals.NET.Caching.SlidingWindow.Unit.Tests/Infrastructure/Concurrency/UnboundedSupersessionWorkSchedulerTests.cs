@@ -28,7 +28,7 @@ public sealed class UnboundedSupersessionWorkSchedulerTests
         var storage = new SnapshotReadStorage<int, int, IntegerFixedStepDomain>(domain);
         var state = new CacheState<int, int, IntegerFixedStepDomain>(storage, domain);
         var dataSource = new SimpleTestDataSource<int>(i => i);
-        var cacheExtensionService = new CacheDataExtensionService<int, int, IntegerFixedStepDomain>(
+        var cacheExtensionService = new CacheDataExtender<int, int, IntegerFixedStepDomain>(
             dataSource,
             domain,
             diagnostics

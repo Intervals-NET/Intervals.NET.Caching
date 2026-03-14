@@ -17,12 +17,12 @@ internal sealed class RebalanceExecutor<TRange, TData, TDomain>
     where TDomain : IRangeDomain<TRange>
 {
     private readonly CacheState<TRange, TData, TDomain> _state;
-    private readonly CacheDataExtensionService<TRange, TData, TDomain> _cacheExtensionService;
+    private readonly CacheDataExtender<TRange, TData, TDomain> _cacheExtensionService;
     private readonly ISlidingWindowCacheDiagnostics _cacheDiagnostics;
 
     public RebalanceExecutor(
         CacheState<TRange, TData, TDomain> state,
-        CacheDataExtensionService<TRange, TData, TDomain> cacheExtensionService,
+        CacheDataExtender<TRange, TData, TDomain> cacheExtensionService,
         ISlidingWindowCacheDiagnostics cacheDiagnostics
     )
     {
@@ -50,7 +50,7 @@ internal sealed class RebalanceExecutor<TRange, TData, TDomain>
         var baseRangeData = intent.AssembledRangeData;
 
         // Cancellation check before expensive I/O
-        // Satisfies Invariant 34a: "Rebalance Execution MUST yield to User Path requests immediately"
+        // Satisfies SWC.F.1a: "Rebalance Execution MUST yield to User Path requests immediately"
         cancellationToken.ThrowIfCancellationRequested();
 
         // Phase 1: Extend delivered data to cover desired range (fetch only truly missing data)

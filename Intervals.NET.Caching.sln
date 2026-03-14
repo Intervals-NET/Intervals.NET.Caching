@@ -1,6 +1,6 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-#
+# 
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Intervals.NET.Caching", "src\Intervals.NET.Caching\Intervals.NET.Caching.csproj", "{D1E2F3A4-B5C6-4D7E-9F0A-1B2C3D4E5F6A}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Intervals.NET.Caching.SlidingWindow", "src\Intervals.NET.Caching.SlidingWindow\Intervals.NET.Caching.SlidingWindow.csproj", "{40C9BEF3-8CFA-43CC-AFE0-7E374DF7F9A5}"
@@ -57,7 +57,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "cicd", "cicd", "{9C6688E8-0
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "benchmarks", "benchmarks", "{EB0F4813-1FA9-4C40-A975-3B8C6BBFF8D5}"
 EndProject
-
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Intervals.NET.Caching.VisitedPlaces", "src\Intervals.NET.Caching.VisitedPlaces\Intervals.NET.Caching.VisitedPlaces.csproj", "{6EA7122A-30F7-465E-930C-51A917495CE0}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Intervals.NET.Caching.VisitedPlaces.WasmValidation", "src\Intervals.NET.Caching.VisitedPlaces.WasmValidation\Intervals.NET.Caching.VisitedPlaces.WasmValidation.csproj", "{E5F6A7B8-C9D0-4E1F-2A3B-4C5D6E7F8A9B}"
@@ -98,6 +97,8 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "visited-places", "visited-places", "{663B2CA9-AF2B-4EC7-8455-274CE604A0C9}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "WasmValidation", "WasmValidation", "{6267BFB1-0E05-438A-9AB5-C8FC8EFCE221}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Intervals.NET.Caching.Tests.SharedInfrastructure", "tests\Intervals.NET.Caching.Tests.SharedInfrastructure\Intervals.NET.Caching.Tests.SharedInfrastructure.csproj", "{58982A2D-5D99-4F08-8F0E-542F460F307C}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -161,6 +162,10 @@ Global
 		{8ED9F295-3AEF-4549-AEFD-477EDDB1E23D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{8ED9F295-3AEF-4549-AEFD-477EDDB1E23D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{8ED9F295-3AEF-4549-AEFD-477EDDB1E23D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{58982A2D-5D99-4F08-8F0E-542F460F307C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{58982A2D-5D99-4F08-8F0E-542F460F307C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{58982A2D-5D99-4F08-8F0E-542F460F307C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{58982A2D-5D99-4F08-8F0E-542F460F307C}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{B0276F89-7127-4A8C-AD8F-C198780A1E34} = {EB667A96-0E73-48B6-ACC8-C99369A59D0D}
@@ -186,5 +191,6 @@ Global
 		{6267BFB1-0E05-438A-9AB5-C8FC8EFCE221} = {2126ACFB-75E0-4E60-A84C-463EBA8A8799}
 		{A1B2C3D4-E5F6-4A5B-8C9D-0E1F2A3B4C5D} = {6267BFB1-0E05-438A-9AB5-C8FC8EFCE221}
 		{E5F6A7B8-C9D0-4E1F-2A3B-4C5D6E7F8A9B} = {6267BFB1-0E05-438A-9AB5-C8FC8EFCE221}
+		{58982A2D-5D99-4F08-8F0E-542F460F307C} = {8C504091-1383-4EEB-879E-7A3769C3DF13}
 	EndGlobalSection
 EndGlobal

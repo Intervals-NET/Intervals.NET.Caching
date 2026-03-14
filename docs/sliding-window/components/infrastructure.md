@@ -24,23 +24,23 @@ The Sliding Window Cache follows a **single consumer model** (see `docs/sliding-
 
 ### Component Thread Contexts
 
-| Component                                  | Thread Context | Notes                                                      |
-|--------------------------------------------|----------------|------------------------------------------------------------|
-| `SlidingWindowCache`                       | Neutral        | Just delegates                                             |
-| `UserRequestHandler`                       | ⚡ User Thread  | Synchronous, fast path                                     |
-| `IntentController.PublishIntent()`         | ⚡ User Thread  | Atomic intent storage + semaphore signal (fire-and-forget) |
-| `IntentController.ProcessIntentsAsync()`   | 🔄 Background  | Intent processing loop; invokes `DecisionEngine`           |
-| `RebalanceDecisionEngine`                  | 🔄 Background  | CPU-only; runs in intent processing loop                   |
-| `ProportionalRangePlanner`                 | 🔄 Background  | Invoked by `DecisionEngine`                                |
-| `NoRebalanceRangePlanner`                  | 🔄 Background  | Invoked by `DecisionEngine`                                |
-| `NoRebalanceSatisfactionPolicy`            | 🔄 Background  | Invoked by `DecisionEngine`                                |
-| `IWorkScheduler.PublishWorkItemAsync()`    | 🔄 Background  | Unbounded serial: sync; bounded serial: async await          |
-| `UnboundedSerialWorkScheduler.ChainExecutionAsync()` | 🔄 Background | Task chain execution (sequential)                  |
-| `BoundedSerialWorkScheduler.ProcessWorkItemsAsync()` | 🔄 Background | Channel loop execution                             |
-| `RebalanceExecutor`                        | 🔄 Background  | ThreadPool, async, I/O                                     |
-| `CacheDataExtensionService`                | Both ⚡🔄       | User Thread OR Background                                  |
-| `CacheState`                               | Both ⚡🔄       | Shared mutable (no locks; single-writer)                   |
-| Storage (`Snapshot`/`CopyOnRead`)          | Both ⚡🔄       | Owned by `CacheState`                                      |
+| Component                                            | Thread Context | Notes                                                      |
+|------------------------------------------------------|----------------|------------------------------------------------------------|
+| `SlidingWindowCache`                                 | Neutral        | Just delegates                                             |
+| `UserRequestHandler`                                 | ⚡ User Thread  | Synchronous, fast path                                     |
+| `IntentController.PublishIntent()`                   | ⚡ User Thread  | Atomic intent storage + semaphore signal (fire-and-forget) |
+| `IntentController.ProcessIntentsAsync()`             | 🔄 Background  | Intent processing loop; invokes `DecisionEngine`           |
+| `RebalanceDecisionEngine`                            | 🔄 Background  | CPU-only; runs in intent processing loop                   |
+| `ProportionalRangePlanner`                           | 🔄 Background  | Invoked by `DecisionEngine`                                |
+| `NoRebalanceRangePlanner`                            | 🔄 Background  | Invoked by `DecisionEngine`                                |
+| `NoRebalanceSatisfactionPolicy`                      | 🔄 Background  | Invoked by `DecisionEngine`                                |
+| `IWorkScheduler.PublishWorkItemAsync()`              | 🔄 Background  | Unbounded serial: sync; bounded serial: async await        |
+| `UnboundedSerialWorkScheduler.ChainExecutionAsync()` | 🔄 Background  | Task chain execution (sequential)                          |
+| `BoundedSerialWorkScheduler.ProcessWorkItemsAsync()` | 🔄 Background  | Channel loop execution                                     |
+| `RebalanceExecutor`                                  | 🔄 Background  | ThreadPool, async, I/O                                     |
+| `CacheDataExtender`                                  | Both ⚡🔄       | User Thread OR Background                                  |
+| `CacheState`                                         | Both ⚡🔄       | Shared mutable (no locks; single-writer)                   |
+| Storage (`Snapshot`/`CopyOnRead`)                    | Both ⚡🔄       | Owned by `CacheState`                                      |
 
 **Critical:** `PublishIntent()` is a synchronous user-thread operation (atomic ops only, no decision logic). Decision logic (`DecisionEngine`, planners, policy) executes in the **background intent processing loop**. Rebalance execution (I/O) happens in a **separate background execution loop**.
 

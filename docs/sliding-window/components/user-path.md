@@ -10,12 +10,12 @@ User requests must not block on background optimization. The user path does the 
 
 ## Key Components
 
-| Component                                           | File                                                                                              | Role                                                |
-|-----------------------------------------------------|---------------------------------------------------------------------------------------------------|-----------------------------------------------------|
-| `SlidingWindowCache<TRange, TData, TDomain>`        | `src/Intervals.NET.Caching.SlidingWindow/Public/Cache/SlidingWindowCache.cs`                      | Public facade; delegates to `UserRequestHandler`    |
-| `UserRequestHandler<TRange, TData, TDomain>`        | `src/Intervals.NET.Caching.SlidingWindow/Core/UserPath/UserRequestHandler.cs`                     | Internal user-path logic; sole publisher of intents |
-| `CacheDataExtensionService<TRange, TData, TDomain>` | `src/Intervals.NET.Caching.SlidingWindow/Infrastructure/Services/CacheDataExtensionService.cs`    | Assembles requested range from cache + IDataSource  |
-| `IntentController<TRange, TData, TDomain>`          | `src/Intervals.NET.Caching.SlidingWindow/Core/Rebalance/Intent/IntentController.cs`               | Publish-side only from user path                    |
+| Component                                    | File                                                                                    | Role                                                |
+|----------------------------------------------|-----------------------------------------------------------------------------------------|-----------------------------------------------------|
+| `SlidingWindowCache<TRange, TData, TDomain>` | `src/Intervals.NET.Caching.SlidingWindow/Public/Cache/SlidingWindowCache.cs`            | Public facade; delegates to `UserRequestHandler`    |
+| `UserRequestHandler<TRange, TData, TDomain>` | `src/Intervals.NET.Caching.SlidingWindow/Core/UserPath/UserRequestHandler.cs`           | Internal user-path logic; sole publisher of intents |
+| `CacheDataExtender<TRange, TData, TDomain>`  | `src/Intervals.NET.Caching.SlidingWindow/Core/Rebalance/Execution/CacheDataExtender.cs` | Assembles requested range from cache + IDataSource  |
+| `IntentController<TRange, TData, TDomain>`   | `src/Intervals.NET.Caching.SlidingWindow/Core/Rebalance/Intent/IntentController.cs`     | Publish-side only from user path                    |
 
 ## Execution Context
 
@@ -25,7 +25,7 @@ All user-path code executes on the **⚡ User Thread** (the caller's thread). No
 
 1. **Cold-start check** — `!state.IsInitialized`: fetch full range from `IDataSource` and serve directly; `CacheInteraction = FullMiss`.
 2. **Full cache hit** — `RequestedRange ⊆ Cache.Range`: read directly from storage (zero allocation for Snapshot mode); `CacheInteraction = FullHit`.
-3. **Partial cache hit** — intersection exists: serve cached portion + fetch missing segments via `CacheDataExtensionService`; `CacheInteraction = PartialHit`.
+3. **Partial cache hit** — intersection exists: serve cached portion + fetch missing segments via `CacheDataExtender`; `CacheInteraction = PartialHit`.
 4. **Full cache miss** — no intersection: fetch full range from `IDataSource` directly; `CacheInteraction = FullMiss`.
 5. **Publish intent** — fire-and-forget; passes `deliveredData` to `IntentController.PublishIntent` and returns immediately.
 
@@ -46,16 +46,16 @@ All user-path code executes on the **⚡ User Thread** (the caller's thread). No
 
 ## Invariants
 
-| Invariant       | Description                                                                                                                                                                            |
-|-----------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| SWC.A.3         | User requests always served immediately (never blocked by rebalance)                                                                                                                   |
-| SWC.A.5         | `UserRequestHandler` is the sole publisher of rebalance intents                                                                                                                        |
-| SWC.A.6         | Intent publication is fire-and-forget (background only)                                                                                                                                |
-| SWC.A.11/SWC.A.12 | User path is strictly read-only w.r.t. `CacheState`                                                                                                                                 |
-| SWC.A.10        | Returns exactly `RequestedRange` data                                                                                                                                                  |
-| SWC.A.10a       | `RangeResult` contains `Range`, `Data`, and `CacheInteraction` — all set by `UserRequestHandler`                                                                                       |
-| SWC.A.10b       | `CacheInteraction` accurately reflects the cache scenario: `FullMiss` (cold start / jump), `FullHit` (fully cached), `PartialHit` (partial overlap)                                    |
-| SWC.G.3         | I/O isolation: `IDataSource` called on user's behalf from User Thread (partial hits) or Background Thread (rebalance execution); shared `CacheDataExtensionService` used by both paths |
+| Invariant         | Description                                                                                                                                                                    |
+|-------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| SWC.A.3           | User requests always served immediately (never blocked by rebalance)                                                                                                           |
+| SWC.A.5           | `UserRequestHandler` is the sole publisher of rebalance intents                                                                                                                |
+| SWC.A.6           | Intent publication is fire-and-forget (background only)                                                                                                                        |
+| SWC.A.11/SWC.A.12 | User path is strictly read-only w.r.t. `CacheState`                                                                                                                            |
+| SWC.A.10          | Returns exactly `RequestedRange` data                                                                                                                                          |
+| SWC.A.10a         | `RangeResult` contains `Range`, `Data`, and `CacheInteraction` — all set by `UserRequestHandler`                                                                               |
+| SWC.A.10b         | `CacheInteraction` accurately reflects the cache scenario: `FullMiss` (cold start / jump), `FullHit` (fully cached), `PartialHit` (partial overlap)                            |
+| SWC.G.3           | I/O isolation: `IDataSource` called on user's behalf from User Thread (partial hits) or Background Thread (rebalance execution); shared `CacheDataExtender` used by both paths |
 
 See `docs/sliding-window/invariants.md` (Section SWC.A: User Path invariants) for full specification.
 
