@@ -113,12 +113,14 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
                     // point. TryRemove guards against the degenerate case: if the segment was
                     // already removed, OnSegmentRemoved is skipped to prevent a double-decrement
                     // of policy aggregates.
-                    if (_storage.TryRemove(segment))
+                    if (!_storage.TryRemove(segment))
                     {
-                        _evictionEngine.OnSegmentRemoved(segment);
-                        _diagnostics.EvictionSegmentRemoved();
-                        evicted = true;
+                        continue;
                     }
+
+                    _evictionEngine.OnSegmentRemoved(segment);
+                    _diagnostics.EvictionSegmentRemoved();
+                    evicted = true;
                 }
 
                 if (evicted)
