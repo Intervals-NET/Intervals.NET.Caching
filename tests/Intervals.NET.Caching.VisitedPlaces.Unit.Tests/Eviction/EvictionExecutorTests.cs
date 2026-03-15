@@ -361,7 +361,7 @@ public sealed class EvictionExecutorTests
         var storage = new SnapshotAppendBufferStorage<int, int>();
         foreach (var seg in segments)
         {
-            storage.Add(seg);
+            storage.TryAdd(seg);
         }
 
         if (selector is IStorageAwareEvictionSelector<int, int> storageAware)

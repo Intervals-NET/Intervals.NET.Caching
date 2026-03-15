@@ -33,10 +33,10 @@ internal abstract class SegmentStorageBase<TRange, TData> : ISegmentStorage<TRan
     public abstract IReadOnlyList<CachedSegment<TRange, TData>> FindIntersecting(Range<TRange> range);
 
     /// <inheritdoc/>
-    public abstract void Add(CachedSegment<TRange, TData> segment);
+    public abstract bool TryAdd(CachedSegment<TRange, TData> segment);
 
     /// <inheritdoc/>
-    public abstract void AddRange(CachedSegment<TRange, TData>[] segments);
+    public abstract CachedSegment<TRange, TData>[] TryAddRange(CachedSegment<TRange, TData>[] segments);
 
     /// <inheritdoc/>
     public bool TryRemove(CachedSegment<TRange, TData> segment)

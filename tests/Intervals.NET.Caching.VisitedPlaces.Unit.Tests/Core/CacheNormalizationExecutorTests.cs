@@ -536,7 +536,7 @@ public sealed class CacheNormalizationExecutorTests
         var segment = new CachedSegment<int, int>(
             range,
             new ReadOnlyMemory<int>(new int[end - start + 1]));
-        storage.Add(segment);
+        storage.TryAdd(segment);
         return segment;
     }
 
@@ -561,7 +561,7 @@ public sealed class CacheNormalizationExecutorTests
     }
 
     /// <summary>
-    /// A segment storage that throws on <see cref="Add"/> to test exception handling.
+    /// A segment storage that throws on <see cref="TryAdd"/> to test exception handling.
     /// </summary>
     private sealed class ThrowingSegmentStorage : ISegmentStorage<int, int>
     {
@@ -569,10 +569,10 @@ public sealed class CacheNormalizationExecutorTests
 
         public IReadOnlyList<CachedSegment<int, int>> FindIntersecting(Range<int> range) => [];
 
-        public void Add(CachedSegment<int, int> segment) =>
+        public bool TryAdd(CachedSegment<int, int> segment) =>
             throw new InvalidOperationException("Simulated storage failure.");
 
-        public void AddRange(CachedSegment<int, int>[] segments) =>
+        public CachedSegment<int, int>[] TryAddRange(CachedSegment<int, int>[] segments) =>
             throw new InvalidOperationException("Simulated storage failure.");
 
         public bool TryRemove(CachedSegment<int, int> segment) => false;

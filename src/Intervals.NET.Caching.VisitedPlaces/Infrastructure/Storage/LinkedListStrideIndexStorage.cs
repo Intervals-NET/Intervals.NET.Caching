@@ -144,41 +144,64 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
     }
 
     /// <inheritdoc/>
-    public override void Add(CachedSegment<TRange, TData> segment)
+    /// <remarks>
+    /// Enforces Invariant VPC.C.3: calls <see cref="FindIntersecting"/> before inserting.
+    /// If an overlapping segment already exists, the segment is not stored and <see langword="false"/>
+    /// is returned. Otherwise the segment is inserted in sorted order and <see langword="true"/> is
+    /// returned.
+    /// </remarks>
+    public override bool TryAdd(CachedSegment<TRange, TData> segment)
     {
-        // Insert into sorted position in the linked list.
-        InsertSorted(segment);
+        // VPC.C.3: skip if an overlapping segment already exists in storage.
+        if (FindIntersecting(segment.Range).Count > 0)
+        {
+            return false;
+        }
 
+        InsertSorted(segment);
         _addsSinceLastNormalization++;
         _count++;
+        return true;
     }
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Inserts each segment via <see cref="InsertSorted"/> (O(log(n/N) + N) each). Compared to
-    /// calling <see cref="Add"/> in a loop, this keeps all segments inserted before the executor
-    /// calls <see cref="TryNormalize"/> — no normalization passes during insertions.
-    /// <c>_addsSinceLastNormalization</c> is incremented by the number of inserted segments so
-    /// the next <see cref="TryNormalize"/> call sees the correct threshold state.
+    /// Sorts <paramref name="segments"/> by range start, then inserts each one only if it does not
+    /// overlap any already-stored segment (including peers inserted earlier in this same call —
+    /// Invariant VPC.C.3). <c>_addsSinceLastNormalization</c> is incremented only for segments
+    /// that were actually stored, so the next <see cref="TryNormalize"/> call sees the correct
+    /// threshold state.
     /// </remarks>
-    public override void AddRange(CachedSegment<TRange, TData>[] segments)
+    public override CachedSegment<TRange, TData>[] TryAddRange(CachedSegment<TRange, TData>[] segments)
     {
         if (segments.Length == 0)
         {
-            return;
+            return [];
         }
 
-        // Sort incoming segments so each InsertSorted call starts from a reasonably close anchor.
+        // Sort incoming segments so each InsertSorted call starts from a reasonably close anchor
+        // and so intra-batch overlap detection is reliable.
         segments.AsSpan().Sort(static (a, b) => a.Range.Start.Value.CompareTo(b.Range.Start.Value));
+
+        List<CachedSegment<TRange, TData>>? stored = null;
 
         foreach (var segment in segments)
         {
+            // VPC.C.3: skip if an overlapping segment already exists in storage (including
+            // peers from this same batch that were inserted in earlier iterations).
+            if (FindIntersecting(segment.Range).Count > 0)
+            {
+                continue;
+            }
+
             InsertSorted(segment);
+            _addsSinceLastNormalization++;
+            _count++;
+            (stored ??= []).Add(segment);
         }
 
-        _count += segments.Length;
-        _addsSinceLastNormalization += segments.Length;
-        // The executor will call TryNormalize after this AddRange returns.
+        // The executor will call TryNormalize after this TryAddRange returns.
+        return stored?.ToArray() ?? [];
     }
 
     /// <inheritdoc/>

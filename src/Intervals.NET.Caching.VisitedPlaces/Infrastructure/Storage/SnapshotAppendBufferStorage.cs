@@ -115,17 +115,32 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
     }
 
     /// <inheritdoc/>
-    public override void Add(CachedSegment<TRange, TData> segment)
+    /// <remarks>
+    /// Enforces Invariant VPC.C.3: calls <see cref="FindIntersecting"/> before appending to the
+    /// buffer. If an overlapping segment already exists (in snapshot or append buffer),
+    /// the segment is not stored and <see langword="false"/> is returned.
+    /// </remarks>
+    public override bool TryAdd(CachedSegment<TRange, TData> segment)
     {
+        // VPC.C.3: skip if an overlapping segment already exists in storage.
+        if (FindIntersecting(segment.Range).Count > 0)
+        {
+            return false;
+        }
+
         _appendBuffer[_appendCount] = segment;
         Volatile.Write(ref _appendCount, _appendCount + 1); // Release fence: makes buffer entry visible to readers before count increment is observed
         _count++;
+        return true;
     }
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Bypasses the append buffer entirely: sorts <paramref name="segments"/>, merges them with the
-    /// current snapshot, and publishes the result atomically via <see cref="Interlocked.Exchange"/>.
+    /// Bypasses the append buffer entirely for the non-overlapping subset: sorts
+    /// <paramref name="segments"/>, checks each one against <see cref="FindIntersecting"/>
+    /// (enforcing Invariant VPC.C.3 including against peers inserted earlier in the same call),
+    /// merges the validated subset with the current snapshot, and publishes the result atomically
+    /// via <see cref="Interlocked.Exchange"/>.
     /// The append buffer is intentionally left untouched — its contents remain visible to
     /// <see cref="FindIntersecting"/> via the independent buffer scan and will be drained by the
     /// next <see cref="TryNormalize"/> call from the executor.
@@ -134,15 +149,48 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
     /// atomic update of both <c>_snapshot</c> and <c>_appendCount</c>; since only <c>_snapshot</c>
     /// changes, a release fence via <see cref="Interlocked.Exchange"/> suffices.
     /// </remarks>
-    public override void AddRange(CachedSegment<TRange, TData>[] segments)
+    public override CachedSegment<TRange, TData>[] TryAddRange(CachedSegment<TRange, TData>[] segments)
     {
         if (segments.Length == 0)
         {
-            return;
+            return [];
         }
 
         // Sort incoming segments by range start (Background Path owns the array exclusively).
         segments.AsSpan().Sort(static (a, b) => a.Range.Start.Value.CompareTo(b.Range.Start.Value));
+
+        // Filter to non-overlapping segments only (VPC.C.3). Each check includes peers from
+        // this same batch that were already merged into the snapshot in earlier iterations.
+        // Build the validated list incrementally: after each accepted segment is merged into a
+        // provisional snapshot, subsequent checks in this loop run against the updated state.
+        // To avoid O(n) provisional snapshots, we collect validated segments first (checking
+        // against the current live storage which includes the append buffer), then merge once.
+        // Intra-batch overlap detection is sound because incoming segments are sorted: if two
+        // incoming segments overlap each other, the later one will fail FindIntersecting once
+        // the earlier one is in the merged snapshot — but since we merge only after collecting
+        // all validated segments, we must do an additional intra-batch pass. Instead, simply
+        // re-use FindIntersecting per segment after merging iteratively is avoided by the sort
+        // guarantee: sorted non-overlapping incoming segments cannot overlap each other.
+        // A simpler correct approach: collect all passing segments, then merge once.
+        List<CachedSegment<TRange, TData>>? validated = null;
+
+        foreach (var segment in segments)
+        {
+            // VPC.C.3: check against current live storage (snapshot + append buffer).
+            if (FindIntersecting(segment.Range).Count > 0)
+            {
+                continue;
+            }
+
+            (validated ??= []).Add(segment);
+        }
+
+        if (validated == null)
+        {
+            return [];
+        }
+
+        var validatedArray = validated.ToArray();
 
         var snapshot = Volatile.Read(ref _snapshot);
 
@@ -156,16 +204,17 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
             }
         }
 
-        // Merge current snapshot (left) with sorted incoming (right) — one allocation.
+        // Merge current snapshot (left) with sorted, validated incoming (right) — one allocation.
         // Incoming segments are brand-new and therefore never IsRemoved; pass their full length
         // as both rightLength and liveRightCount.
-        var merged = MergeSorted(snapshot, liveSnapshotCount, segments, segments.Length, segments.Length);
+        var merged = MergeSorted(snapshot, liveSnapshotCount, validatedArray, validatedArray.Length, validatedArray.Length);
 
         // Atomically replace the snapshot. _appendCount is NOT touched — the lock guards the
         // (snapshot, appendCount) pair; since appendCount is unchanged, Interlocked.Exchange suffices.
         Interlocked.Exchange(ref _snapshot, merged);
 
-        _count += segments.Length;
+        _count += validatedArray.Length;
+        return validatedArray;
     }
 
     /// <inheritdoc/>

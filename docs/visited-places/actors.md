@@ -32,7 +32,7 @@ GetDataAsync()
        │              dequeue event
        │         ┌────────────────────────
        │         │ engine.UpdateMetadata()
-       │         │ storage.Add(segment)
+       │         │ storage.TryAdd(segment)
        │         │ engine.InitializeSegment()
        │         │ storage.TryNormalize()
        │         │   └─ [for each expired segment]
@@ -144,8 +144,8 @@ GetDataAsync()
 
 **Responsibilities**
 - Process each `CacheNormalizationRequest` in the fixed four-step sequence (Invariant VPC.B.3): (1) metadata update, (2) storage, (3) eviction evaluation + execution, (4) post-removal notification. See `docs/visited-places/architecture.md` — Threading Model, Context 2 for the authoritative step-by-step description.
-- Perform all `storage.Add` and `storage.Remove` calls (sole storage writer on the add path).
-- Use `storage.AddRange` for multi-gap events (`FetchedChunks.Count > 1`) to avoid quadratic normalization cost (see `docs/visited-places/storage-strategies.md` — Bulk Storage: AddRange).
+- Perform all `storage.TryAdd` and `storage.Remove` calls (sole storage writer on the add path).
+- Use `storage.TryAddRange` for multi-gap events (`FetchedChunks.Count > 1`) to avoid quadratic normalization cost (see `docs/visited-places/storage-strategies.md` — Bulk Storage: TryAddRange).
 - Delegate all eviction concerns through `EvictionEngine` (sole eviction dependency).
 
 **Non-responsibilities**
@@ -174,7 +174,7 @@ GetDataAsync()
 **Responsibilities**
 - Maintain `CachedSegments` as a sorted, searchable, non-contiguous collection.
 - Support efficient range intersection queries for User Path reads.
-- Support efficient segment insertion for Background Path writes, via both `Add` (single segment) and `AddRange` (bulk insert for multi-gap events).
+- Support efficient segment insertion for Background Path writes, via both `TryAdd` (single segment) and `TryAddRange` (bulk insert for multi-gap events); both self-enforce VPC.C.3 overlap detection.
 - Implement the selected storage strategy (Snapshot + Append Buffer, or LinkedList + Stride Index).
 
 **Non-responsibilities**
@@ -229,7 +229,7 @@ GetDataAsync()
 - Fire eviction-specific diagnostics (`EvictionEvaluated`, `EvictionTriggered`, `EvictionExecuted`).
 
 **Non-responsibilities**
-- Does not perform storage mutations (`storage.Add` / `storage.Remove` remain in `CacheNormalizationExecutor`).
+- Does not perform storage mutations (`storage.TryAdd` / `storage.Remove` remain in `CacheNormalizationExecutor`).
 - Does not serve user requests.
 - Does not expose `EvictionPolicyEvaluator`, `EvictionExecutor`, or `IEvictionSelector` to the processor.
 

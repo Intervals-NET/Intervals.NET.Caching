@@ -28,7 +28,7 @@ CacheNormalizationExecutor
   ├─ engine.UpdateMetadata(usedSegments)
   │    └─ selector.UpdateMetadata(...)
   │
-  ├─ storage.Add(segment)                              ← processor is sole storage writer
+  ├─ storage.TryAdd(segment)                           ← processor is sole storage writer
   ├─ engine.InitializeSegment(segment)
   │    ├─ selector.InitializeMetadata(...)
   │    └─ evaluator.OnSegmentAdded(...)
@@ -307,7 +307,7 @@ The Eviction Engine (`EvictionEngine<TRange, TData>`) is the **single eviction f
 
 ### Storage Ownership
 
-The engine holds **no reference to `ISegmentStorage`**. All `storage.Add` and `storage.Remove` calls remain exclusively in `CacheNormalizationExecutor` (Invariant VPC.A.10).
+The engine holds **no reference to `ISegmentStorage`**. All `storage.TryAdd` and `storage.Remove` calls remain exclusively in `CacheNormalizationExecutor` (Invariant VPC.A.10).
 
 ### Diagnostics Split
 
@@ -493,21 +493,21 @@ A segment may be referenced in the User Path's current in-memory assembly (i.e.,
 
 ## Alignment with Invariants
 
-| Invariant                                        | Enforcement                                                                                         |
-|--------------------------------------------------|-----------------------------------------------------------------------------------------------------|
-| VPC.E.1 — Pluggable policy                       | Policies are injected at construction; `IEvictionPolicy` is a public interface                      |
-| VPC.E.1a — ANY policy exceeded triggers eviction | `EvictionPolicyEvaluator.Evaluate` OR-combines all policy pressures                                 |
-| VPC.E.2 — Constraint satisfaction loop           | `EvictionEngine` coordinates: evaluator produces pressure; executor loops via `TrySelectCandidate`  |
-| VPC.E.2a — Single loop per event                 | `CompositePressure` aggregates all exceeded pressures; one `EvaluateAndExecute` call per event      |
-| VPC.E.3 — Just-stored immunity                   | Executor seeds immune set from `justStoredSegments`; selector skips immune segments during sampling |
-| VPC.E.3a — No-op when only immune candidate      | `TrySelectCandidate` returns `false`; executor exits loop immediately                               |
-| VPC.E.4 — Metadata owned by Eviction Selector    | Selector owns `InitializeMetadata` / `UpdateMetadata`; `EvictionEngine` delegates                   |
-| VPC.E.4a — Metadata initialized at storage time  | `engine.InitializeSegment` called immediately after `storage.Add`                                   |
-| VPC.E.4b — Metadata updated on UsedSegments      | `engine.UpdateMetadata` called in Step 1 of each event cycle                                        |
-| VPC.E.4c — Metadata valid before every IsWorse   | `SamplingEvictionSelector` calls `EnsureMetadata` before each `IsWorse` comparison in sampling loop |
-| VPC.E.5 — Eviction only in Background Path       | User Path has no reference to engine, policies, selectors, or executor                              |
-| VPC.E.6 — Consistency after eviction             | Evicted segments (and their metadata) are removed together; no dangling references                  |
-| VPC.B.3b — No eviction on stats-only events      | Steps 3-4 gated on `justStoredSegments.Count > 0`                                                   |
+| Invariant                                        | Enforcement                                                                                                                            |
+|--------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------|
+| VPC.E.1 — Pluggable policy                       | Policies are injected at construction; `IEvictionPolicy` is a public interface                                                         |
+| VPC.E.1a — ANY policy exceeded triggers eviction | `EvictionPolicyEvaluator.Evaluate` OR-combines all policy pressures                                                                    |
+| VPC.E.2 — Constraint satisfaction loop           | `EvictionEngine` coordinates: evaluator produces pressure; executor loops via `TrySelectCandidate`                                     |
+| VPC.E.2a — Single loop per event                 | `CompositePressure` aggregates all exceeded pressures; one `EvaluateAndExecute` call per event                                         |
+| VPC.E.3 — Just-stored immunity                   | Executor seeds immune set from `justStoredSegments`; selector skips immune segments during sampling                                    |
+| VPC.E.3a — No-op when only immune candidate      | `TrySelectCandidate` returns `false`; executor exits loop immediately                                                                  |
+| VPC.E.4 — Metadata owned by Eviction Selector    | Selector owns `InitializeMetadata` / `UpdateMetadata`; `EvictionEngine` delegates                                                      |
+| VPC.E.4a — Metadata initialized at storage time  | `engine.InitializeSegment` called immediately after `storage.TryAdd` returns `true` (or per segment returned by `storage.TryAddRange`) |
+| VPC.E.4b — Metadata updated on UsedSegments      | `engine.UpdateMetadata` called in Step 1 of each event cycle                                                                           |
+| VPC.E.4c — Metadata valid before every IsWorse   | `SamplingEvictionSelector` calls `EnsureMetadata` before each `IsWorse` comparison in sampling loop                                    |
+| VPC.E.5 — Eviction only in Background Path       | User Path has no reference to engine, policies, selectors, or executor                                                                 |
+| VPC.E.6 — Consistency after eviction             | Evicted segments (and their metadata) are removed together; no dangling references                                                     |
+| VPC.B.3b — No eviction on stats-only events      | Steps 3-4 gated on `justStoredSegments.Count > 0`                                                                                      |
 
 ---
 

@@ -244,13 +244,13 @@ Background Storage Loop                                             [FIFO queue]
 1. Background Path dequeues the event
 2. Update metadata for used segments: `engine.UpdateMetadata(usedSegments)`
 3. `CacheNormalizationExecutor` detects `FetchedChunks.Count > 1` and dispatches to `StoreBulkAsync`:
-   - Validate and wrap all fetched chunks into `CachedSegment` instances (`ValidateChunks`)
-   - Call `storage.AddRange(segments[])` — all N gap segments inserted in a single structural update
+   - Wrap all fetched chunks with valid ranges into `CachedSegment` instances (`BuildSegments`)
+   - Call `storage.TryAddRange(segments[])` — each segment is validated for overlap internally (VPC.C.3 self-enforced); all non-overlapping segments are inserted in a single structural update; the stored subset is returned
    - For each stored segment: `engine.InitializeSegment(segment)` — attaches fresh metadata and notifies stateful policies
-4. `engine.EvaluateAndExecute(allSegments, justStoredSegments)` — `justStoredSegments` contains **all** segments from the bulk store; all are immune from eviction in this cycle (see VPC.E.3)
+4. `engine.EvaluateAndExecute(allSegments, justStoredSegments)` — `justStoredSegments` contains **all** segments returned by `TryAddRange`; all are immune from eviction in this cycle (see VPC.E.3)
 5. If any policy fires: processor removes returned segments; calls `engine.OnSegmentRemoved(segment)` per removed segment
 
-**Why `AddRange` instead of N × `Add`:** For `SnapshotAppendBufferStorage`, N calls to `Add()` can trigger up to ⌈N/AppendBufferSize⌉ normalization passes, each O(n) — quadratic total cost for large caches with many gaps. `AddRange` performs a single O(n + N log N) structural update regardless of N. See `docs/visited-places/storage-strategies.md` — Bulk Storage: AddRange.
+**Why `TryAddRange` instead of N × `TryAdd`:** For `SnapshotAppendBufferStorage`, N calls to `TryAdd()` can trigger up to ⌈N/AppendBufferSize⌉ normalization passes, each O(n) — quadratic total cost for large caches with many gaps. `TryAddRange` performs a single O(n + N log N) structural update regardless of N. See `docs/visited-places/storage-strategies.md` — Bulk Storage: TryAddRange.
 
 **Note**: Gaps are stored as distinct segments. Segments are never merged, even when adjacent. Each independently-fetched sub-range occupies its own entry in `CachedSegments`. This preserves independent statistics per fetched unit.
 

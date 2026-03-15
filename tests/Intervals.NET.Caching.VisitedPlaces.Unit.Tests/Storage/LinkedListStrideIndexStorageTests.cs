@@ -466,23 +466,23 @@ public sealed class LinkedListStrideIndexStorageTests
 
     #endregion
 
-    #region AddRange Tests
+    #region TryAddRange Tests
 
     [Fact]
-    public void AddRange_WithEmptyArray_DoesNotChangeCount()
+    public void TryAddRange_WithEmptyArray_DoesNotChangeCount()
     {
         // ARRANGE
         var storage = new LinkedListStrideIndexStorage<int, int>();
 
         // ACT
-        storage.AddRange([]);
+        storage.TryAddRange([]);
 
         // ASSERT
         Assert.Equal(0, storage.Count);
     }
 
     [Fact]
-    public void AddRange_WithMultipleSegments_UpdatesCountCorrectly()
+    public void TryAddRange_WithMultipleSegments_UpdatesCountCorrectly()
     {
         // ARRANGE
         var storage = new LinkedListStrideIndexStorage<int, int>();
@@ -494,14 +494,14 @@ public sealed class LinkedListStrideIndexStorageTests
         };
 
         // ACT
-        storage.AddRange(segments);
+        storage.TryAddRange(segments);
 
         // ASSERT
         Assert.Equal(3, storage.Count);
     }
 
     [Fact]
-    public void AddRange_WithMultipleSegments_AllSegmentsFoundByFindIntersecting()
+    public void TryAddRange_WithMultipleSegments_AllSegmentsFoundByFindIntersecting()
     {
         // ARRANGE
         var storage = new LinkedListStrideIndexStorage<int, int>();
@@ -510,7 +510,7 @@ public sealed class LinkedListStrideIndexStorageTests
         var seg3 = CreateSegment(40, 49);
 
         // ACT
-        storage.AddRange([seg1, seg2, seg3]);
+        storage.TryAddRange([seg1, seg2, seg3]);
 
         // ASSERT
         Assert.Single(storage.FindIntersecting(TestHelpers.CreateRange(0, 9)));
@@ -519,16 +519,16 @@ public sealed class LinkedListStrideIndexStorageTests
     }
 
     [Fact]
-    public void AddRange_WithUnsortedInput_SegmentsAreStillFindable()
+    public void TryAddRange_WithUnsortedInput_SegmentsAreStillFindable()
     {
-        // ARRANGE — pass segments in reverse order to verify AddRange sorts internally
+        // ARRANGE — pass segments in reverse order to verify TryAddRange sorts internally
         var storage = new LinkedListStrideIndexStorage<int, int>();
         var seg1 = CreateSegment(40, 49);
         var seg2 = CreateSegment(0, 9);
         var seg3 = CreateSegment(20, 29);
 
         // ACT
-        storage.AddRange([seg1, seg2, seg3]);
+        storage.TryAddRange([seg1, seg2, seg3]);
 
         // ASSERT — all three must be findable regardless of insertion order
         Assert.Single(storage.FindIntersecting(TestHelpers.CreateRange(0, 9)));
@@ -537,7 +537,7 @@ public sealed class LinkedListStrideIndexStorageTests
     }
 
     [Fact]
-    public void AddRange_AfterExistingSegments_AllSegmentsFoundByFindIntersecting()
+    public void TryAddRange_AfterExistingSegments_AllSegmentsFoundByFindIntersecting()
     {
         // ARRANGE — add two segments individually first, then bulk-add two more
         var storage = new LinkedListStrideIndexStorage<int, int>();
@@ -551,7 +551,7 @@ public sealed class LinkedListStrideIndexStorageTests
         };
 
         // ACT
-        storage.AddRange(newSegments);
+        storage.TryAddRange(newSegments);
 
         // ASSERT — all four segments findable
         Assert.Equal(4, storage.Count);
@@ -562,10 +562,10 @@ public sealed class LinkedListStrideIndexStorageTests
     }
 
     [Fact]
-    public void AddRange_NormalizesStrideIndexOnce_NotOncePerSegment()
+    public void TryAddRange_NormalizesStrideIndexOnce_NotOncePerSegment()
     {
-        // ARRANGE — use a stride threshold of 2 so normalization would fire after every 2 Add() calls;
-        // AddRange with 4 segments should trigger exactly one NormalizeStrideIndex, not 4 separate ones.
+        // ARRANGE — use a stride threshold of 2 so normalization would fire after every 2 TryAdd() calls;
+        // TryAddRange with 4 segments should trigger exactly one NormalizeStrideIndex, not 4 separate ones.
         var storage = new LinkedListStrideIndexStorage<int, int>(appendBufferSize: 2, stride: 2);
         var segments = new[]
         {
@@ -576,7 +576,7 @@ public sealed class LinkedListStrideIndexStorageTests
         };
 
         // ACT — no exception means normalization completed without intermediate half-normalized states
-        var exception = Record.Exception(() => storage.AddRange(segments));
+        var exception = Record.Exception(() => storage.TryAddRange(segments));
 
         // ASSERT — all segments are findable after the single normalization pass
         Assert.Null(exception);
@@ -600,14 +600,14 @@ public sealed class LinkedListStrideIndexStorageTests
         var segment = new CachedSegment<int, int>(
             range,
             new ReadOnlyMemory<int>(new int[end - start + 1]));
-        storage.Add(segment);
+        storage.TryAdd(segment);
         return segment;
     }
 
     /// <summary>
     /// Creates a <see cref="CachedSegment{TRange,TData}"/> without adding it to storage.
-    /// Use this in <c>AddRange</c> tests to build the input array before calling
-    /// <see cref="LinkedListStrideIndexStorage{TRange,TData}.AddRange"/>.
+    /// Use this in <c>TryAddRange</c> tests to build the input array before calling
+    /// <see cref="LinkedListStrideIndexStorage{TRange,TData}.TryAddRange"/>.
     /// </summary>
     private static CachedSegment<int, int> CreateSegment(int start, int end)
     {

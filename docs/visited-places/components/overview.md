@@ -214,13 +214,13 @@ CacheNormalizationExecutor
 
 | File                                                                | Type             | Visibility | Role                                                                                                                                      |
 |---------------------------------------------------------------------|------------------|------------|-------------------------------------------------------------------------------------------------------------------------------------------|
-| `Infrastructure/Storage/ISegmentStorage<TRange,TData>`              | interface        | internal   | Core storage contract: `Add`, `AddRange`, `Remove`, `FindIntersecting`, `GetAll`, `GetRandomSegment`, `Count`                             |
+| `Infrastructure/Storage/ISegmentStorage<TRange,TData>`              | interface        | internal   | Core storage contract: `TryAdd`, `TryAddRange`, `Remove`, `FindIntersecting`, `GetAll`, `GetRandomSegment`, `Count`                       |
 | `Infrastructure/Storage/SegmentStorageBase<TRange,TData>`           | `abstract class` | internal   | Shared base for both strategies; implements `FindIntersecting` binary search anchor                                                       |
 | `Infrastructure/Storage/SnapshotAppendBufferStorage<TRange,TData>`  | `sealed class`   | internal   | Default; sorted snapshot + unsorted append buffer; User Path reads snapshot; Background Path normalizes buffer into snapshot periodically |
 | `Infrastructure/Storage/LinkedListStrideIndexStorage<TRange,TData>` | `sealed class`   | internal   | Alternative; doubly-linked list + stride index; O(log N) insertion + O(k) range query; better for high segment counts                     |
 
 **TTL is implemented entirely within the storage layer** — there is no separate TTL subsystem or class:
-- `CacheNormalizationExecutor` computes `ExpiresAt = now + SegmentTtl` at storage time and passes it to `Add`/`AddRange` (timestamp stored on the segment).
+- `CacheNormalizationExecutor` computes `ExpiresAt = now + SegmentTtl` at storage time and passes it to `TryAdd`/`TryAddRange` (timestamp stored on the segment).
 - `SegmentStorageBase.FindIntersecting` filters expired segments at read time (immediate invisibility to the User Path).
 - `SegmentStorageBase.TryNormalize` discovers and physically removes expired segments on the Background Storage Loop (`Remove(segment)` → `engine.OnSegmentRemoved()` → `diagnostics.TtlSegmentExpired()`).
 
@@ -231,8 +231,8 @@ For performance characteristics and trade-offs, see `docs/visited-places/storage
 ### `ISegmentStorage` interface summary
 
 ```csharp
-void Add(CachedSegment<TRange, TData> segment);
-void AddRange(CachedSegment<TRange, TData>[] segments);  // Bulk insert for multi-gap events (FetchedChunks.Count > 1)
+bool TryAdd(CachedSegment<TRange, TData> segment);  // Returns false if segment overlaps existing (VPC.C.3 self-enforced)
+CachedSegment<TRange, TData>[] TryAddRange(CachedSegment<TRange, TData>[] segments);  // Returns only stored subset; overlap-skipping is self-enforced (VPC.C.3)
 void Remove(CachedSegment<TRange, TData> segment);
 IReadOnlyList<CachedSegment<TRange, TData>> FindIntersecting(Range<TRange> range);
 IReadOnlyList<CachedSegment<TRange, TData>> GetAll();

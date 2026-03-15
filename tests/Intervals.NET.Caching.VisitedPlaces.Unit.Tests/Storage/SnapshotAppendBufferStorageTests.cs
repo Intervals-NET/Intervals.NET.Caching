@@ -298,23 +298,23 @@ public sealed class SnapshotAppendBufferStorageTests
 
     #endregion
 
-    #region AddRange Tests
+    #region TryAddRange Tests
 
     [Fact]
-    public void AddRange_WithEmptyArray_DoesNotChangeCount()
+    public void TryAddRange_WithEmptyArray_DoesNotChangeCount()
     {
         // ARRANGE
         var storage = new SnapshotAppendBufferStorage<int, int>();
 
         // ACT
-        storage.AddRange([]);
+        storage.TryAddRange([]);
 
         // ASSERT
         Assert.Equal(0, storage.Count);
     }
 
     [Fact]
-    public void AddRange_WithMultipleSegments_UpdatesCountCorrectly()
+    public void TryAddRange_WithMultipleSegments_UpdatesCountCorrectly()
     {
         // ARRANGE
         var storage = new SnapshotAppendBufferStorage<int, int>();
@@ -326,14 +326,14 @@ public sealed class SnapshotAppendBufferStorageTests
         };
 
         // ACT
-        storage.AddRange(segments);
+        storage.TryAddRange(segments);
 
         // ASSERT
         Assert.Equal(3, storage.Count);
     }
 
     [Fact]
-    public void AddRange_WithMultipleSegments_AllSegmentsFoundByFindIntersecting()
+    public void TryAddRange_WithMultipleSegments_AllSegmentsFoundByFindIntersecting()
     {
         // ARRANGE
         var storage = new SnapshotAppendBufferStorage<int, int>();
@@ -342,7 +342,7 @@ public sealed class SnapshotAppendBufferStorageTests
         var seg3 = CreateSegment(40, 49);
 
         // ACT
-        storage.AddRange([seg1, seg2, seg3]);
+        storage.TryAddRange([seg1, seg2, seg3]);
 
         // ASSERT
         Assert.Single(storage.FindIntersecting(TestHelpers.CreateRange(0, 9)));
@@ -351,16 +351,16 @@ public sealed class SnapshotAppendBufferStorageTests
     }
 
     [Fact]
-    public void AddRange_WithUnsortedInput_SegmentsAreStillFindable()
+    public void TryAddRange_WithUnsortedInput_SegmentsAreStillFindable()
     {
-        // ARRANGE — pass segments in reverse order to verify AddRange sorts internally
+        // ARRANGE — pass segments in reverse order to verify TryAddRange sorts internally
         var storage = new SnapshotAppendBufferStorage<int, int>();
         var seg1 = CreateSegment(40, 49);
         var seg2 = CreateSegment(0, 9);
         var seg3 = CreateSegment(20, 29);
 
         // ACT
-        storage.AddRange([seg1, seg2, seg3]);
+        storage.TryAddRange([seg1, seg2, seg3]);
 
         // ASSERT — all three must be findable regardless of insertion order
         Assert.Single(storage.FindIntersecting(TestHelpers.CreateRange(0, 9)));
@@ -369,7 +369,7 @@ public sealed class SnapshotAppendBufferStorageTests
     }
 
     [Fact]
-    public void AddRange_AfterExistingSegmentsInSnapshot_MergesCorrectly()
+    public void TryAddRange_AfterExistingSegmentsInSnapshot_MergesCorrectly()
     {
         // ARRANGE — add enough to trigger normalization (snapshot has segments), then bulk-add more
         var storage = new SnapshotAppendBufferStorage<int, int>(appendBufferSize: 2);
@@ -383,7 +383,7 @@ public sealed class SnapshotAppendBufferStorageTests
         };
 
         // ACT
-        storage.AddRange(newSegments);
+        storage.TryAddRange(newSegments);
 
         // ASSERT — all four segments findable
         Assert.Equal(4, storage.Count);
@@ -394,7 +394,7 @@ public sealed class SnapshotAppendBufferStorageTests
     }
 
     [Fact]
-    public void AddRange_DoesNotTriggerUnnecessaryNormalizationOfAppendBuffer()
+    public void TryAddRange_DoesNotTriggerUnnecessaryNormalizationOfAppendBuffer()
     {
         // ARRANGE — append buffer has room (buffer size 8, count below threshold)
         var storage = new SnapshotAppendBufferStorage<int, int>(appendBufferSize: 8);
@@ -408,7 +408,7 @@ public sealed class SnapshotAppendBufferStorageTests
         };
 
         // ACT — bulk-add bypasses the append buffer entirely; existing buffer entry still readable
-        storage.AddRange(bulkSegments);
+        storage.TryAddRange(bulkSegments);
 
         // ASSERT — original buffered segment and bulk segments are all findable
         Assert.Equal(4, storage.Count);
@@ -431,14 +431,14 @@ public sealed class SnapshotAppendBufferStorageTests
         var segment = new CachedSegment<int, int>(
             range,
             new ReadOnlyMemory<int>(new int[end - start + 1]));
-        storage.Add(segment);
+        storage.TryAdd(segment);
         return segment;
     }
 
     /// <summary>
     /// Creates a <see cref="CachedSegment{TRange,TData}"/> without adding it to storage.
-    /// Use this in <c>AddRange</c> tests to build the input array before calling
-    /// <see cref="SnapshotAppendBufferStorage{TRange,TData}.AddRange"/>.
+    /// Use this in <c>TryAddRange</c> tests to build the input array before calling
+    /// <see cref="SnapshotAppendBufferStorage{TRange,TData}.TryAddRange"/>.
     /// </summary>
     private static CachedSegment<int, int> CreateSegment(int start, int end)
     {

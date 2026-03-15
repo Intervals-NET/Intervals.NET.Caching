@@ -20,21 +20,27 @@ internal interface ISegmentStorage<TRange, TData>
     IReadOnlyList<CachedSegment<TRange, TData>> FindIntersecting(Range<TRange> range);
 
     /// <summary>
-    /// Adds a new segment to the storage (Background Path only).
+    /// Attempts to add a new segment to the storage (Background Path only).
+    /// Enforces Invariant VPC.C.3: the segment is not stored if it overlaps any existing segment.
     /// </summary>
-    void Add(CachedSegment<TRange, TData> segment);
+    /// <returns>
+    /// <see langword="true"/> if the segment was stored;
+    /// <see langword="false"/> if it was skipped due to an overlap with an existing segment.
+    /// </returns>
+    bool TryAdd(CachedSegment<TRange, TData> segment);
 
     /// <summary>
-    /// Adds multiple pre-validated, pre-sorted segments to the storage in a single bulk operation
+    /// Attempts to add multiple segments to the storage in a single bulk operation
     /// (Background Path only). Reduces normalization overhead from O(count/bufferSize) normalizations
     /// to a single pass — beneficial when a multi-gap partial-hit request produces many new segments.
+    /// Enforces Invariant VPC.C.3: each segment is checked for overlap against the current storage
+    /// state (including segments inserted earlier in the same call) before being stored.
     /// </summary>
-    /// <remarks>
-    /// The caller is responsible for ensuring all segments in <paramref name="segments"/> are
-    /// non-overlapping and sorted by range start (Invariant VPC.C.3). Each segment must already
-    /// have passed the overlap pre-check against current storage contents.
-    /// </remarks>
-    void AddRange(CachedSegment<TRange, TData>[] segments);
+    /// <returns>
+    /// The segments that were actually stored. Segments that overlap an existing segment are skipped.
+    /// Returns an empty array if no segments were stored.
+    /// </returns>
+    CachedSegment<TRange, TData>[] TryAddRange(CachedSegment<TRange, TData>[] segments);
 
     /// <summary>
     /// Marks a segment as removed and decrements the live count.

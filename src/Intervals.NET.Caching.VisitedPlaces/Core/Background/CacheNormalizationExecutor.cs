@@ -139,21 +139,14 @@ internal sealed class CacheNormalizationExecutor<TRange, TData>
     }
 
     /// <summary>
-    /// Stores a single chunk via <see cref="ISegmentStorage{TRange,TData}.Add"/>.
+    /// Stores a single chunk via <see cref="ISegmentStorage{TRange,TData}.TryAdd"/>.
     /// Used when exactly one chunk was fetched (constant-span or single-gap requests).
     /// Returns a single-element list if the chunk was stored, or <see langword="null"/> if it
-    /// had no valid range or overlapped an existing segment.
+    /// had no valid range or was skipped due to an overlap with an existing segment (VPC.C.3).
     /// </summary>
     private List<CachedSegment<TRange, TData>>? StoreSingle(RangeChunk<TRange, TData> chunk)
     {
         if (!chunk.Range.HasValue)
-        {
-            return null;
-        }
-
-        // VPC.C.3: skip if an overlapping segment already exists in storage.
-        var overlapping = _storage.FindIntersecting(chunk.Range.Value);
-        if (overlapping.Count > 0)
         {
             return null;
         }
@@ -164,7 +157,12 @@ internal sealed class CacheNormalizationExecutor<TRange, TData>
             ExpiresAt = ComputeExpiresAt()
         };
 
-        _storage.Add(segment);
+        // VPC.C.3: TryAdd skips the segment if it overlaps an existing one.
+        if (!_storage.TryAdd(segment))
+        {
+            return null;
+        }
+
         _evictionEngine.InitializeSegment(segment);
         _diagnostics.BackgroundSegmentStored();
 
@@ -172,31 +170,36 @@ internal sealed class CacheNormalizationExecutor<TRange, TData>
     }
 
     /// <summary>
-    /// Validates all chunks, builds the segment array, stores them in a single bulk call via
-    /// <see cref="ISegmentStorage{TRange,TData}.AddRange"/>, then initialises metadata for each.
+    /// Builds a segment array, stores the non-overlapping subset in a single bulk call via
+    /// <see cref="ISegmentStorage{TRange,TData}.TryAddRange"/>, then initialises metadata for each.
     /// Used when there are two or more fetched chunks.
     /// Returns the list of stored segments, or <see langword="null"/> if none were stored.
     /// </summary>
     private List<CachedSegment<TRange, TData>>? StoreBulk(
         IReadOnlyList<RangeChunk<TRange, TData>> chunks)
     {
-        // ValidateChunks is a lazy enumerator — materialise to an array before calling AddRange
-        // so all overlap checks are done against the pre-bulk-add storage state (single-writer
-        // guarantee means no concurrent writes can occur between the checks and the bulk add).
-        var validated = ValidateChunks(chunks).ToArray();
+        // Build a segment for every chunk that has a valid range.
+        // TryAddRange performs the VPC.C.3 overlap check internally.
+        var candidates = BuildSegments(chunks);
 
-        if (validated.Length == 0)
+        if (candidates.Length == 0)
         {
             return null;
         }
 
-        // Bulk-add: a single normalization pass for all incoming segments.
-        _storage.AddRange(validated);
+        // Bulk-add: a single normalization pass for all stored segments.
+        // TryAddRange returns only the segments that were actually stored.
+        var stored = _storage.TryAddRange(candidates);
+
+        if (stored.Length == 0)
+        {
+            return null;
+        }
 
         // Metadata init has no dependency on storage internals —
         // it operates only on the segment objects themselves.
-        var justStored = new List<CachedSegment<TRange, TData>>(validated.Length);
-        foreach (var segment in validated)
+        var justStored = new List<CachedSegment<TRange, TData>>(stored.Length);
+        foreach (var segment in stored)
         {
             _evictionEngine.InitializeSegment(segment);
             _diagnostics.BackgroundSegmentStored();
@@ -207,15 +210,15 @@ internal sealed class CacheNormalizationExecutor<TRange, TData>
     }
 
     /// <summary>
-    /// Lazy enumerator that yields a <see cref="CachedSegment{TRange,TData}"/> for each chunk
-    /// that has a valid range and does not overlap an existing segment in storage (VPC.C.3).
-    /// Materialise with <c>.ToArray()</c> before the bulk add so all checks run against the
-    /// consistent pre-add storage state.
+    /// Builds a <see cref="CachedSegment{TRange,TData}"/> array from chunks that have a valid range.
+    /// Chunks without a valid range are skipped. No overlap check is performed here — that
+    /// responsibility belongs to the storage operations (Invariant VPC.C.3).
     /// </summary>
-    private IEnumerable<CachedSegment<TRange, TData>> ValidateChunks(
+    private CachedSegment<TRange, TData>[] BuildSegments(
         IReadOnlyList<RangeChunk<TRange, TData>> chunks)
     {
         var expiresAt = ComputeExpiresAt();
+        List<CachedSegment<TRange, TData>>? result = null;
 
         foreach (var chunk in chunks)
         {
@@ -224,18 +227,14 @@ internal sealed class CacheNormalizationExecutor<TRange, TData>
                 continue;
             }
 
-            var overlapping = _storage.FindIntersecting(chunk.Range.Value);
-            if (overlapping.Count > 0)
-            {
-                continue;
-            }
-
             var data = new ReadOnlyMemory<TData>(chunk.Data.ToArray());
-            yield return new CachedSegment<TRange, TData>(chunk.Range.Value, data)
+            (result ??= []).Add(new CachedSegment<TRange, TData>(chunk.Range.Value, data)
             {
                 ExpiresAt = expiresAt
-            };
+            });
         }
+
+        return result?.ToArray() ?? [];
     }
 
     /// <summary>
