@@ -3,20 +3,10 @@ using Intervals.NET.Domain.Abstractions;
 namespace Intervals.NET.Caching.Extensions;
 
 /// <summary>
-/// Provides domain-agnostic extension methods that work with any IRangeDomain type.
-/// These methods dispatch to the appropriate Fixed or Variable extension methods based on the runtime domain type.
+/// Domain-agnostic extension methods that dispatch to Fixed or Variable implementations at runtime,
+/// allowing the cache to work with any <see cref="IRangeDomain{TRange}"/> type.
+/// O(N) cost for variable-step domains is acceptable given data source I/O is orders of magnitude slower.
 /// </summary>
-/// <remarks>
-/// <para>
-/// While Intervals.NET separates fixed-step and variable-step extension methods into different namespaces
-/// to enforce explicit performance semantics at the API level, cache scenarios benefit from flexibility:
-/// in-memory O(N) step counting (microseconds) is negligible compared to data source I/O (milliseconds to seconds).
-/// </para>
-/// <para>
-/// These extensions enable the cache to work with any domain type, whether fixed-step or variable-step,
-/// by dispatching to the appropriate implementation at runtime.
-/// </para>
-/// </remarks>
 internal static class IntervalsNetDomainExtensions
 {
     /// <summary>
@@ -27,11 +17,6 @@ internal static class IntervalsNetDomainExtensions
     /// <param name="range">The range to measure.</param>
     /// <param name="domain">The domain defining discrete steps.</param>
     /// <returns>The number of discrete steps, or infinity if unbounded.</returns>
-    /// <remarks>
-    /// Performance: O(1) for fixed-step domains, O(N) for variable-step domains.
-    /// The O(N) cost is acceptable because it represents in-memory computation that is orders of magnitude
-    /// faster than data source I/O operations.
-    /// </remarks>
     /// <exception cref="NotSupportedException">
     /// Thrown when the domain does not implement either IFixedStepDomain or IVariableStepDomain.
     /// </exception>
@@ -60,11 +45,6 @@ internal static class IntervalsNetDomainExtensions
     /// <param name="left">Number of steps to expand on the left.</param>
     /// <param name="right">Number of steps to expand on the right.</param>
     /// <returns>The expanded range.</returns>
-    /// <remarks>
-    /// Performance: O(1) for fixed-step domains, O(N) for variable-step domains.
-    /// The O(N) cost is acceptable because it represents in-memory computation that is orders of magnitude
-    /// faster than data source I/O operations.
-    /// </remarks>
     /// <exception cref="NotSupportedException">
     /// Thrown when the domain does not implement either IFixedStepDomain or IVariableStepDomain.
     /// </exception>
@@ -94,11 +74,6 @@ internal static class IntervalsNetDomainExtensions
     /// <param name="leftRatio">Ratio to expand/shrink the left boundary (negative shrinks).</param>
     /// <param name="rightRatio">Ratio to expand/shrink the right boundary (negative shrinks).</param>
     /// <returns>The modified range.</returns>
-    /// <remarks>
-    /// Performance: O(1) for fixed-step domains, O(N) for variable-step domains.
-    /// The O(N) cost is acceptable because it represents in-memory computation that is orders of magnitude
-    /// faster than data source I/O operations.
-    /// </remarks>
     /// <exception cref="NotSupportedException">
     /// Thrown when the domain does not implement either IFixedStepDomain or IVariableStepDomain.
     /// </exception>

@@ -41,56 +41,13 @@ internal sealed class SimpleDataSource : IDataSource<int, int>
 
 /// <summary>
 /// WebAssembly compilation validator for Intervals.NET.Caching.SlidingWindow.
-/// This static class validates that the library can compile for net8.0-browser.
-/// It is NOT intended to be executed - successful compilation is the validation.
+/// Validates all internal strategy combinations (ReadMode × RebalanceQueueCapacity) and opt-in
+/// consistency modes compile for net8.0-browser. Compilation success is the validation; not intended to be executed.
 /// </summary>
-/// <remarks>
-/// <para><strong>Strategy Coverage:</strong></para>
-/// <para>
-/// The validator exercises all combinations of internal strategy-determining configurations:
-/// </para>
-/// <list type="bullet">
-/// <item><description>
-/// <strong>ReadMode</strong>: Snapshot (array-based) vs CopyOnRead (List-based)
-/// </description></item>
-/// <item><description>
-/// <strong>RebalanceQueueCapacity</strong>: null (task-based) vs bounded (channel-based)
-/// </description></item>
-/// </list>
-/// <para>
-/// This ensures all storage strategies (SnapshotReadStorage, CopyOnReadStorage) and
-/// serialization strategies (task-based, channel-based) are WebAssembly-compatible.
-/// </para>
-/// <para><strong>Opt-In Consistency Modes:</strong></para>
-/// <para>
-/// The validator also covers the <see cref="SlidingWindowCacheConsistencyExtensions"/> extension methods
-/// for hybrid and strong consistency modes, including the cancellation graceful degradation
-/// path (<c>OperationCanceledException</c> from <c>WaitForIdleAsync</c> caught, result returned):
-/// </para>
-/// <list type="bullet">
-/// <item><description>
-/// <see cref="RangeCacheConsistencyExtensions.GetDataAndWaitForIdleAsync{TRange,TData,TDomain}"/> —
-/// strong consistency (always waits for idle)
-/// </description></item>
-/// <item><description>
-/// <see cref="SlidingWindowCacheConsistencyExtensions.GetDataAndWaitOnMissAsync{TRange,TData,TDomain}"/> —
-/// hybrid consistency (waits on miss/partial hit, returns immediately on full hit)
-/// </description></item>
-/// </list>
-/// </remarks>
 public static class WasmCompilationValidator
 {
-    /// <summary>
-    /// Validates Configuration 1: SnapshotReadStorage + Task-based serialization.
-    /// Tests: Array-based storage with unbounded task-based execution queue.
-    /// </summary>
-    /// <remarks>
-    /// <para><strong>Internal Strategies:</strong></para>
-    /// <list type="bullet">
-    /// <item><description>Storage: SnapshotReadStorage (contiguous array)</description></item>
-    /// <item><description>Serialization: Task-based (unbounded queue)</description></item>
-    /// </list>
-    /// </remarks>
+    /// <summary>Validates Configuration 1: SnapshotReadStorage + Task-based serialization.</summary>
+    // Strategy: SnapshotReadStorage (array-based) + Task-based serialization (unbounded queue)
     public static async Task ValidateConfiguration1_SnapshotMode_UnboundedQueue()
     {
         var dataSource = new SimpleDataSource();
@@ -117,17 +74,8 @@ public static class WasmCompilationValidator
         _ = result.Data.Length;
     }
 
-    /// <summary>
-    /// Validates Configuration 2: CopyOnReadStorage + Task-based serialization.
-    /// Tests: List-based storage with unbounded task-based execution queue.
-    /// </summary>
-    /// <remarks>
-    /// <para><strong>Internal Strategies:</strong></para>
-    /// <list type="bullet">
-    /// <item><description>Storage: CopyOnReadStorage (growable List)</description></item>
-    /// <item><description>Serialization: Task-based (unbounded queue)</description></item>
-    /// </list>
-    /// </remarks>
+    /// <summary>Validates Configuration 2: CopyOnReadStorage + Task-based serialization.</summary>
+    // Strategy: CopyOnReadStorage (List-based) + Task-based serialization (unbounded queue)
     public static async Task ValidateConfiguration2_CopyOnReadMode_UnboundedQueue()
     {
         var dataSource = new SimpleDataSource();
@@ -154,17 +102,8 @@ public static class WasmCompilationValidator
         _ = result.Data.Length;
     }
 
-    /// <summary>
-    /// Validates Configuration 3: SnapshotReadStorage + Channel-based serialization.
-    /// Tests: Array-based storage with bounded channel-based execution queue.
-    /// </summary>
-    /// <remarks>
-    /// <para><strong>Internal Strategies:</strong></para>
-    /// <list type="bullet">
-    /// <item><description>Storage: SnapshotReadStorage (contiguous array)</description></item>
-    /// <item><description>Serialization: Channel-based (bounded queue with backpressure)</description></item>
-    /// </list>
-    /// </remarks>
+    /// <summary>Validates Configuration 3: SnapshotReadStorage + Channel-based serialization.</summary>
+    // Strategy: SnapshotReadStorage (array-based) + Channel-based serialization (bounded queue)
     public static async Task ValidateConfiguration3_SnapshotMode_BoundedQueue()
     {
         var dataSource = new SimpleDataSource();
@@ -191,17 +130,8 @@ public static class WasmCompilationValidator
         _ = result.Data.Length;
     }
 
-    /// <summary>
-    /// Validates Configuration 4: CopyOnReadStorage + Channel-based serialization.
-    /// Tests: List-based storage with bounded channel-based execution queue.
-    /// </summary>
-    /// <remarks>
-    /// <para><strong>Internal Strategies:</strong></para>
-    /// <list type="bullet">
-    /// <item><description>Storage: CopyOnReadStorage (growable List)</description></item>
-    /// <item><description>Serialization: Channel-based (bounded queue with backpressure)</description></item>
-    /// </list>
-    /// </remarks>
+    /// <summary>Validates Configuration 4: CopyOnReadStorage + Channel-based serialization.</summary>
+    // Strategy: CopyOnReadStorage (List-based) + Channel-based serialization (bounded queue)
     public static async Task ValidateConfiguration4_CopyOnReadMode_BoundedQueue()
     {
         var dataSource = new SimpleDataSource();
@@ -229,30 +159,10 @@ public static class WasmCompilationValidator
     }
 
     /// <summary>
-    /// Validates strong consistency mode: <see cref="RangeCacheConsistencyExtensions.GetDataAndWaitForIdleAsync{TRange,TData,TDomain}"/>
-    /// compiles for net8.0-browser. Exercises both the normal path (idle wait completes) and the
-    /// cancellation graceful degradation path (OperationCanceledException from WaitForIdleAsync is
-    /// caught and the already-obtained result is returned).
+    /// Validates strong consistency mode (<see cref="RangeCacheConsistencyExtensions.GetDataAndWaitForIdleAsync{TRange,TData,TDomain}"/>)
+    /// compiles for net8.0-browser, including the cancellation graceful degradation path.
     /// </summary>
-    /// <remarks>
-    /// <para><strong>Types Validated:</strong></para>
-    /// <list type="bullet">
-    /// <item><description>
-    /// <see cref="RangeCacheConsistencyExtensions.GetDataAndWaitForIdleAsync{TRange,TData,TDomain}"/> —
-    /// strong consistency extension method; composes GetDataAsync + unconditional WaitForIdleAsync
-    /// </description></item>
-    /// <item><description>
-    /// The <c>try { await WaitForIdleAsync } catch (OperationCanceledException) { }</c> pattern
-    /// inside the extension method — validates that exception handling compiles on WASM
-    /// </description></item>
-    /// </list>
-    /// <para><strong>Why One Configuration Is Sufficient:</strong></para>
-    /// <para>
-    /// The extension method introduces no new strategy axes (storage or serialization). It is a
-    /// thin wrapper over GetDataAsync + WaitForIdleAsync; the four internal strategy combinations
-    /// are already covered by Configurations 1–4.
-    /// </para>
-    /// </remarks>
+    // One configuration is sufficient: this extension introduces no new strategy axes.
     public static async Task ValidateStrongConsistencyMode_GetDataAndWaitForIdleAsync()
     {
         var dataSource = new SimpleDataSource();
@@ -289,33 +199,10 @@ public static class WasmCompilationValidator
     }
 
     /// <summary>
-    /// Validates hybrid consistency mode: <see cref="SlidingWindowCacheConsistencyExtensions.GetDataAndWaitOnMissAsync{TRange,TData,TDomain}"/>
-    /// compiles for net8.0-browser. Exercises the FullHit path (no idle wait), the FullMiss path
-    /// (conditional idle wait), and the cancellation graceful degradation path.
+    /// Validates hybrid consistency mode (<see cref="SlidingWindowCacheConsistencyExtensions.GetDataAndWaitOnMissAsync{TRange,TData,TDomain}"/>)
+    /// compiles for net8.0-browser, including FullHit, FullMiss, and cancellation graceful degradation paths.
     /// </summary>
-    /// <remarks>
-    /// <para><strong>Types Validated:</strong></para>
-    /// <list type="bullet">
-    /// <item><description>
-    /// <see cref="SlidingWindowCacheConsistencyExtensions.GetDataAndWaitOnMissAsync{TRange,TData,TDomain}"/> —
-    /// hybrid consistency extension method; composes GetDataAsync + conditional WaitForIdleAsync
-    /// gated on <see cref="CacheInteraction"/>
-    /// </description></item>
-    /// <item><description>
-    /// <see cref="CacheInteraction"/> enum — read from <see cref="RangeResult{TRange,TData}.CacheInteraction"/>
-    /// on the returned result
-    /// </description></item>
-    /// <item><description>
-    /// The <c>try { await WaitForIdleAsync } catch (OperationCanceledException) { }</c> pattern
-    /// inside the extension method — validates that exception handling compiles on WASM
-    /// </description></item>
-    /// </list>
-    /// <para><strong>Why One Configuration Is Sufficient:</strong></para>
-    /// <para>
-    /// The extension method introduces no new strategy axes. The four internal strategy
-    /// combinations are already covered by Configurations 1–4.
-    /// </para>
-    /// </remarks>
+    // One configuration is sufficient: this extension introduces no new strategy axes.
     public static async Task ValidateHybridConsistencyMode_GetDataAndWaitOnMissAsync()
     {
         var dataSource = new SimpleDataSource();
@@ -357,37 +244,11 @@ public static class WasmCompilationValidator
     }
 
     /// <summary>
-    /// Validates layered cache: <see cref="LayeredRangeCacheBuilder{TRange,TData,TDomain}"/>,
-    /// <see cref="RangeCacheDataSourceAdapter{TRange,TData,TDomain}"/>, and
-    /// <see cref="LayeredRangeCache{TRange,TData,TDomain}"/> compile for net8.0-browser.
-    /// Uses the recommended configuration: CopyOnRead inner layer (large buffers) +
-    /// Snapshot outer layer (small buffers).
+    /// Validates layered cache (<see cref="LayeredRangeCacheBuilder{TRange,TData,TDomain}"/>,
+    /// <see cref="RangeCacheDataSourceAdapter{TRange,TData,TDomain}"/>, <see cref="LayeredRangeCache{TRange,TData,TDomain}"/>)
+    /// compiles for net8.0-browser. Uses recommended config: CopyOnRead inner + Snapshot outer.
     /// </summary>
-    /// <remarks>
-    /// <para><strong>Types Validated:</strong></para>
-    /// <list type="bullet">
-    /// <item><description>
-    /// <see cref="LayeredRangeCacheBuilder{TRange,TData,TDomain}"/> — fluent builder
-    /// wiring layers together via <see cref="RangeCacheDataSourceAdapter{TRange,TData,TDomain}"/>
-    /// </description></item>
-    /// <item><description>
-    /// <see cref="RangeCacheDataSourceAdapter{TRange,TData,TDomain}"/> — adapter bridging
-    /// <see cref="IRangeCache{TRange,TData,TDomain}"/> to <see cref="IDataSource{TRange,TData}"/>
-    /// </description></item>
-    /// <item><description>
-    /// <see cref="LayeredRangeCache{TRange,TData,TDomain}"/> — wrapper that delegates
-    /// <see cref="IRangeCache{TRange,TData,TDomain}.GetDataAsync"/> to the outermost layer and
-    /// awaits all layers sequentially on <see cref="IRangeCache{TRange,TData,TDomain}.WaitForIdleAsync"/>
-    /// </description></item>
-    /// </list>
-    /// <para><strong>Why One Method Is Sufficient:</strong></para>
-    /// <para>
-    /// The layered cache types introduce no new strategy axes: they delegate to underlying
-    /// <see cref="SlidingWindowCache{TRange,TData,TDomain}"/> instances whose internal strategies
-    /// are already covered by Configurations 1–4. A single method proving all three new
-    /// public types compile on WASM is therefore sufficient.
-    /// </para>
-    /// </remarks>
+    // One method sufficient: layered types introduce no new strategy axes beyond Configurations 1–4.
     public static async Task ValidateLayeredCache_TwoLayer_RecommendedConfig()
     {
         var domain = new IntegerFixedStepDomain();

@@ -14,44 +14,19 @@ public static class SlidingWindowCacheConsistencyExtensions
     /// partial cache hit — waits for the cache to reach an idle state before returning.
     /// This provides <em>hybrid consistency</em> semantics.
     /// </summary>
-    /// <typeparam name="TRange">
-    /// The type representing the range boundaries. Must implement <see cref="IComparable{T}"/>.
-    /// </typeparam>
-    /// <typeparam name="TData">
-    /// The type of data being cached.
-    /// </typeparam>
-    /// <typeparam name="TDomain">
-    /// The type representing the domain of the ranges. Must implement <see cref="IRangeDomain{TRange}"/>.
-    /// </typeparam>
-    /// <param name="cache">
-    /// The cache instance to retrieve data from.
-    /// </param>
-    /// <param name="requestedRange">
-    /// The range for which to retrieve data.
-    /// </param>
+    /// <typeparam name="TRange">The type representing the range boundaries. Must implement <see cref="IComparable{T}"/>.</typeparam>
+    /// <typeparam name="TData">The type of data being cached.</typeparam>
+    /// <typeparam name="TDomain">The type representing the domain of the ranges. Must implement <see cref="IRangeDomain{TRange}"/>.</typeparam>
+    /// <param name="cache">The cache instance to retrieve data from.</param>
+    /// <param name="requestedRange">The range for which to retrieve data.</param>
     /// <param name="cancellationToken">
-    /// A cancellation token to cancel the operation. Passed to both
-    /// <see cref="ISlidingWindowCache{TRange, TData, TDomain}.GetDataAsync"/> and, when applicable,
-    /// <see cref="ISlidingWindowCache{TRange, TData, TDomain}.WaitForIdleAsync"/>.
-    /// Cancelling the token during the idle wait stops the <em>wait</em> and causes the method
-    /// to return the already-obtained <see cref="RangeResult{TRange,TData}"/> gracefully
-    /// (eventual consistency degradation). The background rebalance continues to completion.
+    /// A cancellation token passed to both <c>GetDataAsync</c> and, when applicable, <c>WaitForIdleAsync</c>.
+    /// Cancelling during idle wait returns the already-obtained result gracefully (eventual consistency degradation).
     /// </param>
     /// <returns>
-    /// A task that represents the asynchronous operation. The task result contains a
-    /// <see cref="RangeResult{TRange, TData}"/> with the actual available range, data, and
-    /// <see cref="RangeResult{TRange,TData}.CacheInteraction"/>, identical to what
-    /// <see cref="ISlidingWindowCache{TRange, TData, TDomain}.GetDataAsync"/> returns directly.
-    /// The task completes immediately on a full cache hit; on a partial hit or full miss the
-    /// task completes only after the cache has reached an idle state (or immediately if the
-    /// idle wait is cancelled).
+    /// A task completing immediately on a full cache hit; on a partial hit or full miss, completing only after
+    /// the cache reaches idle (or immediately if the idle wait is cancelled).
     /// </returns>
-    /// <remarks>
-    /// On a <see cref="CacheInteraction.FullHit"/>, returns immediately. On a
-    /// <see cref="CacheInteraction.PartialHit"/> or <see cref="CacheInteraction.FullMiss"/>,
-    /// waits for idle so the cache is warm around the new position before returning.
-    /// If the idle wait is cancelled, the already-obtained result is returned gracefully.
-    /// </remarks>
     public static async ValueTask<RangeResult<TRange, TData>> GetDataAndWaitOnMissAsync<TRange, TData, TDomain>(
         this ISlidingWindowCache<TRange, TData, TDomain> cache,
         Range<TRange> requestedRange,

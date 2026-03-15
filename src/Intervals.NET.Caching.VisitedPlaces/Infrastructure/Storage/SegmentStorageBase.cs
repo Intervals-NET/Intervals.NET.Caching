@@ -3,31 +3,9 @@ using Intervals.NET.Caching.VisitedPlaces.Core;
 namespace Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 
 /// <summary>
-/// Abstract base class for segment storage implementations.
-/// Owns all invariant enforcement logic; concrete strategies implement only the
-/// data-structure-specific primitives.
-/// See docs/visited-places/ for design details.
+/// Abstract base class for segment storage; owns all invariant enforcement (VPC.C.3, VPC.T.1).
+/// See docs/visited-places/storage-strategies.md for design details.
 /// </summary>
-/// <remarks>
-/// <para>
-/// Invariants enforced here (not in concrete strategies):
-/// <list type="bullet">
-///   <item>VPC.C.3 — no two segments share a domain point; enforced in <see cref="TryAdd"/> and <see cref="TryAddRange"/></item>
-///   <item>VPC.T.1 — idempotent removal; enforced in <see cref="TryRemove"/></item>
-///   <item>Retry/filter contract for <see cref="TryGetRandomSegment"/> — dead segments are never returned</item>
-///   <item>Normalization threshold check in <see cref="TryNormalize"/> — delegates to <see cref="ShouldNormalize"/></item>
-/// </list>
-/// </para>
-/// <para>
-/// Responsibilities left to concrete strategies (via abstract primitives):
-/// <list type="bullet">
-///   <item><see cref="FindIntersecting"/> — scan logic is data-structure-specific; inline filtering is tightly coupled to the traversal</item>
-///   <item><see cref="AddCore"/> / <see cref="AddRangeCore"/> — insert into the underlying data structure</item>
-///   <item><see cref="SampleRandomCore"/> — pick one element from the underlying data structure (may return removed/expired; caller filters)</item>
-///   <item><see cref="ShouldNormalize"/> / <see cref="NormalizeCore"/> / <see cref="ResetNormalizationCounter"/> — threshold tracking and structural rebuild</item>
-/// </list>
-/// </para>
-/// </remarks>
 internal abstract class SegmentStorageBase<TRange, TData> : ISegmentStorage<TRange, TData>
     where TRange : IComparable<TRange>
 {
@@ -216,16 +194,9 @@ internal abstract class SegmentStorageBase<TRange, TData> : ISegmentStorage<TRan
     /// Must increment any internal add counter by the number of segments inserted.
     /// </summary>
     /// <remarks>
-    /// ⚠ Contract: this method MUST NOT perform normalization or TTL discovery.
-    /// <see cref="TryAddRange"/> calls this method and then returns to the executor, which
-    /// immediately calls <see cref="TryNormalize"/>. That is the only place where normalization
-    /// runs and where TTL-expired segments are surfaced to the caller. Any normalization
-    /// triggered inside <see cref="AddRangeCore"/> would:
-    /// <list type="bullet">
-    ///   <item>Silently drop TTL-expired segments (the caller has no way to receive them).</item>
-    ///   <item>Reset the add counter, causing the executor's <see cref="TryNormalize"/> call to
-    ///   always skip, permanently breaking the normalization cadence.</item>
-    /// </list>
+    /// Must NOT call normalization — <see cref="TryAddRange"/> returns to the executor which calls
+    /// <see cref="TryNormalize"/> immediately after. Normalization here would silently drop TTL-expired
+    /// segments and permanently break the normalization cadence.
     /// </remarks>
     protected abstract void AddRangeCore(CachedSegment<TRange, TData>[] segments);
 

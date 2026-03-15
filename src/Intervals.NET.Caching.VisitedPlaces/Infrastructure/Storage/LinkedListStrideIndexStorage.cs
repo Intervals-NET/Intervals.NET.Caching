@@ -184,28 +184,10 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
 
     /// <inheritdoc/>
     /// <remarks>
-    /// <para>
     /// Inserts each validated sorted segment into the linked list and increments
-    /// <c>_addsSinceLastNormalization</c>. The stride index is NOT rebuilt here.
+    /// <c>_addsSinceLastNormalization</c>. Does NOT call <see cref="NormalizeStrideIndex"/> —
+    /// normalization runs in the executor's subsequent <see cref="TryNormalize"/> call.
     /// VPC.C.3 overlap check is handled by <see cref="SegmentStorageBase{TRange,TData}.TryAddRange"/>.
-    /// </para>
-    /// <para>
-    /// ⚠ DO NOT call <see cref="NormalizeStrideIndex"/> inside this method.
-    /// <see cref="AddRangeCore"/> is called from <see cref="SegmentStorageBase{TRange,TData}.TryAddRange"/>,
-    /// which returns to <c>CacheNormalizationExecutor.StoreBulk</c>. Immediately after,
-    /// the executor calls <see cref="TryNormalize"/> — the correct place for normalization
-    /// and TTL discovery. Calling <see cref="NormalizeStrideIndex"/> here would:
-    /// <list type="bullet">
-    ///   <item>Discard TTL-expired segments (the <c>out</c> expired list is inaccessible to the
-    ///   executor, so <c>OnSegmentRemoved</c> / <c>TtlSegmentExpired</c> diagnostics never fire).</item>
-    ///   <item>Reset <c>_addsSinceLastNormalization</c> to zero, causing the executor's subsequent
-    ///   <see cref="TryNormalize"/> call to always skip (threshold never reached), permanently
-    ///   preempting the normal normalization cadence.</item>
-    /// </list>
-    /// The stride index will be slightly stale until <see cref="TryNormalize"/> runs, but all
-    /// newly-inserted segments are immediately live in <c>_list</c> and will be found by
-    /// <see cref="FindIntersecting"/> regardless of index staleness.
-    /// </para>
     /// </remarks>
     protected override void AddRangeCore(CachedSegment<TRange, TData>[] segments)
     {
@@ -337,19 +319,10 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
     /// Inserts a segment into the linked list in sorted order by range start.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// <b>Synchronization rule</b> (see also <c>_listSyncRoot</c> field comment):
-    /// <c>_listSyncRoot</c> is held only for the structural <c>_list.Add*</c> call — the moment
-    /// that rewrites <c>Next</c>/<c>Previous</c> pointers. <c>FindIntersecting</c> on the User
-    /// Path holds <c>_listSyncRoot</c> for its entire walk, so those pointer writes must be
-    /// atomic with respect to any concurrent read.
-    /// </para>
-    /// <para>
-    /// The position-finding walk (reading <c>node.Next</c> before the lock) does NOT require
-    /// synchronization: <c>InsertSorted</c> runs exclusively on the Background Path. No
-    /// concurrent <c>InsertSorted</c> or <c>AddRangeCore</c> call exists, so no structural
-    /// mutation can race with this walk.
-    /// </para>
+    /// Acquires <c>_listSyncRoot</c> only for the structural <c>_list.Add*</c> call (pointer rewrite).
+    /// The position-finding walk runs outside the lock — safe because <c>InsertSorted</c> is
+    /// Background-Path-only (no concurrent structural mutation).
+    /// See <c>_listSyncRoot</c> field comment for the full synchronization rule.
     /// </remarks>
     private void InsertSorted(CachedSegment<TRange, TData> segment)
     {

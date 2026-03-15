@@ -10,39 +10,25 @@ namespace Intervals.NET.Caching.VisitedPlaces.Public.Extensions;
 /// <summary>
 /// Extension methods on <see cref="LayeredRangeCacheBuilder{TRange,TData,TDomain}"/> that add
 /// a <see cref="VisitedPlacesCache{TRange,TData,TDomain}"/> layer to the cache stack.
+/// See docs/visited-places/components/public-api.md for usage.
 /// </summary>
 public static class VisitedPlacesLayerExtensions
 {
     /// <summary>
     /// Adds a <see cref="VisitedPlacesCache{TRange,TData,TDomain}"/> layer configured with
-    /// a pre-built <see cref="VisitedPlacesCacheOptions{TRange,TData}"/> instance.
+    /// pre-built policies, selector, and optional options.
     /// </summary>
-    /// <typeparam name="TRange">The type representing range boundaries. Must implement <see cref="IComparable{T}"/>.</typeparam>
+    /// <typeparam name="TRange">The range boundary type.</typeparam>
     /// <typeparam name="TData">The type of data being cached.</typeparam>
-    /// <typeparam name="TDomain">The range domain type. Must implement <see cref="IRangeDomain{TRange}"/>.</typeparam>
+    /// <typeparam name="TDomain">The range domain type.</typeparam>
     /// <param name="builder">The layered cache builder to add the layer to.</param>
-    /// <param name="policies">
-    /// One or more eviction policies. Eviction is triggered when ANY produces an exceeded pressure (OR semantics).
-    /// Must be non-null and non-empty.
-    /// </param>
-    /// <param name="selector">
-    /// The eviction selector responsible for determining candidate ordering for eviction.
-    /// Must be non-null.
-    /// </param>
-    /// <param name="options">
-    /// The configuration options for this layer's VisitedPlacesCache.
-    /// When <c>null</c>, default options are used.
-    /// </param>
-    /// <param name="diagnostics">
-    /// Optional diagnostics implementation. When <c>null</c>, <see cref="NoOpDiagnostics.Instance"/> is used.
-    /// </param>
+    /// <param name="policies">One or more eviction policies (OR semantics). Must be non-null and non-empty.</param>
+    /// <param name="selector">The eviction selector. Must be non-null.</param>
+    /// <param name="options">Optional pre-built options. When <c>null</c>, default options are used.</param>
+    /// <param name="diagnostics">Optional diagnostics. When <c>null</c>, <see cref="NoOpDiagnostics.Instance"/> is used.</param>
     /// <returns>The same builder instance, for fluent chaining.</returns>
-    /// <exception cref="ArgumentNullException">
-    /// Thrown when <paramref name="policies"/> or <paramref name="selector"/> is <c>null</c>.
-    /// </exception>
-    /// <exception cref="ArgumentException">
-    /// Thrown when <paramref name="policies"/> is empty.
-    /// </exception>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="policies"/> or <paramref name="selector"/> is <c>null</c>.</exception>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="policies"/> is empty.</exception>
     public static LayeredRangeCacheBuilder<TRange, TData, TDomain> AddVisitedPlacesLayer<TRange, TData, TDomain>(
         this LayeredRangeCacheBuilder<TRange, TData, TDomain> builder,
         IReadOnlyList<IEvictionPolicy<TRange, TData>> policies,
@@ -71,33 +57,17 @@ public static class VisitedPlacesLayerExtensions
     }
 
     /// <summary>
-    /// Adds a <see cref="VisitedPlacesCache{TRange,TData,TDomain}"/> layer configured inline
-    /// using a fluent <see cref="VisitedPlacesCacheOptionsBuilder{TRange,TData}"/>.
+    /// Adds a <see cref="VisitedPlacesCache{TRange,TData,TDomain}"/> layer configured with
+    /// pre-built policies, selector, and inline options via <see cref="VisitedPlacesCacheOptionsBuilder{TRange,TData}"/>.
     /// </summary>
-    /// <typeparam name="TRange">The type representing range boundaries. Must implement <see cref="IComparable{T}"/>.</typeparam>
-    /// <typeparam name="TData">The type of data being cached.</typeparam>
-    /// <typeparam name="TDomain">The range domain type. Must implement <see cref="IRangeDomain{TRange}"/>.</typeparam>
     /// <param name="builder">The layered cache builder to add the layer to.</param>
-    /// <param name="policies">
-    /// One or more eviction policies. Must be non-null and non-empty.
-    /// </param>
-    /// <param name="selector">
-    /// The eviction selector. Must be non-null.
-    /// </param>
-    /// <param name="configure">
-    /// A delegate that receives a <see cref="VisitedPlacesCacheOptionsBuilder{TRange,TData}"/> and applies
-    /// the desired settings for this layer. When <c>null</c>, default options are used.
-    /// </param>
-    /// <param name="diagnostics">
-    /// Optional diagnostics implementation. When <c>null</c>, <see cref="NoOpDiagnostics.Instance"/> is used.
-    /// </param>
+    /// <param name="policies">One or more eviction policies (OR semantics). Must be non-null and non-empty.</param>
+    /// <param name="selector">The eviction selector. Must be non-null.</param>
+    /// <param name="configure">Inline options delegate. When <c>null</c>, default options are used.</param>
+    /// <param name="diagnostics">Optional diagnostics. When <c>null</c>, <see cref="NoOpDiagnostics.Instance"/> is used.</param>
     /// <returns>The same builder instance, for fluent chaining.</returns>
-    /// <exception cref="ArgumentNullException">
-    /// Thrown when <paramref name="policies"/> or <paramref name="selector"/> is <c>null</c>.
-    /// </exception>
-    /// <exception cref="ArgumentException">
-    /// Thrown when <paramref name="policies"/> is empty.
-    /// </exception>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="policies"/> or <paramref name="selector"/> is <c>null</c>.</exception>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="policies"/> is empty.</exception>
     public static LayeredRangeCacheBuilder<TRange, TData, TDomain> AddVisitedPlacesLayer<TRange, TData, TDomain>(
         this LayeredRangeCacheBuilder<TRange, TData, TDomain> builder,
         IReadOnlyList<IEvictionPolicy<TRange, TData>> policies,
@@ -132,31 +102,16 @@ public static class VisitedPlacesLayerExtensions
     }
 
     /// <summary>
-    /// Adds a <see cref="VisitedPlacesCache{TRange,TData,TDomain}"/> layer configured inline
-    /// using a fluent <see cref="EvictionConfigBuilder{TRange,TData}"/> for eviction and
-    /// optional pre-built options.
+    /// Adds a <see cref="VisitedPlacesCache{TRange,TData,TDomain}"/> layer with inline eviction
+    /// via <see cref="EvictionConfigBuilder{TRange,TData}"/> and optional pre-built options.
     /// </summary>
-    /// <typeparam name="TRange">The type representing range boundaries. Must implement <see cref="IComparable{T}"/>.</typeparam>
-    /// <typeparam name="TData">The type of data being cached.</typeparam>
-    /// <typeparam name="TDomain">The range domain type. Must implement <see cref="IRangeDomain{TRange}"/>.</typeparam>
     /// <param name="builder">The layered cache builder to add the layer to.</param>
-    /// <param name="configureEviction">
-    /// A delegate that receives an <see cref="EvictionConfigBuilder{TRange,TData}"/> and applies the desired
-    /// eviction policies and selector. Must add at least one policy and set a selector.
-    /// </param>
-    /// <param name="options">
-    /// Optional pre-built options for this layer. When <c>null</c>, default options are used.
-    /// </param>
-    /// <param name="diagnostics">
-    /// Optional diagnostics implementation. When <c>null</c>, <see cref="NoOpDiagnostics.Instance"/> is used.
-    /// </param>
+    /// <param name="configureEviction">Inline eviction delegate. Must add at least one policy and set a selector.</param>
+    /// <param name="options">Optional pre-built options. When <c>null</c>, default options are used.</param>
+    /// <param name="diagnostics">Optional diagnostics. When <c>null</c>, <see cref="NoOpDiagnostics.Instance"/> is used.</param>
     /// <returns>The same builder instance, for fluent chaining.</returns>
-    /// <exception cref="ArgumentNullException">
-    /// Thrown when <paramref name="configureEviction"/> is <c>null</c>.
-    /// </exception>
-    /// <exception cref="InvalidOperationException">
-    /// Thrown when the delegate does not add at least one policy or does not set a selector.
-    /// </exception>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="configureEviction"/> is <c>null</c>.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when the eviction delegate does not add at least one policy or does not set a selector.</exception>
     public static LayeredRangeCacheBuilder<TRange, TData, TDomain> AddVisitedPlacesLayer<TRange, TData, TDomain>(
         this LayeredRangeCacheBuilder<TRange, TData, TDomain> builder,
         Action<EvictionConfigBuilder<TRange, TData>> configureEviction,
@@ -180,32 +135,16 @@ public static class VisitedPlacesLayerExtensions
     }
 
     /// <summary>
-    /// Adds a <see cref="VisitedPlacesCache{TRange,TData,TDomain}"/> layer configured inline
-    /// using a fluent <see cref="EvictionConfigBuilder{TRange,TData}"/> for eviction and a
-    /// fluent <see cref="VisitedPlacesCacheOptionsBuilder{TRange,TData}"/> for options.
+    /// Adds a <see cref="VisitedPlacesCache{TRange,TData,TDomain}"/> layer with inline eviction
+    /// via <see cref="EvictionConfigBuilder{TRange,TData}"/> and inline options via <see cref="VisitedPlacesCacheOptionsBuilder{TRange,TData}"/>.
     /// </summary>
-    /// <typeparam name="TRange">The type representing range boundaries. Must implement <see cref="IComparable{T}"/>.</typeparam>
-    /// <typeparam name="TData">The type of data being cached.</typeparam>
-    /// <typeparam name="TDomain">The range domain type. Must implement <see cref="IRangeDomain{TRange}"/>.</typeparam>
     /// <param name="builder">The layered cache builder to add the layer to.</param>
-    /// <param name="configureEviction">
-    /// A delegate that receives an <see cref="EvictionConfigBuilder{TRange,TData}"/> and applies the desired
-    /// eviction policies and selector. Must add at least one policy and set a selector.
-    /// </param>
-    /// <param name="configure">
-    /// A delegate that receives a <see cref="VisitedPlacesCacheOptionsBuilder{TRange,TData}"/> and applies
-    /// the desired settings for this layer.
-    /// </param>
-    /// <param name="diagnostics">
-    /// Optional diagnostics implementation. When <c>null</c>, <see cref="NoOpDiagnostics.Instance"/> is used.
-    /// </param>
+    /// <param name="configureEviction">Inline eviction delegate. Must add at least one policy and set a selector.</param>
+    /// <param name="configure">Inline options delegate.</param>
+    /// <param name="diagnostics">Optional diagnostics. When <c>null</c>, <see cref="NoOpDiagnostics.Instance"/> is used.</param>
     /// <returns>The same builder instance, for fluent chaining.</returns>
-    /// <exception cref="ArgumentNullException">
-    /// Thrown when <paramref name="configureEviction"/> or <paramref name="configure"/> is <c>null</c>.
-    /// </exception>
-    /// <exception cref="InvalidOperationException">
-    /// Thrown when the eviction delegate does not add at least one policy or does not set a selector.
-    /// </exception>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="configureEviction"/> or <paramref name="configure"/> is <c>null</c>.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when the eviction delegate does not add at least one policy or does not set a selector.</exception>
     public static LayeredRangeCacheBuilder<TRange, TData, TDomain> AddVisitedPlacesLayer<TRange, TData, TDomain>(
         this LayeredRangeCacheBuilder<TRange, TData, TDomain> builder,
         Action<EvictionConfigBuilder<TRange, TData>> configureEviction,

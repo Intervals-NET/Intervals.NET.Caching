@@ -7,13 +7,9 @@ namespace Intervals.NET.Caching.Layered;
 /// where each layer is any <see cref="IRangeCache{TRange,TData,TDomain}"/> implementation
 /// backed by the layer below it via a <see cref="RangeCacheDataSourceAdapter{TRange,TData,TDomain}"/>.
 /// </summary>
-/// <typeparam name="TRange">
-/// The type representing range boundaries. Must implement <see cref="IComparable{T}"/>.
-/// </typeparam>
+/// <typeparam name="TRange">The type representing range boundaries. Must implement <see cref="IComparable{T}"/>.</typeparam>
 /// <typeparam name="TData">The type of data being cached.</typeparam>
-/// <typeparam name="TDomain">
-/// The type representing the domain of the ranges. Must implement <see cref="IRangeDomain{TRange}"/>.
-/// </typeparam>
+/// <typeparam name="TDomain">The type representing the domain of the ranges. Must implement <see cref="IRangeDomain{TRange}"/>.</typeparam>
 public sealed class LayeredRangeCacheBuilder<TRange, TData, TDomain>
     where TRange : IComparable<TRange>
     where TDomain : IRangeDomain<TRange>
@@ -23,16 +19,10 @@ public sealed class LayeredRangeCacheBuilder<TRange, TData, TDomain>
     private readonly List<Func<IDataSource<TRange, TData>, IRangeCache<TRange, TData, TDomain>>> _factories = new();
     private bool _built;
 
-    /// <summary>
-    /// Initializes a new <see cref="LayeredRangeCacheBuilder{TRange,TData,TDomain}"/>.
-    /// </summary>
-    /// <param name="rootDataSource">
-    /// The real (bottom-most) data source from which raw data is fetched by the deepest layer.
-    /// </param>
+    /// <summary>Initializes a new <see cref="LayeredRangeCacheBuilder{TRange,TData,TDomain}"/>.</summary>
+    /// <param name="rootDataSource">The real (bottom-most) data source fetched by the deepest layer.</param>
     /// <param name="domain">The range domain shared by all layers.</param>
-    /// <exception cref="ArgumentNullException">
-    /// Thrown when <paramref name="rootDataSource"/> or <paramref name="domain"/> is null.
-    /// </exception>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="rootDataSource"/> or <paramref name="domain"/> is null.</exception>
     public LayeredRangeCacheBuilder(IDataSource<TRange, TData> rootDataSource, TDomain domain)
     {
         _rootDataSource = rootDataSource ?? throw new ArgumentNullException(nameof(rootDataSource));
@@ -47,12 +37,7 @@ public sealed class LayeredRangeCacheBuilder<TRange, TData, TDomain>
     /// <summary>
     /// Adds a cache layer on top of all previously added layers using a factory delegate.
     /// </summary>
-    /// <param name="factory">
-    /// A factory that receives the <see cref="IDataSource{TRange,TData}"/> for this layer
-    /// (either the root data source for the first layer, or a
-    /// <see cref="RangeCacheDataSourceAdapter{TRange,TData,TDomain}"/> wrapping the previous layer)
-    /// and returns a fully configured <see cref="IRangeCache{TRange,TData,TDomain}"/> instance.
-    /// </param>
+    /// <param name="factory">A factory that receives the <see cref="IDataSource{TRange,TData}"/> for this layer and returns a configured <see cref="IRangeCache{TRange,TData,TDomain}"/>.</param>
     /// <returns>This builder instance, for fluent chaining.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="factory"/> is null.</exception>
     public LayeredRangeCacheBuilder<TRange, TData, TDomain> AddLayer(
@@ -63,16 +48,10 @@ public sealed class LayeredRangeCacheBuilder<TRange, TData, TDomain>
     }
 
     /// <summary>
-    /// Builds the layered cache stack and returns an <see cref="IRangeCache{TRange,TData,TDomain}"/>
-    /// that owns all created layers.
-    /// If a factory throws during construction, all previously created layers are disposed
-    /// before the exception propagates.
+    /// Builds the layered cache stack and returns the outermost <see cref="IRangeCache{TRange,TData,TDomain}"/>.
+    /// If a factory throws during construction, all previously created layers are disposed before propagating.
     /// </summary>
-    /// <returns>
-    /// A <see cref="ValueTask{TResult}"/> that completes with a
-    /// <see cref="LayeredRangeCache{TRange,TData,TDomain}"/> whose
-    /// <see cref="IRangeCache{TRange,TData,TDomain}.GetDataAsync"/> delegates to the outermost layer.
-    /// </returns>
+    /// <returns>A <see cref="ValueTask{TResult}"/> completing with a <see cref="LayeredRangeCache{TRange,TData,TDomain}"/>.</returns>
     /// <exception cref="InvalidOperationException">
     /// Thrown when no layers have been added via <see cref="AddLayer"/>,
     /// or when <see cref="BuildAsync"/> has already been called on this builder instance.

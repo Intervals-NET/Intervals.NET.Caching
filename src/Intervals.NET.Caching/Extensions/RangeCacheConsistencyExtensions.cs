@@ -14,21 +14,13 @@ public static class RangeCacheConsistencyExtensions
     /// an idle state before returning, providing strong consistency semantics.
     /// Degrades gracefully on cancellation during idle wait by returning the already-obtained result.
     /// </summary>
-    /// <typeparam name="TRange">
-    /// The type representing range boundaries. Must implement <see cref="IComparable{T}"/>.
-    /// </typeparam>
+    /// <typeparam name="TRange">The type representing range boundaries. Must implement <see cref="IComparable{T}"/>.</typeparam>
     /// <typeparam name="TData">The type of data being cached.</typeparam>
-    /// <typeparam name="TDomain">
-    /// The type representing the domain of the ranges. Must implement <see cref="IRangeDomain{TRange}"/>.
-    /// </typeparam>
+    /// <typeparam name="TDomain">The type representing the domain of the ranges. Must implement <see cref="IRangeDomain{TRange}"/>.</typeparam>
     /// <param name="cache">The cache instance to retrieve data from.</param>
     /// <param name="requestedRange">The range for which to retrieve data.</param>
-    /// <param name="cancellationToken">
-    /// A cancellation token passed to both <c>GetDataAsync</c> and <c>WaitForIdleAsync</c>.
-    /// </param>
-    /// <returns>
-    /// A task that completes only after the cache has reached an idle state.
-    /// </returns>
+    /// <param name="cancellationToken">A cancellation token passed to both <c>GetDataAsync</c> and <c>WaitForIdleAsync</c>.</param>
+    /// <returns>A task that completes only after the cache has reached an idle state.</returns>
     public static async ValueTask<RangeResult<TRange, TData>> GetDataAndWaitForIdleAsync<TRange, TData, TDomain>(
         this IRangeCache<TRange, TData, TDomain> cache,
         Range<TRange> requestedRange,

@@ -40,9 +40,6 @@ public static class SlidingWindowCacheBuilder
     /// Creates a <see cref="LayeredRangeCacheBuilder{TRange,TData,TDomain}"/> for building a
     /// multi-layer cache stack.
     /// </summary>
-    /// <typeparam name="TRange">The type representing range boundaries. Must implement <see cref="IComparable{T}"/>.</typeparam>
-    /// <typeparam name="TData">The type of data being cached.</typeparam>
-    /// <typeparam name="TDomain">The range domain type. Must implement <see cref="IRangeDomain{TRange}"/>.</typeparam>
     /// <param name="dataSource">The real (bottom-most) data source from which raw data is fetched.</param>
     /// <param name="domain">The range domain shared by all layers.</param>
     /// <returns>A new <see cref="LayeredRangeCacheBuilder{TRange,TData,TDomain}"/> instance.</returns>
@@ -113,9 +110,7 @@ public sealed class SlidingWindowCacheBuilder<TRange, TData, TDomain>
     /// <summary>
     /// Configures the cache options inline using a fluent <see cref="SlidingWindowCacheOptionsBuilder"/>.
     /// </summary>
-    /// <param name="configure">
-    /// A delegate that receives a <see cref="SlidingWindowCacheOptionsBuilder"/> and applies the desired settings.
-    /// </param>
+    /// <param name="configure">A delegate that applies the desired settings to the options builder.</param>
     /// <returns>This builder instance, for fluent chaining.</returns>
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="configure"/> is <c>null</c>.

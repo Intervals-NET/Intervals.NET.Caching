@@ -52,6 +52,7 @@ Standard C# conventions apply. Below are project-specific rules only:
 - Async methods always end with `Async`. Use `ValueTask<T>` for hot paths if not async possible, `Task` for infrequent operations
 - Prefer `record` types and `init` properties for configuration/DTOs. Use `sealed` for non-inheritable classes
 - XML documentation required on all public APIs. Internal components should reference invariant IDs (e.g., `SWC.A.1`, `VPC.B.1`)
+- **XML doc style**: see "XML Documentation Policy" section below for the mandatory slim format
 - **Error handling**: User Path exceptions propagate to caller. Background Path exceptions are swallowed and reported via `ICacheDiagnostics` — background exceptions must NEVER crash the application
 - **Tests**: xUnit with `[Fact]`/`[Theory]`. Naming: `MethodName_Scenario_ExpectedBehavior`. Arrange-Act-Assert pattern with `#region` grouping. Use `Record.Exception`/`Record.ExceptionAsync` to separate ACT from ASSERT
 - **`WaitForIdleAsync` semantics**: completes when the system **was idle at some point**, not "is idle now". New activity may start immediately after completion. Guarantees degrade under parallel access (see invariant S.H.3)
@@ -145,3 +146,21 @@ Before modifying a subsystem, read the relevant docs. After completing changes, 
 | New terms or semantic changes | `docs/shared/glossary.md` or package-specific glossary | same |
 
 **Canonical terminology**: see `docs/shared/glossary.md`, `docs/sliding-window/glossary.md`, `docs/visited-places/glossary.md`. Each includes a "Common Misconceptions" section.
+
+## XML Documentation Policy
+
+XML docs are **slim by design**. Architecture, rationale, examples, and concurrency rules belong in `docs/` — never in XML. Model files: `RebalanceDecisionEngine.cs`, `IWorkScheduler.cs`, `EvictionEngine.cs`, `CacheNormalizationRequest.cs`.
+
+| Element | Rule |
+|---------|------|
+| `<summary>` | 1-2 sentences. Classes/interfaces end with `See docs/{path} for design details.` Use single-line form when it fits. |
+| `<param>` | Keep where meaning is non-obvious from type + name. Omit when self-evident. |
+| `<returns>` | Keep only for non-obvious semantics. Omit for `void` and self-evident returns. |
+| `<typeparam>` | On top-level declarations only. Never repeat across overloads — omit or use `<inheritdoc/>`. |
+| `<inheritdoc/>` | Bare `/// <inheritdoc/>` on implementations. May add a short `<remarks>` for invariant notes only. |
+| `<remarks>` | **Only** for short invariant notes (e.g., `Enforces VPC.C.3`). Never multi-paragraph; never `<para>`, `<list>`, `<code>`, or `<example>`. |
+| Constructors | Omit or minimal: `Initializes a new <see cref="TypeName{...}"/>.` |
+| Private fields | Use `//` inline comments, not `///`. |
+| Invariant IDs | Keep inline (`Enforces VPC.C.3`, `See invariant S.H.1`) — essential for code review. |
+
+When writing or modifying code: implement first → update the relevant `docs/` markdown → add a slim XML summary with `See docs/{path}` and invariant IDs as needed. Never grow `<remarks>` for design decisions.

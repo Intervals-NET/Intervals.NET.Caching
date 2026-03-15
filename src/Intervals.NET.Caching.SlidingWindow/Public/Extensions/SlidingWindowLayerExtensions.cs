@@ -50,10 +50,7 @@ public static class SlidingWindowLayerExtensions
     /// <typeparam name="TData">The type of data being cached.</typeparam>
     /// <typeparam name="TDomain">The range domain type. Must implement <see cref="IRangeDomain{TRange}"/>.</typeparam>
     /// <param name="builder">The layered cache builder to add the layer to.</param>
-    /// <param name="configure">
-    /// A delegate that receives a <see cref="SlidingWindowCacheOptionsBuilder"/> and applies
-    /// the desired settings for this layer.
-    /// </param>
+    /// <param name="configure">A delegate that applies the desired settings for this layer's options.</param>
     /// <param name="diagnostics">
     /// Optional diagnostics implementation. When <c>null</c>, <see cref="NoOpDiagnostics.Instance"/> is used.
     /// </param>

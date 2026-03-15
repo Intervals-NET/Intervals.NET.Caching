@@ -3,34 +3,13 @@ using Intervals.NET.Caching.SlidingWindow.Core.State;
 namespace Intervals.NET.Caching.SlidingWindow.Public.Configuration;
 
 /// <summary>
-/// Options for configuring the behavior of the sliding window cache.
+/// Options for configuring the sliding window cache. See docs/sliding-window/components/public-api.md for parameter details.
 /// </summary>
-/// <remarks>
-/// All values are validated at construction time. Runtime-updatable options (cache sizes, thresholds,
-/// debounce delay) may be changed on a live cache via
-/// <see cref="ISlidingWindowCache{TRange,TData,TDomain}.UpdateRuntimeOptions"/>.
-/// <see cref="ReadMode"/> and <see cref="RebalanceQueueCapacity"/> are creation-time only.
-/// </remarks>
 public sealed class SlidingWindowCacheOptions : IEquatable<SlidingWindowCacheOptions>
 {
     /// <summary>
-    /// Initializes a new instance of the <see cref="SlidingWindowCacheOptions"/> class.
+    /// Initializes a new instance of <see cref="SlidingWindowCacheOptions"/>.
     /// </summary>
-    /// <param name="leftCacheSize">The coefficient for the left cache size.</param>
-    /// <param name="rightCacheSize">The coefficient for the right cache size.</param>
-    /// <param name="readMode">
-    /// The read mode that determines how materialized cache data is exposed to users.
-    /// This can affect the performance and memory usage of the cache,
-    /// as well as the consistency guarantees provided to users.
-    /// </param>
-    /// <param name="leftThreshold">The left threshold percentage (optional).</param>
-    /// <param name="rightThreshold">The right threshold percentage (optional).</param>
-    /// <param name="debounceDelay">The debounce delay for rebalance operations (optional).</param>
-    /// <param name="rebalanceQueueCapacity">
-    /// The rebalance execution queue capacity that determines the execution strategy (optional).
-    /// If null (default), uses unbounded task-based serialization (recommended for most scenarios).
-    /// If >= 1, uses bounded channel-based serialization with the specified capacity for backpressure control.
-    /// </param>
     /// <exception cref="ArgumentOutOfRangeException">
     /// Thrown when LeftCacheSize, RightCacheSize, LeftThreshold, RightThreshold is less than 0,
     /// when DebounceDelay is negative, or when RebalanceQueueCapacity is less than or equal to 0.
@@ -72,44 +51,19 @@ public sealed class SlidingWindowCacheOptions : IEquatable<SlidingWindowCacheOpt
         RebalanceQueueCapacity = rebalanceQueueCapacity;
     }
 
-    /// <summary>
-    /// The coefficient to determine the size of the left cache relative to the requested range.
-    /// If requested range size is S, left cache size will be S * LeftCacheSize.
-    /// Can be set as 0 to disable left caching. Must be greater than or equal to 0
-    /// </summary>
+    /// <summary>Left cache size coefficient (multiplied by requested range size). Must be >= 0.</summary>
     public double LeftCacheSize { get; }
 
-    /// <summary>
-    /// The coefficient to determine the size of the right cache relative to the requested range.
-    /// If requested range size is S, right cache size will be S * RightCacheSize.
-    /// Can be set as 0 to disable right caching. Must be greater than or equal to 0
-    /// </summary>
+    /// <summary>Right cache size coefficient (multiplied by requested range size). Must be >= 0.</summary>
     public double RightCacheSize { get; }
 
-    /// <summary>
-    /// The amount of percents of the total cache size that must be exceeded to trigger a rebalance.
-    /// The total cache size is defined as the sum of the left, requested range, and right cache sizes.
-    /// Can be set as null to disable rebalance based on left threshold. If only one threshold is set,
-    /// rebalance will be triggered when that threshold is exceeded or end of the cached range is exceeded.
-    /// Must be greater than or equal to 0. The sum of LeftThreshold and RightThreshold must not exceed 1.0.
-    /// Example: 0.2 means 20% of total cache size. Means if the next requested range and the start of the range contains less than 20% of the total cache size, a rebalance will be triggered.
-    /// </summary>
+    /// <summary>Left threshold as a fraction of total cache size; triggers rebalance when exceeded. Null disables left threshold.</summary>
     public double? LeftThreshold { get; }
 
-    /// <summary>
-    /// The amount of percents of the total cache size that must be exceeded to trigger a rebalance.
-    /// The total cache size is defined as the sum of the left, requested range, and right cache sizes.
-    /// Can be set as null to disable rebalance based on right threshold. If only one threshold is set,
-    /// rebalance will be triggered when that threshold is exceeded or start of the cached range is exceeded.
-    /// Must be greater than or equal to 0. The sum of LeftThreshold and RightThreshold must not exceed 1.0.
-    /// Example: 0.2 means 20% of total cache size. Means if the next requested range and the end of the range contains less than 20% of the total cache size, a rebalance will be triggered.
-    /// </summary>
+    /// <summary>Right threshold as a fraction of total cache size; triggers rebalance when exceeded. Null disables right threshold.</summary>
     public double? RightThreshold { get; }
 
-    /// <summary>
-    /// The debounce delay for rebalance operations.
-    /// Default is TimeSpan.FromMilliseconds(100).
-    /// </summary>
+    /// <summary>Debounce delay before a rebalance is executed. Defaults to 100 ms.</summary>
     public TimeSpan DebounceDelay { get; }
 
     /// <summary>
@@ -117,13 +71,7 @@ public sealed class SlidingWindowCacheOptions : IEquatable<SlidingWindowCacheOpt
     /// </summary>
     public UserCacheReadMode ReadMode { get; }
 
-    /// <summary>
-    /// The rebalance execution queue capacity that controls the execution strategy and backpressure behavior.
-    /// </summary>
-    /// <remarks>
-    /// When <c>null</c> (default), uses unbounded task-based serialization.
-    /// When <c>>= 1</c>, uses bounded channel-based serialization with backpressure.
-    /// </remarks>
+    /// <summary>Controls the rebalance execution strategy: null = unbounded task-based, >= 1 = bounded channel-based with backpressure.</summary>
     public int? RebalanceQueueCapacity { get; }
 
     /// <inheritdoc/>

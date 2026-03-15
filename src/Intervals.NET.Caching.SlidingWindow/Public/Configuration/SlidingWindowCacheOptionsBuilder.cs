@@ -2,6 +2,7 @@ namespace Intervals.NET.Caching.SlidingWindow.Public.Configuration;
 
 /// <summary>
 /// Fluent builder for constructing <see cref="SlidingWindowCacheOptions"/> instances.
+/// See docs/sliding-window/components/public-api.md for parameter descriptions.
 /// </summary>
 /// <remarks>
 /// <see cref="WithLeftCacheSize"/> and <see cref="WithRightCacheSize"/> (or <see cref="WithCacheSize(double)"/>)
@@ -19,18 +20,10 @@ public sealed class SlidingWindowCacheOptionsBuilder
     private TimeSpan? _debounceDelay;
     private int? _rebalanceQueueCapacity;
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="SlidingWindowCacheOptionsBuilder"/> class.
-    /// </summary>
+    /// <summary>Initializes a new instance of the <see cref="SlidingWindowCacheOptionsBuilder"/> class.</summary>
     public SlidingWindowCacheOptionsBuilder() { }
 
-    /// <summary>
-    /// Sets the left cache size coefficient.
-    /// </summary>
-    /// <param name="value">
-    /// Multiplier of the requested range size for the left buffer. Must be &gt;= 0.
-    /// A value of 0 disables left-side caching.
-    /// </param>
+    /// <summary>Sets the left cache size coefficient (must be &gt;= 0).</summary>
     /// <returns>This builder instance, for fluent chaining.</returns>
     public SlidingWindowCacheOptionsBuilder WithLeftCacheSize(double value)
     {
@@ -38,13 +31,7 @@ public sealed class SlidingWindowCacheOptionsBuilder
         return this;
     }
 
-    /// <summary>
-    /// Sets the right cache size coefficient.
-    /// </summary>
-    /// <param name="value">
-    /// Multiplier of the requested range size for the right buffer. Must be &gt;= 0.
-    /// A value of 0 disables right-side caching.
-    /// </param>
+    /// <summary>Sets the right cache size coefficient (must be &gt;= 0).</summary>
     /// <returns>This builder instance, for fluent chaining.</returns>
     public SlidingWindowCacheOptionsBuilder WithRightCacheSize(double value)
     {
@@ -52,12 +39,7 @@ public sealed class SlidingWindowCacheOptionsBuilder
         return this;
     }
 
-    /// <summary>
-    /// Sets both left and right cache size coefficients to the same value.
-    /// </summary>
-    /// <param name="value">
-    /// Multiplier applied symmetrically to both left and right buffers. Must be &gt;= 0.
-    /// </param>
+    /// <summary>Sets both left and right cache size coefficients to the same value (must be &gt;= 0).</summary>
     /// <returns>This builder instance, for fluent chaining.</returns>
     public SlidingWindowCacheOptionsBuilder WithCacheSize(double value)
     {
@@ -66,11 +48,7 @@ public sealed class SlidingWindowCacheOptionsBuilder
         return this;
     }
 
-    /// <summary>
-    /// Sets left and right cache size coefficients to different values.
-    /// </summary>
-    /// <param name="left">Multiplier for the left buffer. Must be &gt;= 0.</param>
-    /// <param name="right">Multiplier for the right buffer. Must be &gt;= 0.</param>
+    /// <summary>Sets left and right cache size coefficients to different values (both must be &gt;= 0).</summary>
     /// <returns>This builder instance, for fluent chaining.</returns>
     public SlidingWindowCacheOptionsBuilder WithCacheSize(double left, double right)
     {
@@ -83,7 +61,6 @@ public sealed class SlidingWindowCacheOptionsBuilder
     /// Sets the read mode that determines how materialized cache data is exposed to users.
     /// Default is <see cref="UserCacheReadMode.Snapshot"/>.
     /// </summary>
-    /// <param name="value">The read mode to use.</param>
     /// <returns>This builder instance, for fluent chaining.</returns>
     public SlidingWindowCacheOptionsBuilder WithReadMode(UserCacheReadMode value)
     {
@@ -91,13 +68,7 @@ public sealed class SlidingWindowCacheOptionsBuilder
         return this;
     }
 
-    /// <summary>
-    /// Sets the left no-rebalance threshold percentage.
-    /// </summary>
-    /// <param name="value">
-    /// Percentage of total cache window size. Must be &gt;= 0.
-    /// The sum of left and right thresholds must not exceed 1.0.
-    /// </param>
+    /// <summary>Sets the left no-rebalance threshold percentage (must be &gt;= 0; sum with right must not exceed 1.0).</summary>
     /// <returns>This builder instance, for fluent chaining.</returns>
     public SlidingWindowCacheOptionsBuilder WithLeftThreshold(double value)
     {
@@ -106,13 +77,7 @@ public sealed class SlidingWindowCacheOptionsBuilder
         return this;
     }
 
-    /// <summary>
-    /// Sets the right no-rebalance threshold percentage.
-    /// </summary>
-    /// <param name="value">
-    /// Percentage of total cache window size. Must be &gt;= 0.
-    /// The sum of left and right thresholds must not exceed 1.0.
-    /// </param>
+    /// <summary>Sets the right no-rebalance threshold percentage (must be &gt;= 0; sum with left must not exceed 1.0).</summary>
     /// <returns>This builder instance, for fluent chaining.</returns>
     public SlidingWindowCacheOptionsBuilder WithRightThreshold(double value)
     {
@@ -121,13 +86,7 @@ public sealed class SlidingWindowCacheOptionsBuilder
         return this;
     }
 
-    /// <summary>
-    /// Sets both left and right no-rebalance threshold percentages to the same value.
-    /// </summary>
-    /// <param name="value">
-    /// Percentage applied symmetrically. Must be &gt;= 0.
-    /// The combined sum (i.e. 2 × <paramref name="value"/>) must not exceed 1.0.
-    /// </param>
+    /// <summary>Sets both left and right no-rebalance threshold percentages to the same value (combined sum must not exceed 1.0).</summary>
     /// <returns>This builder instance, for fluent chaining.</returns>
     public SlidingWindowCacheOptionsBuilder WithThresholds(double value)
     {
@@ -140,11 +99,8 @@ public sealed class SlidingWindowCacheOptionsBuilder
 
     /// <summary>
     /// Sets the debounce delay applied before executing a rebalance.
-    /// Default is 100 ms.
+    /// Default is 100 ms. <see cref="TimeSpan.Zero"/> disables debouncing.
     /// </summary>
-    /// <param name="value">
-    /// Any non-negative <see cref="TimeSpan"/>. <see cref="TimeSpan.Zero"/> disables debouncing.
-    /// </param>
     /// <returns>This builder instance, for fluent chaining.</returns>
     public SlidingWindowCacheOptionsBuilder WithDebounceDelay(TimeSpan value)
     {
@@ -162,7 +118,6 @@ public sealed class SlidingWindowCacheOptionsBuilder
     /// Sets the rebalance execution queue capacity, selecting the bounded channel-based strategy.
     /// Default is <c>null</c> (unbounded task-based serialization).
     /// </summary>
-    /// <param name="value">The bounded channel capacity. Must be &gt;= 1.</param>
     /// <returns>This builder instance, for fluent chaining.</returns>
     public SlidingWindowCacheOptionsBuilder WithRebalanceQueueCapacity(int value)
     {
@@ -173,7 +128,6 @@ public sealed class SlidingWindowCacheOptionsBuilder
     /// <summary>
     /// Builds a <see cref="SlidingWindowCacheOptions"/> instance from the configured values.
     /// </summary>
-    /// <returns>A validated <see cref="SlidingWindowCacheOptions"/> instance.</returns>
     /// <exception cref="InvalidOperationException">
     /// Thrown when neither <see cref="WithLeftCacheSize"/>/<see cref="WithRightCacheSize"/> nor
     /// a <see cref="WithCacheSize(double)"/> overload has been called.

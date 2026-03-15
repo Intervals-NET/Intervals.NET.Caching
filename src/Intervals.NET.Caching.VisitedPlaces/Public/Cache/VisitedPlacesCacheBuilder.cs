@@ -46,9 +46,6 @@ public static class VisitedPlacesCacheBuilder
     /// Creates a <see cref="LayeredRangeCacheBuilder{TRange,TData,TDomain}"/> for building a
     /// multi-layer cache stack.
     /// </summary>
-    /// <typeparam name="TRange">The type representing range boundaries. Must implement <see cref="IComparable{T}"/>.</typeparam>
-    /// <typeparam name="TData">The type of data being cached.</typeparam>
-    /// <typeparam name="TDomain">The range domain type. Must implement <see cref="IRangeDomain{TRange}"/>.</typeparam>
     /// <param name="dataSource">The real (bottom-most) data source from which raw data is fetched.</param>
     /// <param name="domain">The range domain shared by all layers.</param>
     /// <returns>A new <see cref="LayeredRangeCacheBuilder{TRange,TData,TDomain}"/> instance.</returns>
@@ -113,9 +110,7 @@ public sealed class VisitedPlacesCacheBuilder<TRange, TData, TDomain>
     /// <summary>
     /// Configures the cache options inline using a fluent <see cref="VisitedPlacesCacheOptionsBuilder{TRange,TData}"/>.
     /// </summary>
-    /// <param name="configure">
-    /// A delegate that receives a <see cref="VisitedPlacesCacheOptionsBuilder{TRange,TData}"/> and applies the desired settings.
-    /// </param>
+    /// <param name="configure">A delegate that applies the desired settings to the options builder.</param>
     /// <returns>This builder instance, for fluent chaining.</returns>
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="configure"/> is <c>null</c>.
@@ -147,14 +142,8 @@ public sealed class VisitedPlacesCacheBuilder<TRange, TData, TDomain>
     /// Configures the eviction system with a list of policies and a selector.
     /// Both are required; <see cref="Build"/> throws if this method has not been called.
     /// </summary>
-    /// <param name="policies">
-    /// One or more eviction policies. Eviction is triggered when ANY policy produces an exceeded pressure (OR semantics).
-    /// Must be non-null and non-empty.
-    /// </param>
-    /// <param name="selector">
-    /// The eviction selector responsible for determining the order in which candidates are considered for eviction.
-    /// Must be non-null.
-    /// </param>
+    /// <param name="policies">One or more eviction policies (OR semantics: eviction triggers when ANY policy exceeds pressure). Must be non-null and non-empty.</param>
+    /// <param name="selector">The selector determining eviction candidate order. Must be non-null.</param>
     /// <returns>This builder instance, for fluent chaining.</returns>
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="policies"/> or <paramref name="selector"/> is <c>null</c>.
@@ -185,10 +174,7 @@ public sealed class VisitedPlacesCacheBuilder<TRange, TData, TDomain>
     /// Both at least one policy and a selector are required; <see cref="Build"/> throws if this method
     /// has not been called.
     /// </summary>
-    /// <param name="configure">
-    /// A delegate that receives an <see cref="EvictionConfigBuilder{TRange,TData}"/> and applies the desired
-    /// eviction policies and selector.
-    /// </param>
+    /// <param name="configure">A delegate that applies eviction policies and a selector to the builder.</param>
     /// <returns>This builder instance, for fluent chaining.</returns>
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="configure"/> is <c>null</c>.
