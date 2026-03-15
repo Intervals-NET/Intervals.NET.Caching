@@ -9,6 +9,12 @@ namespace Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 /// Optimised for larger caches (&gt;85 KB total data, &gt;50 segments).
 /// See docs/visited-places/ for design details.
 /// </summary>
+/// <remarks>
+/// This class implements only the data-structure mechanics of the linked-list + stride-index
+/// pattern. All invariant enforcement (VPC.C.3 overlap check, VPC.T.1 idempotent removal,
+/// normalization threshold check, retry/filter for random sampling) is handled by the base
+/// class <see cref="SegmentStorageBase{TRange,TData}"/>.
+/// </remarks>
 internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStorageBase<TRange, TData>
     where TRange : IComparable<TRange>
 {
@@ -60,6 +66,10 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
         _stride = stride;
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
+
+    // -------------------------------------------------------------------------
+    // FindIntersecting (abstract in base; scan is tightly coupled to list + stride structure)
+    // -------------------------------------------------------------------------
 
     /// <inheritdoc/>
     public override IReadOnlyList<CachedSegment<TRange, TData>> FindIntersecting(Range<TRange> range)
@@ -143,170 +153,172 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
         return (IReadOnlyList<CachedSegment<TRange, TData>>?)results ?? [];
     }
 
+    // -------------------------------------------------------------------------
+    // Abstract primitive implementations (data-structure mechanics only)
+    // -------------------------------------------------------------------------
+
     /// <inheritdoc/>
     /// <remarks>
-    /// Enforces Invariant VPC.C.3: calls <see cref="FindIntersecting"/> before inserting.
-    /// If an overlapping segment already exists, the segment is not stored and <see langword="false"/>
-    /// is returned. Otherwise the segment is inserted in sorted order and <see langword="true"/> is
-    /// returned.
+    /// Inserts the segment into the linked list in sorted order and increments
+    /// <c>_addsSinceLastNormalization</c>.
+    /// VPC.C.3 overlap check is handled by <see cref="SegmentStorageBase{TRange,TData}.TryAdd"/>.
     /// </remarks>
-    public override bool TryAdd(CachedSegment<TRange, TData> segment)
+    protected override void AddCore(CachedSegment<TRange, TData> segment)
     {
-        // VPC.C.3: skip if an overlapping segment already exists in storage.
-        if (FindIntersecting(segment.Range).Count > 0)
-        {
-            return false;
-        }
-
         InsertSorted(segment);
         _addsSinceLastNormalization++;
-        _count++;
-        return true;
     }
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Sorts <paramref name="segments"/> by range start, then inserts each one only if it does not
-    /// overlap any already-stored segment (including peers inserted earlier in this same call —
-    /// Invariant VPC.C.3). <c>_addsSinceLastNormalization</c> is incremented only for segments
-    /// that were actually stored, so the next <see cref="TryNormalize"/> call sees the correct
-    /// threshold state.
+    /// <para>
+    /// Inserts each validated sorted segment into the linked list and increments
+    /// <c>_addsSinceLastNormalization</c>. The stride index is NOT rebuilt here.
+    /// VPC.C.3 overlap check is handled by <see cref="SegmentStorageBase{TRange,TData}.TryAddRange"/>.
+    /// </para>
+    /// <para>
+    /// ⚠ DO NOT call <see cref="NormalizeStrideIndex"/> inside this method.
+    /// <see cref="AddRangeCore"/> is called from <see cref="SegmentStorageBase{TRange,TData}.TryAddRange"/>,
+    /// which returns to <c>CacheNormalizationExecutor.StoreBulk</c>. Immediately after,
+    /// the executor calls <see cref="TryNormalize"/> — the correct place for normalization
+    /// and TTL discovery. Calling <see cref="NormalizeStrideIndex"/> here would:
+    /// <list type="bullet">
+    ///   <item>Discard TTL-expired segments (the <c>out</c> expired list is inaccessible to the
+    ///   executor, so <c>OnSegmentRemoved</c> / <c>TtlSegmentExpired</c> diagnostics never fire).</item>
+    ///   <item>Reset <c>_addsSinceLastNormalization</c> to zero, causing the executor's subsequent
+    ///   <see cref="TryNormalize"/> call to always skip (threshold never reached), permanently
+    ///   preempting the normal normalization cadence.</item>
+    /// </list>
+    /// The stride index will be slightly stale until <see cref="TryNormalize"/> runs, but all
+    /// newly-inserted segments are immediately live in <c>_list</c> and will be found by
+    /// <see cref="FindIntersecting"/> regardless of index staleness.
+    /// </para>
     /// </remarks>
-    public override CachedSegment<TRange, TData>[] TryAddRange(CachedSegment<TRange, TData>[] segments)
+    protected override void AddRangeCore(CachedSegment<TRange, TData>[] segments)
     {
-        if (segments.Length == 0)
-        {
-            return [];
-        }
-
-        // Sort incoming segments so each InsertSorted call starts from a reasonably close anchor
-        // and so intra-batch overlap detection is reliable.
-        segments.AsSpan().Sort(static (a, b) => a.Range.Start.Value.CompareTo(b.Range.Start.Value));
-
-        List<CachedSegment<TRange, TData>>? stored = null;
-
         foreach (var segment in segments)
         {
-            // VPC.C.3: skip if an overlapping segment already exists in storage (including
-            // peers from this same batch that were inserted in earlier iterations).
-            if (FindIntersecting(segment.Range).Count > 0)
-            {
-                continue;
-            }
-
             InsertSorted(segment);
             _addsSinceLastNormalization++;
-            _count++;
-            (stored ??= []).Add(segment);
         }
 
-        // The executor will call TryNormalize after this TryAddRange returns.
-        return stored?.ToArray() ?? [];
+        // !!! Intentionally no NormalizeStrideIndex call here — see XML doc above for the full
+        // explanation. The executor's TryNormalize call handles normalization and TTL discovery.
     }
 
     /// <inheritdoc/>
-    public override CachedSegment<TRange, TData>? TryGetRandomSegment()
+    /// <remarks>
+    /// Picks a random segment from the linked list using the stride index when available,
+    /// or falls back to a linear walk when the stride index has not yet been built.
+    /// Returns <see langword="null"/> when the list is empty. Dead-segment filtering is handled
+    /// by <see cref="SegmentStorageBase{TRange,TData}.TryGetRandomSegment"/>.
+    /// </remarks>
+    protected override CachedSegment<TRange, TData>? SampleRandomCore()
     {
         if (_list.Count == 0)
         {
             return null;
         }
 
-        // Pre-compute UTC ticks once for all expiry checks in this sampling pass.
-        var utcNowTicks = _timeProvider.GetUtcNow().UtcTicks;
+        var strideIndex = Volatile.Read(ref _strideIndex);
 
-        for (var attempt = 0; attempt < RandomRetryLimit; attempt++)
+        if (strideIndex.Length > 0)
         {
-            CachedSegment<TRange, TData>? seg = null;
-            var strideIndex = Volatile.Read(ref _strideIndex);
+            // Pick a random stride anchor index, then a random offset from 0 to stride-1
+            // (or to list-end for the last anchor, which may have more than _stride nodes
+            // when new segments have been appended after the last normalization).
+            var anchorIdx = Random.Next(strideIndex.Length);
+            var anchorNode = strideIndex[anchorIdx];
 
-            if (strideIndex.Length > 0)
+            // Guard: node may have been physically unlinked since the old stride index was read.
+            if (anchorNode.List != null)
             {
-                // Pick a random stride anchor index, then a random offset from 0 to stride-1
-                // (or to list-end for the last anchor, which may have more than _stride nodes
-                // when new segments have been appended after the last normalization).
-                var anchorIdx = Random.Next(strideIndex.Length);
-                var anchorNode = strideIndex[anchorIdx];
-
-                // Guard: node may have been physically unlinked since the old stride index was read.
-                if (anchorNode.List != null)
+                // Determine the maximum reachable offset from this anchor.
+                // For interior anchors, offset is bounded by _stride (distance to next anchor).
+                // For the last anchor, we walk to the actual list end (may be > _stride when
+                // new segments have been appended since the last normalization).
+                int maxOffset;
+                if (anchorIdx < strideIndex.Length - 1)
                 {
-                    // Determine the maximum reachable offset from this anchor.
-                    // For interior anchors, offset is bounded by _stride (distance to next anchor).
-                    // For the last anchor, we walk to the actual list end (may be > _stride when
-                    // new segments have been appended since the last normalization).
-                    int maxOffset;
-                    if (anchorIdx < strideIndex.Length - 1)
-                    {
-                        maxOffset = _stride;
-                    }
-                    else
-                    {
-                        // Count nodes from this anchor to end of list.
-                        maxOffset = 0;
-                        var countNode = anchorNode;
-                        while (countNode != null)
-                        {
-                            maxOffset++;
-                            countNode = countNode.Next;
-                        }
-                    }
-
-                    var offset = Random.Next(maxOffset);
-
-                    var node = anchorNode;
-                    for (var i = 0; i < offset && node.Next != null; i++)
-                    {
-                        node = node.Next;
-                    }
-
-                    seg = node.Value;
+                    maxOffset = _stride;
                 }
-            }
-            else
-            {
-                // Stride index not yet built (all segments added but not yet normalized).
-                // Fall back: linear walk with a random skip count.
-                var listCount = _list.Count;
-                var skip = Random.Next(listCount);
-                var node = _list.First;
+                else
+                {
+                    // Count nodes from this anchor to end of list.
+                    maxOffset = 0;
+                    var countNode = anchorNode;
+                    while (countNode != null)
+                    {
+                        maxOffset++;
+                        countNode = countNode.Next;
+                    }
+                }
 
-                for (var i = 0; i < skip && node != null; i++)
+                var offset = Random.Next(maxOffset);
+
+                var node = anchorNode;
+                for (var i = 0; i < offset && node.Next != null; i++)
                 {
                     node = node.Next;
                 }
 
-                seg = node?.Value;
-            }
-
-            if (seg is { IsRemoved: false } && !seg.IsExpired(utcNowTicks))
-            {
-                return seg;
+                return node.Value;
             }
         }
 
-        return null;
+        // Stride index not yet built (all segments added but not yet normalized).
+        // Fall back: linear walk with a random skip count.
+        {
+            var listCount = _list.Count;
+            var skip = Random.Next(listCount);
+            var node = _list.First;
+
+            for (var i = 0; i < skip && node != null; i++)
+            {
+                node = node.Next;
+            }
+
+            return node?.Value;
+        }
+    }
+
+    /// <inheritdoc/>
+    protected override bool ShouldNormalize() => _addsSinceLastNormalization >= _appendBufferSize;
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Rebuilds the stride index from the live linked list, physically unlinks removed nodes,
+    /// and discovers TTL-expired segments. Expired segments are marked removed via
+    /// <see cref="SegmentStorageBase{TRange,TData}.TryRemove"/> and collected in
+    /// <paramref name="expired"/> for the executor to process.
+    /// Resets <c>_addsSinceLastNormalization</c> to zero in a <c>finally</c> block.
+    /// </remarks>
+    protected override void NormalizeCore(
+        long utcNowTicks,
+        ref List<CachedSegment<TRange, TData>>? expired)
+    {
+        NormalizeStrideIndex(utcNowTicks, ref expired);
     }
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Checks whether enough segments have been added since the last normalization pass.
-    /// If the threshold is reached, rebuilds the stride index, physically unlinks removed nodes,
-    /// and discovers TTL-expired segments. Expired segments are returned via
-    /// <paramref name="expiredSegments"/> for the executor to update eviction policy aggregates
-    /// and fire diagnostics.
+    /// No-op: <see cref="NormalizeCore"/> delegates to <see cref="NormalizeStrideIndex(long, ref List{CachedSegment{TRange, TData}}?)"/>,
+    /// which resets <c>_addsSinceLastNormalization</c> to zero in its own <c>finally</c> block.
+    /// The base class calls this after <see cref="NormalizeCore"/> returns; for this strategy
+    /// the reset is already done.
     /// </remarks>
-    public override bool TryNormalize(out IReadOnlyList<CachedSegment<TRange, TData>>? expiredSegments)
+    protected override void ResetNormalizationCounter()
     {
-        if (_addsSinceLastNormalization < _appendBufferSize)
-        {
-            expiredSegments = null;
-            return false;
-        }
-
-        NormalizeStrideIndex(out expiredSegments);
-        return true;
+        // Reset is performed inside NormalizeStrideIndex's finally block.
+        // Nothing to do here.
     }
+
+    /// <inheritdoc/>
+    protected override long GetUtcNowTicks() => _timeProvider.GetUtcNow().UtcTicks;
+
+    // -------------------------------------------------------------------------
+    // Private helpers
+    // -------------------------------------------------------------------------
 
     /// <summary>
     /// Inserts a segment into the linked list in sorted order by range start.
@@ -378,13 +390,13 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
     /// <summary>
     /// Rebuilds the stride index from the live linked list, physically unlinks removed nodes,
     /// and discovers TTL-expired segments. Expired segments are returned via
-    /// <paramref name="expiredSegments"/> so the executor can update policy aggregates.
+    /// <paramref name="expired"/> so the executor can update policy aggregates.
+    /// Resets <c>_addsSinceLastNormalization</c> to zero in a <c>finally</c> block.
     /// </summary>
-    private void NormalizeStrideIndex(out IReadOnlyList<CachedSegment<TRange, TData>>? expiredSegments)
+    private void NormalizeStrideIndex(
+        long utcNowTicks,
+        ref List<CachedSegment<TRange, TData>>? expired)
     {
-        var utcNowTicks = _timeProvider.GetUtcNow().UtcTicks;
-        List<CachedSegment<TRange, TData>>? expired = null;
-
         // Upper bound on anchor count: ceil(liveCount / stride) ≤ ceil(listCount / stride).
         // Add 1 for safety against off-by-one when listCount is not a multiple of stride.
         var maxAnchors = (_list.Count / _stride) + 1;
@@ -473,8 +485,6 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
             // Reset the add counter — always runs, even if unlink loop throws.
             _addsSinceLastNormalization = 0;
         }
-
-        expiredSegments = expired;
     }
 
     /// <summary>

@@ -8,6 +8,12 @@ namespace Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 /// Optimised for small caches (&lt;85 KB total data, &lt;~50 segments).
 /// See docs/visited-places/ for design details.
 /// </summary>
+/// <remarks>
+/// This class implements only the data-structure mechanics of the snapshot + append-buffer
+/// pattern. All invariant enforcement (VPC.C.3 overlap check, VPC.T.1 idempotent removal,
+/// normalization threshold check, retry/filter for random sampling) is handled by the base
+/// class <see cref="SegmentStorageBase{TRange,TData}"/>.
+/// </remarks>
 internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorageBase<TRange, TData>
     where TRange : IComparable<TRange>
 {
@@ -27,7 +33,7 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
     // Size is determined by the appendBufferSize constructor parameter.
     private readonly CachedSegment<TRange, TData>[] _appendBuffer;
 
-    // Written by Add() via Volatile.Write (non-normalizing path) and inside _normalizeLock (Normalize).
+    // Written by AddCore() via Volatile.Write (non-normalizing path) and inside _normalizeLock (NormalizeCore).
     // Read by FindIntersecting() inside _normalizeLock to form a consistent pair with _snapshot.
     private int _appendCount;
 
@@ -48,6 +54,10 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
         _timeProvider = timeProvider ?? TimeProvider.System;
         _appendBuffer = new CachedSegment<TRange, TData>[appendBufferSize];
     }
+
+    // -------------------------------------------------------------------------
+    // FindIntersecting (abstract in base; scan is tightly coupled to snapshot + buffer structure)
+    // -------------------------------------------------------------------------
 
     /// <inheritdoc/>
     public override IReadOnlyList<CachedSegment<TRange, TData>> FindIntersecting(Range<TRange> range)
@@ -114,84 +124,36 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
         return (IReadOnlyList<CachedSegment<TRange, TData>>?)results ?? [];
     }
 
+    // -------------------------------------------------------------------------
+    // Abstract primitive implementations (data-structure mechanics only)
+    // -------------------------------------------------------------------------
+
     /// <inheritdoc/>
     /// <remarks>
-    /// Enforces Invariant VPC.C.3: calls <see cref="FindIntersecting"/> before appending to the
-    /// buffer. If an overlapping segment already exists (in snapshot or append buffer),
-    /// the segment is not stored and <see langword="false"/> is returned.
+    /// Appends the segment to <c>_appendBuffer</c> and increments <c>_appendCount</c>
+    /// via <see cref="Volatile.Write"/> to publish the new entry atomically.
+    /// VPC.C.3 overlap check is handled by <see cref="SegmentStorageBase{TRange,TData}.TryAdd"/>.
     /// </remarks>
-    public override bool TryAdd(CachedSegment<TRange, TData> segment)
+    protected override void AddCore(CachedSegment<TRange, TData> segment)
     {
-        // VPC.C.3: skip if an overlapping segment already exists in storage.
-        if (FindIntersecting(segment.Range).Count > 0)
-        {
-            return false;
-        }
-
         _appendBuffer[_appendCount] = segment;
-        Volatile.Write(ref _appendCount, _appendCount + 1); // Release fence: makes buffer entry visible to readers before count increment is observed
-        _count++;
-        return true;
+        // Release fence: makes buffer entry visible to readers before count increment is observed.
+        Volatile.Write(ref _appendCount, _appendCount + 1);
     }
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Bypasses the append buffer entirely for the non-overlapping subset: sorts
-    /// <paramref name="segments"/>, checks each one against <see cref="FindIntersecting"/>
-    /// (enforcing Invariant VPC.C.3 including against peers inserted earlier in the same call),
-    /// merges the validated subset with the current snapshot, and publishes the result atomically
-    /// via <see cref="Interlocked.Exchange"/>.
-    /// The append buffer is intentionally left untouched — its contents remain visible to
-    /// <see cref="FindIntersecting"/> via the independent buffer scan and will be drained by the
-    /// next <see cref="TryNormalize"/> call from the executor.
-    /// Using <see cref="Interlocked.Exchange"/> (rather than <c>_normalizeLock</c>) is safe here
-    /// because <c>_appendCount</c> is NOT modified: the lock's purpose is to synchronise the
-    /// atomic update of both <c>_snapshot</c> and <c>_appendCount</c>; since only <c>_snapshot</c>
-    /// changes, a release fence via <see cref="Interlocked.Exchange"/> suffices.
+    /// Bypasses the append buffer: merges the validated sorted segments directly into the
+    /// snapshot via <see cref="MergeSorted"/> and publishes atomically via
+    /// <see cref="Interlocked.Exchange"/>. The append buffer is left untouched (see class
+    /// remarks and VPC.C.7 in docs/visited-places/invariants.md).
+    /// VPC.C.3 overlap check is handled by <see cref="SegmentStorageBase{TRange,TData}.TryAddRange"/>.
+    /// Does NOT perform normalization or TTL discovery — per the base class contract on
+    /// <see cref="SegmentStorageBase{TRange,TData}.AddRangeCore"/>; the executor's subsequent
+    /// <see cref="TryNormalize"/> call owns that responsibility.
     /// </remarks>
-    public override CachedSegment<TRange, TData>[] TryAddRange(CachedSegment<TRange, TData>[] segments)
+    protected override void AddRangeCore(CachedSegment<TRange, TData>[] segments)
     {
-        if (segments.Length == 0)
-        {
-            return [];
-        }
-
-        // Sort incoming segments by range start (Background Path owns the array exclusively).
-        segments.AsSpan().Sort(static (a, b) => a.Range.Start.Value.CompareTo(b.Range.Start.Value));
-
-        // Filter to non-overlapping segments only (VPC.C.3). Each check includes peers from
-        // this same batch that were already merged into the snapshot in earlier iterations.
-        // Build the validated list incrementally: after each accepted segment is merged into a
-        // provisional snapshot, subsequent checks in this loop run against the updated state.
-        // To avoid O(n) provisional snapshots, we collect validated segments first (checking
-        // against the current live storage which includes the append buffer), then merge once.
-        // Intra-batch overlap detection is sound because incoming segments are sorted: if two
-        // incoming segments overlap each other, the later one will fail FindIntersecting once
-        // the earlier one is in the merged snapshot — but since we merge only after collecting
-        // all validated segments, we must do an additional intra-batch pass. Instead, simply
-        // re-use FindIntersecting per segment after merging iteratively is avoided by the sort
-        // guarantee: sorted non-overlapping incoming segments cannot overlap each other.
-        // A simpler correct approach: collect all passing segments, then merge once.
-        List<CachedSegment<TRange, TData>>? validated = null;
-
-        foreach (var segment in segments)
-        {
-            // VPC.C.3: check against current live storage (snapshot + append buffer).
-            if (FindIntersecting(segment.Range).Count > 0)
-            {
-                continue;
-            }
-
-            (validated ??= []).Add(segment);
-        }
-
-        if (validated == null)
-        {
-            return [];
-        }
-
-        var validatedArray = validated.ToArray();
-
         var snapshot = Volatile.Read(ref _snapshot);
 
         // Count live entries in the current snapshot (removes do not affect incoming segments).
@@ -207,18 +169,20 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
         // Merge current snapshot (left) with sorted, validated incoming (right) — one allocation.
         // Incoming segments are brand-new and therefore never IsRemoved; pass their full length
         // as both rightLength and liveRightCount.
-        var merged = MergeSorted(snapshot, liveSnapshotCount, validatedArray, validatedArray.Length, validatedArray.Length);
+        var merged = MergeSorted(snapshot, liveSnapshotCount, segments, segments.Length, segments.Length);
 
         // Atomically replace the snapshot. _appendCount is NOT touched — the lock guards the
-        // (snapshot, appendCount) pair; since appendCount is unchanged, Interlocked.Exchange suffices.
+        // (_snapshot, _appendCount) pair; since _appendCount is unchanged, Interlocked.Exchange suffices.
         Interlocked.Exchange(ref _snapshot, merged);
-
-        _count += validatedArray.Length;
-        return validatedArray;
     }
 
     /// <inheritdoc/>
-    public override CachedSegment<TRange, TData>? TryGetRandomSegment()
+    /// <remarks>
+    /// Picks a random index from the combined pool of <c>_snapshot</c> and <c>_appendBuffer</c>.
+    /// Returns <see langword="null"/> when the pool is empty. Dead-segment filtering is handled
+    /// by <see cref="SegmentStorageBase{TRange,TData}.TryGetRandomSegment"/>.
+    /// </remarks>
+    protected override CachedSegment<TRange, TData>? SampleRandomCore()
     {
         var snapshot = Volatile.Read(ref _snapshot);
         var pool = snapshot.Length + _appendCount;
@@ -228,61 +192,29 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
             return null;
         }
 
-        // Pre-compute UTC ticks once for all expiry checks in this sampling pass.
-        var utcNowTicks = _timeProvider.GetUtcNow().UtcTicks;
+        var index = Random.Next(pool);
 
-        for (var attempt = 0; attempt < RandomRetryLimit; attempt++)
+        if (index < snapshot.Length)
         {
-            var index = Random.Next(pool);
-            CachedSegment<TRange, TData> seg;
-
-            if (index < snapshot.Length)
-            {
-                seg = snapshot[index];
-            }
-            else
-            {
-                seg = _appendBuffer[index - snapshot.Length];
-            }
-
-            if (!seg.IsRemoved && !seg.IsExpired(utcNowTicks))
-            {
-                return seg;
-            }
+            return snapshot[index];
         }
 
-        return null;
+        return _appendBuffer[index - snapshot.Length];
     }
 
     /// <inheritdoc/>
+    protected override bool ShouldNormalize() => _appendCount >= _appendBufferSize;
+
+    /// <inheritdoc/>
     /// <remarks>
-    /// Checks whether the append buffer has reached capacity. If it has, runs the normalization
-    /// pass: merges snapshot and append buffer, discovers expired segments, and publishes the
-    /// new snapshot atomically. Expired segments are returned via <paramref name="expiredSegments"/>
-    /// so the executor can update eviction policy aggregates and fire diagnostics.
-    /// </remarks>
-    public override bool TryNormalize(out IReadOnlyList<CachedSegment<TRange, TData>>? expiredSegments)
-    {
-        if (_appendCount < _appendBufferSize)
-        {
-            expiredSegments = null;
-            return false;
-        }
-
-        Normalize(out expiredSegments);
-        return true;
-    }
-
-    /// <summary>
     /// Rebuilds the sorted snapshot by merging live entries from snapshot and append buffer.
-    /// Expired segments are discovered, marked as removed, and returned via
-    /// <paramref name="expiredSegments"/> for the executor to process.
-    /// </summary>
-    private void Normalize(out IReadOnlyList<CachedSegment<TRange, TData>>? expiredSegments)
+    /// Expired segments are discovered, marked removed via <see cref="SegmentStorageBase{TRange,TData}.TryRemove"/>,
+    /// and collected in <paramref name="expired"/> for the executor to process.
+    /// Publishes the new snapshot and resets <c>_appendCount</c> atomically under <c>_normalizeLock</c>.
+    /// </remarks>
+    protected override void NormalizeCore(long utcNowTicks, ref List<CachedSegment<TRange, TData>>? expired)
     {
         var snapshot = Volatile.Read(ref _snapshot);
-        var utcNowTicks = _timeProvider.GetUtcNow().UtcTicks;
-        List<CachedSegment<TRange, TData>>? expired = null;
 
         // Count live snapshot entries (skip removed/expired segments) without allocating a List.
         var liveSnapshotCount = 0;
@@ -335,7 +267,7 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
         // Atomically publish the new snapshot and reset _appendCount under the normalize lock.
         // FindIntersecting captures both fields under the same lock, so it is guaranteed to see
         // either (old snapshot, old count) or (new snapshot, 0) — never the mixed state that
-        // previously caused duplicate segment references to appear in query results.
+        // previously caused duplicate segment references to appear in query results (VPC.C.7).
         lock (_normalizeLock)
         {
             _snapshot = merged;
@@ -359,9 +291,26 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
         //       _appendCount, so the stale reference at slot 0 is never observable to readers.
         //   (d) The merged snapshot already holds references to all live segments; leaving them
         //       in buffer slots until overwritten does not extend their logical lifetime.
-
-        expiredSegments = expired;
     }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// No-op: <see cref="NormalizeCore"/> resets <c>_appendCount</c> to zero inside
+    /// <c>_normalizeLock</c> as part of the atomic publish step. The base class calls this
+    /// after <see cref="NormalizeCore"/> returns; for this strategy it is already done.
+    /// </remarks>
+    protected override void ResetNormalizationCounter()
+    {
+        // Reset is performed atomically inside NormalizeCore under _normalizeLock.
+        // Nothing to do here.
+    }
+
+    /// <inheritdoc/>
+    protected override long GetUtcNowTicks() => _timeProvider.GetUtcNow().UtcTicks;
+
+    // -------------------------------------------------------------------------
+    // Private helpers
+    // -------------------------------------------------------------------------
 
     private static CachedSegment<TRange, TData>[] MergeSorted(
         CachedSegment<TRange, TData>[] left,
@@ -427,7 +376,7 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
         }
 
         // k == result.Length: TTL expiry runs exclusively on the Background Path (single writer)
-        // inside Normalize(), so no concurrent writer can mark additional segments as removed
+        // inside NormalizeCore(), so no concurrent writer can mark additional segments as removed
         // between the counting pass and this merge pass.
 
         return result;

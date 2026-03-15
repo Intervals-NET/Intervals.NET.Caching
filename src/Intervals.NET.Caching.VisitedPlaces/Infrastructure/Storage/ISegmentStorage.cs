@@ -34,7 +34,8 @@ internal interface ISegmentStorage<TRange, TData>
     /// (Background Path only). Reduces normalization overhead from O(count/bufferSize) normalizations
     /// to a single pass — beneficial when a multi-gap partial-hit request produces many new segments.
     /// Enforces Invariant VPC.C.3: each segment is checked for overlap against the current storage
-    /// state (including segments inserted earlier in the same call) before being stored.
+    /// state before being stored. Note: intra-batch overlap between two incoming segments is NOT
+    /// detected — only overlap with already-stored segments is checked.
     /// </summary>
     /// <returns>
     /// The segments that were actually stored. Segments that overlap an existing segment are skipped.

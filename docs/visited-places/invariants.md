@@ -389,7 +389,7 @@ Assert.Equal(expectedCount, cache.SegmentCount);
 - Both the eviction path and the `TryNormalize` TTL path call `segment.MarkAsRemoved()` after checking `segment.IsRemoved`.
 - Because `TryNormalize` runs **before** eviction in each background step, TTL wins when a segment qualifies for both: `TryNormalize` removes it first, the subsequent eviction evaluation finds either a reduced count or no eligible candidate.
 - `TryGetRandomSegment` filters out already-removed segments, so eviction never encounters a segment that `TryNormalize` already removed.
-- `SegmentStorageBase.Remove` guards with an `IsRemoved` check before calling `MarkAsRemoved()` — safe because the Background Path is the sole writer (no TOCTOU race).
+- `SegmentStorageBase.TryRemove` guards with an `IsRemoved` check before calling `MarkAsRemoved()` — safe because the Background Path is the sole writer (no TOCTOU race).
 - This ensures that TTL expiration and capacity eviction cannot produce a double-remove or corrupt storage state.
 
 **VPC.T.2** [Architectural] TTL expiration is **lazy/passive**: expired segments linger in storage until the next `TryNormalize` pass, but are **invisible to readers** via lazy filtering in `FindIntersecting`.

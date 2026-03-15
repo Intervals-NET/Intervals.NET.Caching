@@ -6,7 +6,15 @@ namespace Intervals.NET.Caching.VisitedPlaces.Unit.Tests.Storage;
 
 /// <summary>
 /// Unit tests for <see cref="SnapshotAppendBufferStorage{TRange,TData}"/>.
-/// Covers Constructor, Add, Remove, Count, FindIntersecting, TryGetRandomSegment.
+/// Covers constructor validation, snapshot merge mechanics, append buffer interaction,
+/// FindIntersecting, and TryGetRandomSegment coverage across buffer + snapshot.
+/// <para>
+/// Count invariant (empty / add / remove), VPC.C.3 overlap guard, VPC.T.1 idempotent removal,
+/// TryGetRandomSegment filter contract, TryNormalize threshold, and TryAddRange overlap/sorting
+/// are all covered by <see cref="SegmentStorageBaseTests"/>, which is parameterised over both
+/// strategies. Tests in this class focus exclusively on mechanics specific to the
+/// snapshot + append-buffer data structure.
+/// </para>
 /// </summary>
 public sealed class SnapshotAppendBufferStorageTests
 {
@@ -58,59 +66,16 @@ public sealed class SnapshotAppendBufferStorageTests
 
     #region Count Tests
 
-    [Fact]
-    public void Count_WhenEmpty_ReturnsZero()
-    {
-        // ARRANGE
-        var storage = new SnapshotAppendBufferStorage<int, int>();
-
-        // ASSERT
-        Assert.Equal(0, storage.Count);
-    }
-
-    [Fact]
-    public void Count_AfterAddingSegments_ReturnsCorrectCount()
-    {
-        // ARRANGE
-        var storage = new SnapshotAppendBufferStorage<int, int>();
-        AddSegment(storage, 0, 9);
-        AddSegment(storage, 20, 29);
-
-        // ASSERT
-        Assert.Equal(2, storage.Count);
-    }
-
-    [Fact]
-    public void Count_AfterRemovingSegment_DecrementsCorrectly()
-    {
-        // ARRANGE
-        var storage = new SnapshotAppendBufferStorage<int, int>();
-        var seg = AddSegment(storage, 0, 9);
-        AddSegment(storage, 20, 29);
-
-        // ACT
-        storage.TryRemove(seg);
-
-        // ASSERT
-        Assert.Equal(1, storage.Count);
-    }
+    // Count invariant coverage (empty / add / remove) is provided by SegmentStorageBaseTests,
+    // which is parameterised over both strategies. Only strategy-specific Count edge cases live here.
 
     #endregion
 
     #region Add / TryGetRandomSegment Tests
 
-    [Fact]
-    public void TryGetRandomSegment_WhenEmpty_ReturnsNull()
-    {
-        // ARRANGE
-        var storage = new SnapshotAppendBufferStorage<int, int>();
-
-        // ASSERT — empty storage must return null every time
-        for (var i = 0; i < 10; i++)
-        {
-            Assert.Null(storage.TryGetRandomSegment());
-        }
-    }
+    // TryGetRandomSegment filter contract (never returns removed/expired; exhausted retries → null)
+    // is covered by SegmentStorageBaseTests. Tests here cover strategy-specific sampling mechanics:
+    // that segments in the append buffer and snapshot are reachable via random sampling.
 
     [Fact]
     public void TryGetRandomSegment_AfterAdding_EventuallyReturnsAddedSegment()
@@ -129,32 +94,6 @@ public sealed class SnapshotAppendBufferStorageTests
         // ASSERT
         Assert.NotNull(found);
         Assert.Same(seg, found);
-    }
-
-    [Fact]
-    public void TryGetRandomSegment_AfterRemove_NeverReturnsRemovedSegment()
-    {
-        // ARRANGE
-        var storage = new SnapshotAppendBufferStorage<int, int>();
-        var seg1 = AddSegment(storage, 0, 9);
-        var seg2 = AddSegment(storage, 20, 29);
-
-        // ACT
-        storage.TryRemove(seg1);
-
-        // ASSERT — seg1 must never be returned; seg2 must eventually be returned
-        var foundSeg2 = false;
-        for (var i = 0; i < StatisticalTrials; i++)
-        {
-            var result = storage.TryGetRandomSegment();
-            Assert.NotSame(seg1, result); // removed segment must never appear
-            if (result is not null && ReferenceEquals(result, seg2))
-            {
-                foundSeg2 = true;
-            }
-        }
-
-        Assert.True(foundSeg2, "seg2 should have been returned at least once in 1000 trials");
     }
 
     [Fact]
@@ -300,18 +239,8 @@ public sealed class SnapshotAppendBufferStorageTests
 
     #region TryAddRange Tests
 
-    [Fact]
-    public void TryAddRange_WithEmptyArray_DoesNotChangeCount()
-    {
-        // ARRANGE
-        var storage = new SnapshotAppendBufferStorage<int, int>();
-
-        // ACT
-        storage.TryAddRange([]);
-
-        // ASSERT
-        Assert.Equal(0, storage.Count);
-    }
+    // TryAddRange VPC.C.3 (overlap guard, unsorted input, empty input) is covered by
+    // SegmentStorageBaseTests. Tests here focus on snapshot merge mechanics specific to this strategy.
 
     [Fact]
     public void TryAddRange_WithMultipleSegments_UpdatesCountCorrectly()
@@ -345,24 +274,6 @@ public sealed class SnapshotAppendBufferStorageTests
         storage.TryAddRange([seg1, seg2, seg3]);
 
         // ASSERT
-        Assert.Single(storage.FindIntersecting(TestHelpers.CreateRange(0, 9)));
-        Assert.Single(storage.FindIntersecting(TestHelpers.CreateRange(20, 29)));
-        Assert.Single(storage.FindIntersecting(TestHelpers.CreateRange(40, 49)));
-    }
-
-    [Fact]
-    public void TryAddRange_WithUnsortedInput_SegmentsAreStillFindable()
-    {
-        // ARRANGE — pass segments in reverse order to verify TryAddRange sorts internally
-        var storage = new SnapshotAppendBufferStorage<int, int>();
-        var seg1 = CreateSegment(40, 49);
-        var seg2 = CreateSegment(0, 9);
-        var seg3 = CreateSegment(20, 29);
-
-        // ACT
-        storage.TryAddRange([seg1, seg2, seg3]);
-
-        // ASSERT — all three must be findable regardless of insertion order
         Assert.Single(storage.FindIntersecting(TestHelpers.CreateRange(0, 9)));
         Assert.Single(storage.FindIntersecting(TestHelpers.CreateRange(20, 29)));
         Assert.Single(storage.FindIntersecting(TestHelpers.CreateRange(40, 49)));

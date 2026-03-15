@@ -48,8 +48,8 @@ public sealed class CachedSegment<TRange, TData>
 
     /// <summary>
     /// Marks this segment as removed. Called exclusively on the Background Path (single writer) —
-    /// either during TTL expiry in <c>TryNormalize</c>, or during eviction in
-    /// <c>SegmentStorageBase.Remove</c>. Uses <see cref="Volatile.Write"/> to ensure
+    /// either during TTL expiry in <c>TryNormalize</c>, or during eviction via
+    /// <c>SegmentStorageBase.TryRemove</c>. Uses <see cref="Volatile.Write"/> to ensure
     /// the flag is immediately visible to User Path readers.
     /// </summary>
     internal void MarkAsRemoved() =>

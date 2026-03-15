@@ -75,8 +75,8 @@ The branching logic lives in `CacheNormalizationExecutor.StoreBulkAsync` — it 
 
 ### Contract
 
-- Input may be a non-empty array of `CachedSegment` instances in any order — both strategies sort internally
-- Overlap detection against existing segments is performed internally (self-enforcing VPC.C.3): any segment that overlaps an existing one is silently skipped; intra-batch overlaps are also caught because each segment is checked after earlier peers are inserted
+- Input may be a non-empty array of `CachedSegment` instances in any order — `SegmentStorageBase` sorts before validation
+- Overlap detection against already-stored segments is performed by `SegmentStorageBase` (enforcing VPC.C.3): any segment that overlaps an existing one is silently skipped. **Intra-batch overlap between incoming segments is not detected** — because validation runs against live storage and all incoming segments are validated before any are inserted, two incoming segments that overlap each other will both pass the `FindIntersecting` check if no pre-existing segment covers their range. This is a deliberate trade-off: sorted, non-overlapping inputs (the common case from gap computation) are handled correctly; unexpected intra-batch overlaps from callers are the caller's responsibility
 - The return value is the subset of input segments that were actually stored (may be empty if all overlapped)
 - An empty input array is a legal no-op (returns an empty array)
 - Like `TryAdd()`, `TryAddRange()` is exclusive to the Background Path (single-writer guarantee, VPC.A.1)
@@ -140,12 +140,11 @@ SnapshotAppendBufferStorage
 
 ### Write Path (Background Thread)
 
-**Add segment (`TryAdd`):**
-1. Call `FindIntersecting` on the current snapshot + append buffer — if any existing segment overlaps the new segment, return `false` (skip, VPC.C.3 self-enforced)
-2. Write new segment into `_appendBuffer[_appendCount]`
-3. Increment `_appendCount`
-4. Return `true`
-5. Normalization is NOT triggered here — the executor calls `TryNormalize` explicitly after the storage step
+**Add segment (`TryAdd`):** *(VPC.C.3 check owned by `SegmentStorageBase.TryAdd`; `SnapshotAppendBufferStorage` implements `AddCore`)*
+1. `SegmentStorageBase.TryAdd` calls `FindIntersecting` on the current snapshot + append buffer — if any existing segment overlaps, return `false` (skip)
+2. `AddCore`: write new segment into `_appendBuffer[_appendCount]`; increment `_appendCount`
+3. Return `true`
+4. Normalization is NOT triggered here — the executor calls `TryNormalize` explicitly after the storage step
 
 **Remove segment (logical removal):**
 1. Call `segment.TryMarkAsRemoved()` — sets `segment.IsRemoved = true` atomically (Interlocked.CompareExchange)
@@ -169,19 +168,23 @@ SnapshotAppendBufferStorage
 
 ### TryAddRange Write Path (Background Thread)
 
-`TryAddRange(segments[])` is used when `FetchedChunks.Count > 1` (multi-gap partial hit). It validates overlap and merges all stored segments in a single structural update, bypassing the append buffer entirely:
+`TryAddRange(segments[])` is used when `FetchedChunks.Count > 1` (multi-gap partial hit). The base class `SegmentStorageBase` owns the validation loop; `SnapshotAppendBufferStorage` implements only the `AddRangeCore` primitive that merges the validated batch into the snapshot:
 
+**Base class (`SegmentStorageBase.TryAddRange`):**
 1. If `segments` is empty: return an empty array (no-op)
 2. Sort `segments` in-place by range start (incoming order is not guaranteed)
-3. For each segment, call `FindIntersecting` against the live snapshot + append buffer — collect only non-overlapping segments into a list. Because each accepted segment is logically part of the "live" state for the purposes of checking subsequent peers (intra-batch overlap detection), segments already accepted in the current batch are also checked via `FindIntersecting` as they are appended to the buffer before the merge
+3. For each segment, call `FindIntersecting` against the live snapshot + append buffer — collect only non-overlapping segments into a list
 4. If no segments passed validation: return an empty array (no-op)
-5. Count live entries in `_snapshot` (first pass)
-6. Merge sorted `_snapshot` (excluding `IsRemoved`) and the validated+sorted segments via `MergeSorted`
-7. Publish via `Interlocked.Exchange(_snapshot, mergedArray)` — **NOT under `_normalizeLock`** (see note below)
-8. Call `IncrementCount(storedSegments.Length)` to update the total segment count
-9. Return the stored segments array
+5. Call `AddRangeCore(validatedArray)` — delegates to the concrete strategy
+6. Increment `_count` by the number of stored segments
+7. Return the stored segments array
 
-**Why `_normalizeLock` is NOT used in `TryAddRange`:** The lock guards the `(_snapshot, _appendCount)` pair atomically. `TryAddRange` does NOT modify `_appendCount`, so the pair invariant (readers must see a consistent count alongside the snapshot they're reading) is preserved. The append buffer contents are entirely ignored by `TryAddRange` — they remain valid for any concurrent `FindIntersecting` call that is currently scanning them, and will be drained naturally by the next `Normalize()` call. `Interlocked.Exchange` provides the required acquire/release fence for the snapshot swap.
+**`SnapshotAppendBufferStorage.AddRangeCore` (the strategy's primitive):**
+1. Count live entries in `_snapshot` (first pass)
+2. Merge sorted `_snapshot` (excluding `IsRemoved`) and the validated+sorted segments via `MergeSorted`
+3. Publish via `Interlocked.Exchange(_snapshot, mergedArray)` — **NOT under `_normalizeLock`** (see note below)
+
+**Why `_normalizeLock` is NOT used in `AddRangeCore`:** The lock guards the `(_snapshot, _appendCount)` pair atomically. `AddRangeCore` does NOT modify `_appendCount`, so the pair invariant (readers must see a consistent count alongside the snapshot they're reading) is preserved. The append buffer contents are entirely ignored by `AddRangeCore` — they remain valid for any concurrent `FindIntersecting` call that is currently scanning them, and will be drained naturally by the next `Normalize()` call. `Interlocked.Exchange` provides the required acquire/release fence for the snapshot swap.
 
 **Why the append buffer is bypassed (not drained):** Draining the buffer into the merge would require acquiring `_normalizeLock` to guarantee atomicity of the `(_snapshot, _appendCount)` update — introducing unnecessary contention. Buffer segments are always visible to `FindIntersecting` via its independent buffer scan regardless of whether a merge has occurred. Bypassing the buffer is correct, cheaper, and requires no coordination with any concurrent reader.
 
@@ -194,13 +197,13 @@ SnapshotAppendBufferStorage
 
 ### Alignment with Invariants
 
-| Invariant                          | How enforced                                                                                                                         |
-|------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
-| VPC.C.2 — No merging               | Normalization merges array positions, not segment data or statistics                                                                 |
-| VPC.C.3 — No overlapping segments  | `TryAdd`/`TryAddRange` call `FindIntersecting` before inserting; any overlapping segment is silently skipped (storage self-enforces) |
-| VPC.B.5 — Atomic state transitions | `Volatile.Write(_snapshot, ...)` — single-word publish; old snapshot valid until replaced                                            |
-| VPC.A.10 — User Path is read-only  | `FindIntersecting` reads only; all writes in normalize/add/remove are background-only                                                |
-| S.H.4 — Lock-free                  | `Volatile.Read/Write` only; no locks                                                                                                 |
+| Invariant                          | How enforced                                                                                                                    |
+|------------------------------------|---------------------------------------------------------------------------------------------------------------------------------|
+| VPC.C.2 — No merging               | Normalization merges array positions, not segment data or statistics                                                            |
+| VPC.C.3 — No overlapping segments  | `SegmentStorageBase.TryAdd`/`TryAddRange` call `FindIntersecting` before inserting; any overlapping segment is silently skipped |
+| VPC.B.5 — Atomic state transitions | `Volatile.Write(_snapshot, ...)` — single-word publish; old snapshot valid until replaced                                       |
+| VPC.A.10 — User Path is read-only  | `FindIntersecting` reads only; all writes in normalize/add/remove are background-only                                           |
+| S.H.4 — Lock-free                  | `Volatile.Read/Write` only; no locks                                                                                            |
 
 ---
 
@@ -260,12 +263,11 @@ LinkedListStrideIndexStorage
 
 ### Write Path (Background Thread)
 
-**Add segment (`TryAdd`):**
-1. Call `FindIntersecting` on the current linked list (via stride index) — if any existing segment overlaps the new segment, return `false` (skip, VPC.C.3 self-enforced)
-2. Insert new segment into `_list` at the correct sorted position via `InsertSorted` (uses stride index for O(log(n/N)) anchor lookup + O(N) local walk)
-3. Increment `_addsSinceLastNormalization`
-4. Return `true`
-5. Normalization is NOT triggered here — the executor calls `TryNormalize` explicitly after the storage step
+**Add segment (`TryAdd`):** *(VPC.C.3 check owned by `SegmentStorageBase.TryAdd`; `LinkedListStrideIndexStorage` implements `AddCore`)*
+1. `SegmentStorageBase.TryAdd` calls `FindIntersecting` on the current linked list (via stride index) — if any existing segment overlaps, return `false` (skip)
+2. `AddCore`: insert new segment into `_list` at the correct sorted position via `InsertSorted` (uses stride index for O(log(n/N)) anchor lookup + O(N) local walk); increment `_addsSinceLastNormalization`
+3. Return `true`
+4. Normalization is NOT triggered here — the executor calls `TryNormalize` explicitly after the storage step
 
 **Remove segment (logical removal):**
 1. Call `segment.TryMarkAsRemoved()` — sets `segment.IsRemoved = true` atomically (Interlocked.CompareExchange)
@@ -298,18 +300,26 @@ Pass 2 — physical cleanup (safe only after new index is live):
 
 ### TryAddRange Write Path (Background Thread)
 
-`TryAddRange(segments[])` is used when `FetchedChunks.Count > 1` (multi-gap partial hit). It validates overlap and inserts all non-overlapping segments, then normalizes the stride index exactly once:
+`TryAddRange(segments[])` is used when `FetchedChunks.Count > 1` (multi-gap partial hit). The base class `SegmentStorageBase` owns the validation loop; `LinkedListStrideIndexStorage` implements only the `AddRangeCore` primitive that inserts the validated batch and rebuilds the stride index once:
 
+**Base class (`SegmentStorageBase.TryAddRange`):**
 1. If `segments` is empty: return an empty array (no-op)
 2. Sort `segments` in-place by range start (incoming order is not guaranteed)
-3. For each segment in the sorted array: call `FindIntersecting` against the current linked list — if no overlap, call `InsertSorted` to insert into `_list` and add to the stored-segments list; otherwise skip. Intra-batch overlap is automatically detected because each accepted segment is in the list before the next one is checked
-4. Increment `_addsSinceLastNormalization` by the number of stored segments
-5. If any segments were stored: call `NormalizeStrideIndex()` once — rebuilds the stride index over all newly-inserted segments in a single two-pass traversal
-6. Return the stored segments array
+3. For each segment, call `FindIntersecting` against the current linked list — collect only non-overlapping segments into a list
+4. If no segments passed validation: return an empty array (no-op)
+5. Call `AddRangeCore(validatedArray)` — delegates to the concrete strategy
+6. Increment `_count` by the number of stored segments
+7. Return the stored segments array
 
-**Why a single `NormalizeStrideIndex()` at the end:** `TryAddRange` accumulates `_addsSinceLastNormalization` by the full count of inserted segments. Rather than letting the executor's subsequent `TryNormalize` call discover the threshold was exceeded, `TryAddRange` calls `NormalizeStrideIndex()` directly after all insertions — ensuring the stride index is rebuilt exactly once regardless of how many segments were added.
+**`LinkedListStrideIndexStorage.AddRangeCore` (the strategy's primitive):**
+1. For each validated segment: call `InsertSorted` to insert into `_list` and increment `_addsSinceLastNormalization`
+2. Return — normalization is **not** triggered here (see note below)
 
-**`_addsSinceLastNormalization` reset:** `NormalizeStrideIndex` resets `_addsSinceLastNormalization = 0` in its `finally` block. `TryAddRange` does not need to reset it redundantly.
+**Why `AddRangeCore` must NOT call `NormalizeStrideIndex` directly:** `AddRangeCore` is called from `SegmentStorageBase.TryAddRange`, which returns immediately to the executor. The executor then calls `TryNormalize` — the only path where TTL-expired segments are discovered and returned to the caller so that `OnSegmentRemoved` / `TtlSegmentExpired` diagnostics fire. Calling `NormalizeStrideIndex` inside `AddRangeCore` would:
+- Discard the expired-segments list (`out _` — inaccessible to the executor), silently breaking eviction policy aggregates and diagnostics.
+- Reset `_addsSinceLastNormalization = 0`, causing the executor's `TryNormalize` to always see `ShouldNormalize() == false` and skip, permanently preempting the normalization cadence.
+
+The stride index will be stale until the executor's `TryNormalize` fires, but all newly-inserted segments are immediately live in `_list` and are found by `FindIntersecting` regardless of index staleness.
 
 ### Random Segment Sampling and Eviction Bias
 
@@ -346,12 +356,12 @@ Same as Strategy 1: User Path threads read via `Volatile.Read(_strideIndex)`. Th
 
 ### Alignment with Invariants
 
-| Invariant                          | How enforced                                                                                                                         |
-|------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
-| VPC.C.2 — No merging               | Insert adds a new independent node; no existing node data is modified                                                                |
-| VPC.C.3 — No overlapping segments  | `TryAdd`/`TryAddRange` call `FindIntersecting` before inserting; any overlapping segment is silently skipped (storage self-enforces) |
-| VPC.B.5 — Atomic state transitions | `Interlocked.Exchange(_strideIndex, ...)` — stride index atomically replaced; physical removal deferred until after publish          |
-| VPC.A.10 — User Path is read-only  | `FindIntersecting` reads only; all structural mutations are background-only                                                          |
+| Invariant                          | How enforced                                                                                                                    |
+|------------------------------------|---------------------------------------------------------------------------------------------------------------------------------|
+| VPC.C.2 — No merging               | Insert adds a new independent node; no existing node data is modified                                                           |
+| VPC.C.3 — No overlapping segments  | `SegmentStorageBase.TryAdd`/`TryAddRange` call `FindIntersecting` before inserting; any overlapping segment is silently skipped |
+| VPC.B.5 — Atomic state transitions | `Interlocked.Exchange(_strideIndex, ...)` — stride index atomically replaced; physical removal deferred until after publish     |
+| VPC.A.10 — User Path is read-only  | `FindIntersecting` reads only; all structural mutations are background-only                                                     |
 
 ---
 
