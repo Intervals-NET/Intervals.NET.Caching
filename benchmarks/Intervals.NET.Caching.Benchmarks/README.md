@@ -60,11 +60,12 @@ benchmarks/Intervals.NET.Caching.Benchmarks/
 │   ├── ExecutionStrategyBenchmarks.cs # 2 methods × 9 params = 18 cases
 │   └── ConstructionBenchmarks.cs     # 4 methods, no params = 4 cases
 ├── VisitedPlaces/
-│   ├── CacheHitBenchmarks.cs         # 1 method × 32 params = 32 cases
-│   ├── CacheMissBenchmarks.cs        # 2 methods × 16 params = 32 cases
-│   ├── PartialHitBenchmarks.cs       # 2 methods × ~24 params = ~48 cases
-│   ├── ScenarioBenchmarks.cs         # 3 methods × 12 params = 36 cases
-│   └── ConstructionBenchmarks.cs     # 4 methods, no params = 4 cases
+│   ├── CacheHitBenchmarks.cs              # 1 method × 32 params = 32 cases
+│   ├── CacheMissBenchmarks.cs             # 2 methods × 12 params = 24 cases
+│   ├── SingleGapPartialHitBenchmarks.cs   # 1 method × 16 params = 16 cases
+│   ├── MultipleGapsPartialHitBenchmarks.cs # 1 method × 32 params = 32 cases
+│   ├── ScenarioBenchmarks.cs              # 3 methods × 12 params = 36 cases
+│   └── ConstructionBenchmarks.cs          # 4 methods, no params = 4 cases
 ├── Layered/
 │   ├── UserFlowBenchmarks.cs         # 9 methods × 3 params = 27 cases
 │   ├── RebalanceBenchmarks.cs        # 3 methods × 2 params = 6 cases

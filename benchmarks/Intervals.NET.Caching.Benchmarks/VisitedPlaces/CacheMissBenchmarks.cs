@@ -37,10 +37,11 @@ public class CacheMissBenchmarks
     private const int GapSize = 10; // Gap between segments during population
 
     /// <summary>
-    /// Total segments in cache — tests scaling from small to very large segment counts.
+    /// Total segments in cache — tests scaling from small to large segment counts.
     /// Values straddle the ~50K crossover point between Snapshot and LinkedList strategies.
+    /// 1M removed: populating 1M segments per iteration is prohibitively expensive in setup.
     /// </summary>
-    [Params(10, 1_000, 100_000, 1_000_000)]
+    [Params(10, 1_000, 100_000)]
     public int TotalSegments { get; set; }
 
     /// <summary>

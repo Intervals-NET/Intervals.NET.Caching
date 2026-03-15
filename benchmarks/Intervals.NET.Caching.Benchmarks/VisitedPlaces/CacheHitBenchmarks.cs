@@ -12,10 +12,10 @@ namespace Intervals.NET.Caching.Benchmarks.VisitedPlaces;
 /// EXECUTION FLOW: User Request > Full cache hit, zero data source calls
 /// 
 /// Methodology:
-/// - Pre-populated cache with TotalSegments adjacent segments
+/// - Cache created and populated once in GlobalSetup (population is NOT part of the measurement)
 /// - Request spans exactly HitSegments adjacent segments (guaranteed full hit)
-/// - Background activity excluded via IterationCleanup
-/// - Fresh cache per iteration via IterationSetup
+/// - CacheHit only reads: normalization events may update LRU timestamps but do not
+///   structurally modify the segment collection, so GlobalSetup state remains valid
 /// 
 /// Parameters:
 /// - HitSegments: Number of segments the request spans (read-side scaling)
@@ -43,7 +43,7 @@ public class CacheHitBenchmarks
     /// <summary>
     /// Total segments in cache — measures storage size impact on FindIntersecting.
     /// </summary>
-    [Params(1_000, 100_000)]
+    [Params(1_000, 10_000)]
     public int TotalSegments { get; set; }
 
     /// <summary>
@@ -58,42 +58,35 @@ public class CacheHitBenchmarks
     [Params(EvictionSelectorType.Lru, EvictionSelectorType.Fifo)]
     public EvictionSelectorType EvictionSelector { get; set; }
 
+    /// <summary>
+    /// GlobalSetup runs once per parameter combination.
+    /// Population cost is paid once, not repeated every iteration.
+    /// Safe because CacheHit is a pure read: it does not add or remove segments.
+    /// </summary>
     [GlobalSetup]
     public void GlobalSetup()
     {
         _domain = new IntegerFixedStepDomain();
         _dataSource = new SynchronousDataSource(_domain);
 
+        // MaxSegmentCount must accommodate TotalSegments without eviction
+        _cache = VpcCacheHelpers.CreateCache(
+            _dataSource, _domain, StorageStrategy,
+            maxSegmentCount: TotalSegments + 1000,
+            selectorType: EvictionSelector);
+
+        // Populate TotalSegments adjacent segments (once per parameter combination)
+        VpcCacheHelpers.PopulateSegments(_cache, TotalSegments, SegmentSpan);
+
         // Pre-calculate the hit range: spans HitSegments adjacent segments
         // Segments are placed at [0,9], [10,19], [20,29], ...
-        // Hit range spans from segment 0 to segment (HitSegments-1)
         var hitStart = 0;
         var hitEnd = (HitSegments * SegmentSpan) - 1;
         _hitRange = Factories.Range.Closed<int>(hitStart, hitEnd);
     }
 
-    [IterationSetup]
-    public void IterationSetup()
-    {
-        // MaxSegmentCount must accommodate TotalSegments without eviction
-        _cache = VpcCacheHelpers.CreateCache(
-            _dataSource, _domain, StorageStrategy,
-            maxSegmentCount: TotalSegments + 1000, // means no eviction during benchmark
-            selectorType: EvictionSelector);
-
-        // Populate TotalSegments adjacent segments
-        VpcCacheHelpers.PopulateSegments(_cache, TotalSegments, SegmentSpan);
-    }
-
-    [IterationCleanup]
-    public void IterationCleanup()
-    {
-        _cache?.WaitForIdleAsync().GetAwaiter().GetResult();
-    }
-
     /// <summary>
     /// Measures user-facing latency for a full cache hit spanning HitSegments segments.
-    /// Background normalization (if triggered) is excluded via cleanup.
     /// </summary>
     [Benchmark]
     public async Task<ReadOnlyMemory<int>> CacheHit()
