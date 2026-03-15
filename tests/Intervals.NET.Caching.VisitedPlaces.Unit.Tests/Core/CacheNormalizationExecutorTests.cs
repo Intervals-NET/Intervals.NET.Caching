@@ -7,12 +7,11 @@ using Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Selectors;
 using Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 using Intervals.NET.Caching.VisitedPlaces.Tests.Infrastructure;
 using Intervals.NET.Caching.VisitedPlaces.Tests.Infrastructure.Helpers;
-using Intervals.NET.Domain.Default.Numeric;
 
 namespace Intervals.NET.Caching.VisitedPlaces.Unit.Tests.Core;
 
 /// <summary>
-/// Unit tests for <see cref="CacheNormalizationExecutor{TRange,TData,TDomain}"/>.
+/// Unit tests for <see cref="CacheNormalizationExecutor{TRange,TData}"/>.
 /// Verifies the four-step Background Path sequence:
 /// (1) statistics update, (2) store data, (3) evaluate eviction, (4) execute eviction.
 /// </summary>
@@ -306,7 +305,7 @@ public sealed class CacheNormalizationExecutorTests
             [new MaxSegmentCountPolicy<int, int>(1)],
             throwingSelector,
             _diagnostics);
-        var executor = new CacheNormalizationExecutor<int, int, IntegerFixedStepDomain>(
+        var executor = new CacheNormalizationExecutor<int, int>(
             _storage,
             evictionEngine,
             _diagnostics);
@@ -342,7 +341,7 @@ public sealed class CacheNormalizationExecutorTests
             [new MaxSegmentCountPolicy<int, int>(100)],
             new LruEvictionSelector<int, int>(),
             _diagnostics);
-        var executor = new CacheNormalizationExecutor<int, int, IntegerFixedStepDomain>(
+        var executor = new CacheNormalizationExecutor<int, int>(
             throwingStorage,
             evictionEngine,
             _diagnostics);
@@ -454,7 +453,7 @@ public sealed class CacheNormalizationExecutorTests
             [new MaxSegmentCountPolicy<int, int>(100)],
             new LruEvictionSelector<int, int>(),
             _diagnostics);
-        var executor = new CacheNormalizationExecutor<int, int, IntegerFixedStepDomain>(
+        var executor = new CacheNormalizationExecutor<int, int>(
             throwingStorage,
             evictionEngine,
             _diagnostics);
@@ -478,7 +477,7 @@ public sealed class CacheNormalizationExecutorTests
 
     #region Helpers — Factories
 
-    private (CacheNormalizationExecutor<int, int, IntegerFixedStepDomain> Executor,
+    private (CacheNormalizationExecutor<int, int> Executor,
              EvictionEngine<int, int> Engine)
         CreateExecutorWithEngine(int maxSegmentCount)
     {
@@ -490,7 +489,7 @@ public sealed class CacheNormalizationExecutorTests
             selector,
             _diagnostics);
 
-        var executor = new CacheNormalizationExecutor<int, int, IntegerFixedStepDomain>(
+        var executor = new CacheNormalizationExecutor<int, int>(
             _storage,
             evictionEngine,
             _diagnostics);
@@ -498,7 +497,7 @@ public sealed class CacheNormalizationExecutorTests
         return (executor, evictionEngine);
     }
 
-    private CacheNormalizationExecutor<int, int, IntegerFixedStepDomain> CreateExecutor(
+    private CacheNormalizationExecutor<int, int> CreateExecutor(
         int maxSegmentCount) => CreateExecutorWithEngine(maxSegmentCount).Executor;
 
     /// <summary>

@@ -68,7 +68,7 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
 
         // Cache normalization executor: single writer for Add, executes the four-step Background Path.
         // TTL expiration is handled lazily inside TryNormalize — no separate TtlEngine needed.
-        var executor = new CacheNormalizationExecutor<TRange, TData, TDomain>(
+        var executor = new CacheNormalizationExecutor<TRange, TData>(
             storage,
             evictionEngine,
             cacheDiagnostics,

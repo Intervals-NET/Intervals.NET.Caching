@@ -1,4 +1,3 @@
-using Intervals.NET.Domain.Abstractions;
 using Intervals.NET.Caching.Dto;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
 using Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
@@ -10,9 +9,8 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Background;
 /// Processes cache normalization requests on the Background Storage Loop (single writer).
 /// See docs/visited-places/ for design details.
 /// </summary>
-internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
+internal sealed class CacheNormalizationExecutor<TRange, TData>
     where TRange : IComparable<TRange>
-    where TDomain : IRangeDomain<TRange>
 {
     private readonly ISegmentStorage<TRange, TData> _storage;
     private readonly EvictionEngine<TRange, TData> _evictionEngine;
@@ -21,7 +19,7 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
     private readonly TimeProvider _timeProvider;
 
     /// <summary>
-    /// Initializes a new <see cref="CacheNormalizationExecutor{TRange,TData,TDomain}"/>.
+    /// Initializes a new <see cref="CacheNormalizationExecutor{TRange,TData}"/>.
     /// </summary>
     public CacheNormalizationExecutor(
         ISegmentStorage<TRange, TData> storage,
