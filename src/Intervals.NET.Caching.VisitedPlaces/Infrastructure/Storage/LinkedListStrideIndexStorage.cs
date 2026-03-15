@@ -387,9 +387,8 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
             {
                 var seg = current.Value;
 
-                if (!seg.IsRemoved && seg.IsExpired(utcNowTicks))
+                if (seg.IsExpired(utcNowTicks) && TryRemove(seg))
                 {
-                    TryRemove(seg);
                     (expired ??= []).Add(seg);
                 }
 
