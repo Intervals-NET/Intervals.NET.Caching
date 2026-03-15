@@ -34,7 +34,7 @@ Key structural rules:
 
 ## Threading Model
 
-VPC has **two execution contexts** when TTL is disabled and **three** when TTL is enabled:
+VPC has **two execution contexts** (User Thread and Background Storage Loop):
 
 ### Context 1 — User Thread (User Path)
 
@@ -53,27 +53,15 @@ The User Path is **strictly read-only** with respect to cache state (Invariant V
 Single background task that dequeues `CacheNormalizationRequest`s in **strict FIFO order**. Responsibilities (four steps per event, Invariant VPC.B.3):
 
 1. **Update metadata** — call `engine.UpdateMetadata(usedSegments)` → `selector.UpdateMetadata(...)`
-2. **Store** — add fetched data as new segment(s); call `engine.InitializeSegment(segment)` per segment
+2. **Store** — add fetched data as new segment(s); call `engine.InitializeSegment(segment)` per segment; call `storage.TryNormalize(out expiredSegments)` to flush the append buffer and discover TTL-expired segments
 3. **Evaluate + execute eviction** — call `engine.EvaluateAndExecute(allSegments, justStored)`; only if new data was stored
 4. **Post-removal** — call `storage.Remove(segment)` and `engine.OnSegmentRemoved(segment)` per evicted segment
 
-**Single writer:** This is the sole context that mutates `CachedSegments` (add path). TTL-driven removals also mutate storage but coordinate via atomic `MarkAsRemoved()`.
+**Single writer:** This is the sole context that mutates `CachedSegments`. There is no separate TTL Loop — TTL expiration is a timestamp check performed by the Background Path during `TryNormalize`.
 
 **No supersession:** Every event is processed. VPC does not implement latest-intent-wins. This is required for metadata accuracy (e.g., LRU `LastAccessedAt` depends on every access being recorded in order — Invariant VPC.B.1a).
 
 **No I/O:** The Background Storage Loop never calls `IDataSource`. Data is always delivered by the User Path's event payload.
-
-### Context 3 — TTL Loop (only when `SegmentTtl` is configured)
-
-Fire-and-forget background work dispatched on the **thread pool** via `ConcurrentWorkScheduler`. Each work item:
-
-1. Receives a newly-stored segment from `CacheNormalizationExecutor` via `TtlEngine.ScheduleExpirationAsync`
-2. Awaits `Task.Delay(remainingTtl)` independently on the thread pool
-3. On expiry, calls `segment.MarkAsRemoved()` — if it returns `true` (first caller), removes the segment from storage and notifies the eviction engine
-
-TTL work items run **concurrently** — multiple delays may be in-flight simultaneously. Thread safety with the Background Storage Loop is provided by `CachedSegment.MarkAsRemoved()` (`Interlocked.CompareExchange`) and lock-free policy aggregates in `EvictionEngine`.
-
-**TOCTOU interaction with `Normalize()`:** `SnapshotAppendBufferStorage.Normalize()` counts live segments in one pass, then merges in a second pass, re-checking `IsRemoved` inline. A TTL work item may mark a segment as removed between these two passes, causing fewer elements to be written than the pre-allocated array size. `MergeSorted` trims the result array to the actual write count before publishing (Invariant VPC.C.8). This is the only required coordination point — no lock or barrier is needed between the TTL Loop and `Normalize()`.
 
 ---
 
@@ -94,20 +82,14 @@ TTL work items run **concurrently** — multiple delays may be in-flight simulta
 
 ## Single-Writer Details
 
-**Write ownership:** Only `CacheNormalizationExecutor` (Background Storage Loop) adds segments to `CachedSegments`. Both `CacheNormalizationExecutor` and `TtlExpirationExecutor` (TTL Loop) may remove segments, coordinated by `CachedSegment.MarkAsRemoved()`.
+**Write ownership:** Only `CacheNormalizationExecutor` (Background Storage Loop) adds or removes segments from `CachedSegments`. TTL-driven removal also runs on the Background Storage Loop (via `TryNormalize`), so there is a single writer at all times.
 
 **Read safety:** The User Path reads `CachedSegments` without locks because:
 - Storage strategy transitions are atomic (snapshot swap or linked-list pointer update)
 - No partial states are visible — a segment is either fully present (with valid data and metadata) or absent
-- The Background Storage Loop is the sole writer to the add path; reads never contend with writes on the add path
+- The Background Storage Loop is the sole writer; reads never contend with writes
 
-**TTL coordination:** When a TTL work item fires for a segment already evicted by the Background Path, `MarkAsRemoved()` returns `false` and the TTL actor performs a no-op (Invariant VPC.T.1). When the Background Path evicts a segment while a TTL work item is mid-delay, the TTL actor later calls `MarkAsRemoved()` which returns `false` (already removed).
-
-**TtlExpirationExecutor thread safety proof:** Both `TtlExpirationExecutor` and `CacheNormalizationExecutor` may call `ISegmentStorage.TryRemove` and `EvictionEngine.OnSegmentRemoved` concurrently. Safety is guaranteed at each point of contention:
-
-- `TryRemove` internally calls `CachedSegment.TryMarkAsRemoved()` via `Interlocked.CompareExchange` — exactly one caller wins; the other returns `false` and becomes a no-op
-- `EvictionEngine.OnSegmentRemoved` is only reached by the winner of `TryRemove`, so double-notification is impossible
-- `EvictionEngine.OnSegmentRemoved` updates `MaxTotalSpanPolicy._totalSpan` via `Interlocked.Add` — safe under concurrent calls from any thread
+**TTL coordination:** When a segment's TTL has expired, `FindIntersecting` filters it from results immediately (lazy expiration on read). The Background Path physically removes it during the next `TryNormalize` pass. If a segment is evicted by a capacity policy before `TryNormalize` discovers its TTL has expired, `TryMarkAsRemoved()` returns `false` for the second caller (no-op). See Invariant VPC.T.1.
 
 ---
 
@@ -160,18 +142,13 @@ Concurrent calls:
 
 ```
 VisitedPlacesCache.DisposeAsync()
-  ├─> UserRequestHandler.DisposeAsync()
-  │   └─> ISerialWorkScheduler.DisposeAsync()
-  │       ├─> Unbounded: await task chain completion
-  │       └─> Bounded: complete channel writer + await loop
-  └─> TtlEngine.DisposeAsync()  (only if SegmentTtl is configured)
-      ├─> Cancel disposal CancellationTokenSource
-      │   └─> All pending Task.Delay calls throw OperationCanceledException
-      ├─> ConcurrentWorkScheduler.DisposeAsync()
-      └─> Await TTL AsyncActivityCounter → 0
+  └─> UserRequestHandler.DisposeAsync()
+      └─> ISerialWorkScheduler.DisposeAsync()
+          ├─> Unbounded: await task chain completion
+          └─> Bounded: complete channel writer + await loop
 ```
 
-The normalization scheduler is always drained before the TTL engine is disposed. This ordering ensures that any normalization events in-flight (which may schedule new TTL work items) complete before the TTL subsystem is torn down.
+The normalization scheduler is drained to completion before disposal returns. Because there is no separate TTL Loop, no additional teardown is required — all background activity halts when the scheduler is drained.
 
 Post-disposal: all public methods throw `ObjectDisposedException` (checked via `Volatile.Read(ref _disposeState) != 0`).
 

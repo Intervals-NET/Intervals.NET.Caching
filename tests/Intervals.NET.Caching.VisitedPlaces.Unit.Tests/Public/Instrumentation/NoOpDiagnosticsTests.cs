@@ -36,7 +36,6 @@ public sealed class NoOpDiagnosticsTests
             diagnostics.EvictionExecuted();
             diagnostics.EvictionSegmentRemoved();
             diagnostics.TtlSegmentExpired();
-            diagnostics.TtlWorkItemScheduled();
         });
 
         Assert.Null(exception);

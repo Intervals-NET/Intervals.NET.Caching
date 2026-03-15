@@ -67,8 +67,8 @@ public sealed class LinkedListStrideIndexStorageOptions<TRange, TData>
     }
 
     /// <inheritdoc/>
-    internal override ISegmentStorage<TRange, TData> Create() =>
-        new LinkedListStrideIndexStorage<TRange, TData>(AppendBufferSize, Stride);
+    internal override ISegmentStorage<TRange, TData> Create(TimeProvider timeProvider) =>
+        new LinkedListStrideIndexStorage<TRange, TData>(AppendBufferSize, Stride, timeProvider);
 
     /// <inheritdoc/>
     public bool Equals(LinkedListStrideIndexStorageOptions<TRange, TData>? other)

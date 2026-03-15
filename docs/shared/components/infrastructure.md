@@ -115,13 +115,12 @@ IWorkScheduler<TWorkItem>                         — generic: Publish + Dispose
         └── ISupersessionWorkScheduler<TWorkItem> — supersession: LastWorkItem + cancel-previous contract
 
 WorkSchedulerBase<TWorkItem>                      — generic base: execution pipeline, disposal guard
-  ├── SerialWorkSchedulerBase<TWorkItem>          — template method: sealed Publish + Dispose pipeline
-  │     ├── UnboundedSerialWorkScheduler          — task chaining (FIFO, no cancel)
-  │     ├── BoundedSerialWorkScheduler            — channel-based (FIFO, no cancel)
-  │     └── SupersessionWorkSchedulerBase         — cancel-previous + LastWorkItem (ISupersessionWorkScheduler)
-  │           ├── UnboundedSupersessionWorkScheduler — task chaining (supersession)
-  │           └── BoundedSupersessionWorkScheduler   — channel-based (supersession)
-  └── ConcurrentWorkScheduler                     — independent ThreadPool dispatch
+  └── SerialWorkSchedulerBase<TWorkItem>          — template method: sealed Publish + Dispose pipeline
+        ├── UnboundedSerialWorkScheduler          — task chaining (FIFO, no cancel)
+        ├── BoundedSerialWorkScheduler            — channel-based (FIFO, no cancel)
+        └── SupersessionWorkSchedulerBase         — cancel-previous + LastWorkItem (ISupersessionWorkScheduler)
+              ├── UnboundedSupersessionWorkScheduler — task chaining (supersession)
+              └── BoundedSupersessionWorkScheduler   — channel-based (supersession)
 ```
 
 ### ISchedulableWorkItem
@@ -141,7 +140,6 @@ Implementations must make `Cancel()` and `Dispose()` safe to call multiple times
 **Canonical implementations:**
 - `ExecutionRequest<TRange,TData,TDomain>` (SlidingWindow) — supersession serial use; owns its `CancellationTokenSource`; cancelled automatically by `UnboundedSupersessionWorkScheduler` on supersession
 - `CacheNormalizationRequest<TRange,TData,TDomain>` (VisitedPlacesCache) — FIFO serial use; `Cancel()` is an intentional no-op (VPC.A.11: normalization requests are NEVER cancelled)
-- `TtlExpirationWorkItem<TRange,TData>` (VisitedPlacesCache) — concurrent use; `Cancel()` and `Dispose()` are intentional no-ops because cancellation is driven by a shared `CancellationToken` passed in at construction
 
 ### IWorkScheduler\<TWorkItem\>
 
@@ -382,52 +380,23 @@ Extends `SupersessionWorkSchedulerBase`. Implements channel-based serialization 
 
 **Consumer:** SlidingWindow's `IntentController` / `SlidingWindowCache` when bounded scheduler is configured — latest rebalance intent supersedes all previous ones.
 
-### ConcurrentWorkScheduler\<TWorkItem\>
-
-**Dispatch mechanism:** Each work item is dispatched independently to the ThreadPool via `ThreadPool.QueueUserWorkItem`. No ordering or exclusion guarantees.
-
-```csharp
-ThreadPool.QueueUserWorkItem(
-    static state => _ = state.scheduler.ExecuteWorkItemCoreAsync(state.workItem),
-    state: (scheduler: this, workItem),
-    preferLocal: false);
-```
-
-**Primary consumer:** TTL expiration path (VisitedPlacesCache). Each TTL work item awaits `Task.Delay(remaining)` independently — serialized execution would block all subsequent delays behind each other, making a concurrent scheduler essential.
-
-**Cancellation and disposal:** Because items are independent, there is no meaningful "last item" to cancel on disposal. Cancellation of all in-flight items is driven by a shared `CancellationToken` passed into each work item at construction. The cache cancels that token during its `DisposeAsync`, causing all pending `Task.Delay` calls to throw `OperationCanceledException` and drain immediately. The cache then awaits the TTL activity counter going idle to confirm all items have finished. `DisposeAsyncCore` is a no-op.
-
-**Characteristics:**
-
-| Property       | Value                                           |
-|----------------|-------------------------------------------------|
-| Queue bound    | Unbounded (each item on ThreadPool)             |
-| Caller blocks? | Never — always fire-and-forget                  |
-| Ordering       | None — items are fully independent              |
-| Backpressure   | None                                            |
-| LastWorkItem   | N/A — does not implement `ISerialWorkScheduler` |
-
-**When to use:** Work items that must execute concurrently (e.g. TTL delays); items whose concurrent execution is safe via atomic operations.
-
-**Disposal teardown (`DisposeAsyncCore`):** No-op — drain is owned by the caller.
-
 ---
 
-## Comparison: All Five Schedulers
+## Comparison: All Four Schedulers
 
-| Concern                | UnboundedSerialWorkScheduler  | UnboundedSupersessionWorkScheduler     | BoundedSerialWorkScheduler           | BoundedSupersessionWorkScheduler     | ConcurrentWorkScheduler         |
-|------------------------|-------------------------------|----------------------------------------|--------------------------------------|--------------------------------------|---------------------------------|
-| Execution order        | Serial (one at a time)        | Serial (one at a time)                 | Serial (one at a time)               | Serial (one at a time)               | Concurrent (all at once)        |
-| Serialization          | Task continuation chaining    | Task continuation chaining             | Bounded channel + single reader loop | Bounded channel + single reader loop | None                            |
-| Caller blocking        | Never                         | Never                                  | Only when channel full               | Only when channel full               | Never                           |
-| Memory                 | O(1) task reference           | O(1) task reference                    | O(capacity)                          | O(capacity)                          | O(N in-flight items)            |
-| Backpressure           | None                          | None                                   | Yes                                  | Yes                                  | None                            |
-| Cancel-previous-on-pub | No — FIFO                     | Yes — supersession                     | No — FIFO                            | Yes — supersession                   | No                              |
-| LastWorkItem           | No                            | Yes (`ISupersessionWorkScheduler`)     | No                                   | Yes (`ISupersessionWorkScheduler`)   | No                              |
-| Cancel-on-dispose      | No                            | Yes (last item)                        | No                                   | Yes (last item)                      | No (shared CTS owned by caller) |
-| Implements             | `ISerialWorkScheduler`        | `ISupersessionWorkScheduler`           | `ISerialWorkScheduler`               | `ISupersessionWorkScheduler`         | `IWorkScheduler`                |
-| Consumer               | VisitedPlacesCache (VPC.A.11) | SlidingWindowCache (unbounded default) | VisitedPlacesCache (bounded opt-in)  | SlidingWindowCache (bounded opt-in)  | TTL expiration path             |
-| Default?               | Yes (VPC)                     | Yes (SWC)                              | No — opt-in                          | No — opt-in                          | TTL path only                   |
+| Concern                | UnboundedSerialWorkScheduler  | UnboundedSupersessionWorkScheduler     | BoundedSerialWorkScheduler           | BoundedSupersessionWorkScheduler     |
+|------------------------|-------------------------------|----------------------------------------|--------------------------------------|--------------------------------------|
+| Execution order        | Serial (one at a time)        | Serial (one at a time)                 | Serial (one at a time)               | Serial (one at a time)               |
+| Serialization          | Task continuation chaining    | Task continuation chaining             | Bounded channel + single reader loop | Bounded channel + single reader loop |
+| Caller blocking        | Never                         | Never                                  | Only when channel full               | Only when channel full               |
+| Memory                 | O(1) task reference           | O(1) task reference                    | O(capacity)                          | O(capacity)                          |
+| Backpressure           | None                          | None                                   | Yes                                  | Yes                                  |
+| Cancel-previous-on-pub | No — FIFO                     | Yes — supersession                     | No — FIFO                            | Yes — supersession                   |
+| LastWorkItem           | No                            | Yes (`ISupersessionWorkScheduler`)     | No                                   | Yes (`ISupersessionWorkScheduler`)   |
+| Cancel-on-dispose      | No                            | Yes (last item)                        | No                                   | Yes (last item)                      |
+| Implements             | `ISerialWorkScheduler`        | `ISupersessionWorkScheduler`           | `ISerialWorkScheduler`               | `ISupersessionWorkScheduler`         |
+| Consumer               | VisitedPlacesCache (VPC.A.11) | SlidingWindowCache (unbounded default) | VisitedPlacesCache (bounded opt-in)  | SlidingWindowCache (bounded opt-in)  |
+| Default?               | Yes (VPC)                     | Yes (SWC)                              | No — opt-in                          | No — opt-in                          |
 
 ---
 

@@ -1,7 +1,6 @@
 using Intervals.NET.Domain.Abstractions;
 using Intervals.NET.Caching.Dto;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
-using Intervals.NET.Caching.VisitedPlaces.Core.Ttl;
 using Intervals.NET.Caching.VisitedPlaces.Infrastructure.Storage;
 using Intervals.NET.Caching.VisitedPlaces.Public.Instrumentation;
 
@@ -18,7 +17,8 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
     private readonly ISegmentStorage<TRange, TData> _storage;
     private readonly EvictionEngine<TRange, TData> _evictionEngine;
     private readonly IVisitedPlacesCacheDiagnostics _diagnostics;
-    private readonly TtlEngine<TRange, TData>? _ttlEngine;
+    private readonly TimeSpan? _segmentTtl;
+    private readonly TimeProvider _timeProvider;
 
     /// <summary>
     /// Initializes a new <see cref="CacheNormalizationExecutor{TRange,TData,TDomain}"/>.
@@ -27,18 +27,26 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
         ISegmentStorage<TRange, TData> storage,
         EvictionEngine<TRange, TData> evictionEngine,
         IVisitedPlacesCacheDiagnostics diagnostics,
-        TtlEngine<TRange, TData>? ttlEngine = null)
+        TimeSpan? segmentTtl = null,
+        TimeProvider? timeProvider = null)
     {
         _storage = storage;
         _evictionEngine = evictionEngine;
         _diagnostics = diagnostics;
-        _ttlEngine = ttlEngine;
+        _segmentTtl = segmentTtl;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <summary>
     /// Executes a single cache normalization request through the four-step sequence.
     /// </summary>
-    public async Task ExecuteAsync(CacheNormalizationRequest<TRange, TData> request, CancellationToken _)
+    /// <remarks>
+    /// This method is currently fully synchronous and returns <see cref="Task.CompletedTask"/>.
+    /// The <c>Task</c> return type is required by the scheduler's delegate contract.
+    /// TODO: If this method remains synchronous, consider refactoring to <c>void Execute(...)</c>
+    /// and adapting the scheduler call site to wrap it: <c>(evt, ct) =&gt; { Execute(evt, ct); return Task.CompletedTask; }</c>.
+    /// </remarks>
+    public Task ExecuteAsync(CacheNormalizationRequest<TRange, TData> request, CancellationToken _)
     {
         try
         {
@@ -68,11 +76,24 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
                 // The bulk path reduces this to a single O(totalSegments) normalization.
                 if (request.FetchedChunks.Count > 1)
                 {
-                    justStoredSegments = await StoreBulkAsync(request.FetchedChunks).ConfigureAwait(false);
+                    justStoredSegments = StoreBulk(request.FetchedChunks);
                 }
                 else
                 {
-                    justStoredSegments = await StoreSingleAsync(request.FetchedChunks[0]).ConfigureAwait(false);
+                    justStoredSegments = StoreSingle(request.FetchedChunks[0]);
+                }
+            }
+
+            // Step 2b: TryNormalize — called unconditionally after every store step.
+            // The storage decides internally whether the threshold is met.
+            // Expired segments discovered here are removed from eviction policy aggregates
+            // and reported via diagnostics (lazy TTL expiration, Invariant VPC.T.1).
+            if (_storage.TryNormalize(out var expiredSegments) && expiredSegments != null)
+            {
+                foreach (var expired in expiredSegments)
+                {
+                    _evictionEngine.OnSegmentRemoved(expired);
+                    _diagnostics.TtlSegmentExpired();
                 }
             }
 
@@ -86,14 +107,18 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
                 var evicted = false;
                 foreach (var segment in _evictionEngine.EvaluateAndExecute(justStoredSegments))
                 {
-                    if (!_storage.TryRemove(segment))
+                    // Eviction candidates are sampled from live storage (TryGetRandomSegment
+                    // filters IsRemoved and IsExpired). TryNormalize physically removes expired
+                    // segments before this loop runs — so the candidate is always live at this
+                    // point. TryRemove guards against the degenerate case: if the segment was
+                    // already removed, OnSegmentRemoved is skipped to prevent a double-decrement
+                    // of policy aggregates.
+                    if (_storage.TryRemove(segment))
                     {
-                        continue; // TTL actor already claimed this segment — skip.
+                        _evictionEngine.OnSegmentRemoved(segment);
+                        _diagnostics.EvictionSegmentRemoved();
+                        evicted = true;
                     }
-
-                    _evictionEngine.OnSegmentRemoved(segment);
-                    _diagnostics.EvictionSegmentRemoved();
-                    evicted = true;
                 }
 
                 if (evicted)
@@ -104,17 +129,13 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
 
             _diagnostics.NormalizationRequestProcessed();
         }
-        catch (OperationCanceledException)
-        {
-            // Cancellation (e.g. from TtlEngine disposal CTS) must propagate so the
-            // scheduler's execution pipeline can fire WorkCancelled instead of WorkFailed.
-            throw;
-        }
         catch (Exception ex)
         {
             _diagnostics.BackgroundOperationFailed(ex);
             // Swallow: the background loop must survive individual request failures.
         }
+
+        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -123,8 +144,7 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
     /// Returns a single-element list if the chunk was stored, or <see langword="null"/> if it
     /// had no valid range or overlapped an existing segment.
     /// </summary>
-    private async Task<List<CachedSegment<TRange, TData>>?> StoreSingleAsync(
-        RangeChunk<TRange, TData> chunk)
+    private List<CachedSegment<TRange, TData>>? StoreSingle(RangeChunk<TRange, TData> chunk)
     {
         if (!chunk.Range.HasValue)
         {
@@ -139,27 +159,25 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
         }
 
         var data = new ReadOnlyMemory<TData>(chunk.Data.ToArray());
-        var segment = new CachedSegment<TRange, TData>(chunk.Range.Value, data);
+        var segment = new CachedSegment<TRange, TData>(chunk.Range.Value, data)
+        {
+            ExpiresAt = ComputeExpiresAt()
+        };
 
         _storage.Add(segment);
         _evictionEngine.InitializeSegment(segment);
         _diagnostics.BackgroundSegmentStored();
-
-        if (_ttlEngine != null)
-        {
-            await _ttlEngine.ScheduleExpirationAsync(segment).ConfigureAwait(false);
-        }
 
         return [segment];
     }
 
     /// <summary>
     /// Validates all chunks, builds the segment array, stores them in a single bulk call via
-    /// <see cref="ISegmentStorage{TRange,TData}.AddRange"/>, then initialises metadata and
-    /// schedules TTL for each. Used when there are two or more fetched chunks.
+    /// <see cref="ISegmentStorage{TRange,TData}.AddRange"/>, then initialises metadata for each.
+    /// Used when there are two or more fetched chunks.
     /// Returns the list of stored segments, or <see langword="null"/> if none were stored.
     /// </summary>
-    private async Task<List<CachedSegment<TRange, TData>>?> StoreBulkAsync(
+    private List<CachedSegment<TRange, TData>>? StoreBulk(
         IReadOnlyList<RangeChunk<TRange, TData>> chunks)
     {
         // ValidateChunks is a lazy enumerator — materialise to an array before calling AddRange
@@ -175,19 +193,13 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
         // Bulk-add: a single normalization pass for all incoming segments.
         _storage.AddRange(validated);
 
-        // Metadata init and TTL scheduling have no dependency on storage internals —
-        // they operate only on the segment objects themselves.
+        // Metadata init has no dependency on storage internals —
+        // it operates only on the segment objects themselves.
         var justStored = new List<CachedSegment<TRange, TData>>(validated.Length);
         foreach (var segment in validated)
         {
             _evictionEngine.InitializeSegment(segment);
             _diagnostics.BackgroundSegmentStored();
-
-            if (_ttlEngine != null)
-            {
-                await _ttlEngine.ScheduleExpirationAsync(segment).ConfigureAwait(false);
-            }
-
             justStored.Add(segment);
         }
 
@@ -203,6 +215,8 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
     private IEnumerable<CachedSegment<TRange, TData>> ValidateChunks(
         IReadOnlyList<RangeChunk<TRange, TData>> chunks)
     {
+        var expiresAt = ComputeExpiresAt();
+
         foreach (var chunk in chunks)
         {
             if (!chunk.Range.HasValue)
@@ -217,7 +231,18 @@ internal sealed class CacheNormalizationExecutor<TRange, TData, TDomain>
             }
 
             var data = new ReadOnlyMemory<TData>(chunk.Data.ToArray());
-            yield return new CachedSegment<TRange, TData>(chunk.Range.Value, data);
+            yield return new CachedSegment<TRange, TData>(chunk.Range.Value, data)
+            {
+                ExpiresAt = expiresAt
+            };
         }
     }
+
+    /// <summary>
+    /// Computes the absolute UTC tick expiry for a newly stored segment, or <see langword="null"/>
+    /// when TTL is not configured.
+    /// </summary>
+    private long? ComputeExpiresAt() => _segmentTtl.HasValue
+        ? _timeProvider.GetUtcNow().UtcTicks + _segmentTtl.Value.Ticks
+        : null;
 }

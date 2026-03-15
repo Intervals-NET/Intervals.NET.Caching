@@ -40,7 +40,4 @@ public sealed class NoOpDiagnostics : NoOpCacheDiagnostics, IVisitedPlacesCacheD
 
     /// <inheritdoc/>
     public void TtlSegmentExpired() { }
-
-    /// <inheritdoc/>
-    public void TtlWorkItemScheduled() { }
 }

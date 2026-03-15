@@ -7,16 +7,15 @@ This document is the canonical actor catalog for `VisitedPlacesCache`. Formal in
 ## Execution Contexts
 
 - **User Thread** — serves `GetDataAsync`; ends at event publish (fire-and-forget).
-- **Background Storage Loop** — single background thread; dequeues `CacheNormalizationRequest`s and performs all cache mutations (statistics updates, segment storage, eviction).
-- **TTL Loop** — independent background work dispatched fire-and-forget on the thread pool via `ConcurrentWorkScheduler`; awaits TTL delays and removes expired segments directly via `ISegmentStorage`. Only present when `VisitedPlacesCacheOptions.SegmentTtl` is non-null.
+- **Background Storage Loop** — single background thread; dequeues `CacheNormalizationRequest`s and performs all cache mutations (statistics updates, segment storage, eviction, TTL normalization).
 
-There are up to three execution contexts in VPC when TTL is enabled (compared to two in the no-TTL configuration, and three in SlidingWindowCache). There is no Decision Path; the Background Storage Loop combines the roles of event processing and cache mutation. The TTL Loop is an independent actor with its own scheduler and activity counter.
+There are exactly two execution contexts in VPC. There is no Decision Path and no separate TTL thread; the Background Storage Loop combines the roles of event processing, cache mutation, and TTL normalization. TTL expiration is handled lazily inside `TryNormalize` — expired segments are discovered during the normalization pass and removed on the same background thread.
 
 ### Execution Context Diagram
 
 ```
-User Thread                 Background Storage Loop        TTL Loop (if TTL enabled)
-──────────────────────      ───────────────────────────    ─────────────────────────
+User Thread                 Background Storage Loop
+────────────────────      ───────────────────────────
 GetDataAsync()
   │
   ├─ read CachedSegments    ← ISegmentStorage (read)
@@ -35,27 +34,22 @@ GetDataAsync()
        │         │ engine.UpdateMetadata()
        │         │ storage.Add(segment)
        │         │ engine.InitializeSegment()
+       │         │ storage.TryNormalize()
+       │         │   └─ [for each expired segment]
+       │         │        storage.Remove(segment)
+       │         │        engine.OnSegmentRemoved()
+       │         │        diagnostics.TtlSegmentExpired()
        │         │ engine.EvaluateAndExecute()
-       │         │   ├─ [if triggered]
-       │         │   │    executor.Execute()
-       │         │   │      └─ selector.TrySelectCandidate() [loop]
-       │         │   └─ [if TTL enabled]
-       │         │        ttlEngine.ScheduleExpiration()
-       │         │              └─ ConcurrentWorkScheduler.Enqueue()
-       │         │                       │
-       │         │                       │   Task.Delay(ttl) [fire-and-forget]
-       │         │                       │       │
-       │         │                       │   segment.MarkAsRemoved()
-       │         │                       │   storage.Remove()
-       │         │                       │   engine.OnSegmentRemoved()
-       │         │
+       │         │   └─ [if triggered]
+       │         │        executor.Execute()
+       │         │          └─ selector.TrySelectCandidate() [loop]
        │         └─ ActivityCounter.Decrement()
 ```
 
 **Key invariants illustrated:**
 - User Thread ends at `channel.Write` — never waits for background work
 - Background Storage Loop is the sole writer of `CachedSegments`
-- TTL Loop uses `segment.MarkAsRemoved()` (idempotent) to collaborate with eviction
+- TTL normalization runs on the Background Storage Loop via `TryNormalize`; `Remove(segment)` is idempotent via `IsRemoved` guard
 
 ---
 
@@ -300,31 +294,32 @@ The Eviction Executor is an **internal implementation detail of `EvictionEngine`
 
 ---
 
-### TTL Actor
+### TTL Normalization *(integrated into Background Path)*
+
+TTL expiration is **not a separate actor**. It is a lazy pass performed by `storage.TryNormalize()` at the end of each Background Path event processing cycle.
 
 **Responsibilities**
-- Receive a newly stored segment from `CacheNormalizationExecutor` (via `TtlEngine.ScheduleExpirationAsync`) when `SegmentTtl` is configured.
-- Await TTL delay fire-and-forget on the thread pool; on expiry, call `segment.MarkAsRemoved()` and, if first caller, perform storage removal and eviction engine notification.
-- Fire `IVisitedPlacesCacheDiagnostics.TtlSegmentExpired()` only on actual removal.
-- Support cancellation on disposal. See `docs/visited-places/architecture.md` — Threading Model, Context 3 for the authoritative mechanism description.
+- Discover expired segments (where `segment.ExpiresAt <= now`) during the `TryNormalize` pass.
+- Call `storage.Remove(segment)` on each expired segment (idempotent via `IsRemoved` guard).
+- Notify `EvictionEngine.OnSegmentRemoved()` so eviction metadata aggregates remain consistent.
+- Fire `IVisitedPlacesCacheDiagnostics.TtlSegmentExpired()` after each physical removal.
+- Filter expired segments at read time via `FindIntersecting` (`ExpiresAt` check during intersection query), providing immediate invisibility without waiting for the next normalization pass.
 
 **Non-responsibilities**
-- Does not interact with the normalization scheduler or the Background Storage Loop directly.
-- Does not serve user requests.
-- Does not evaluate eviction policies.
-- Does not block `WaitForIdleAsync` (uses its own private `AsyncActivityCounter` inside `TtlEngine`).
+- Does not run on a separate thread or task (no `Task.Delay`, no `ConcurrentWorkScheduler`).
+- Does not require a separate activity counter or disposal cancellation token.
+- Does not call `IDataSource`.
 
 **Invariant ownership**
-- VPC.T.1. Idempotent removal via `segment.MarkAsRemoved()` (Interlocked.CompareExchange)
-- VPC.T.2. Never blocks the User Path (fire-and-forget thread pool + dedicated activity counter)
-- VPC.T.3. Pending delays cancelled on disposal
-- VPC.T.4. TTL subsystem internals encapsulated behind `TtlEngine`
+- VPC.T.1. Idempotent removal via `IsRemoved` guard + `segment.MarkAsRemoved()` (`Volatile.Write`)
+- VPC.T.2. TTL expiration is lazy/passive — expired segments invisible to readers immediately via `FindIntersecting`, physically removed during `TryNormalize`
+- VPC.T.3. TTL expiration runs exclusively on the Background Path
+- VPC.T.4. `ExpiresAt` set once at storage time and immutable thereafter
 
 **Components**
-- `TtlEngine<TRange, TData>` — facade; owns scheduler, activity counter, disposal CTS, and executor wiring
-- `TtlExpirationExecutor<TRange, TData>` — internal to `TtlEngine`; awaits delay and performs removal
-- `TtlExpirationWorkItem<TRange, TData>` — internal to `TtlEngine`; carries segment reference and expiry timestamp
-- `ConcurrentWorkScheduler<TtlExpirationWorkItem<TRange, TData>>` — internal to `TtlEngine`; one per cache, TTL-dedicated
+- `SegmentStorageBase<TRange, TData>` — `TryNormalize` and `FindIntersecting` implement TTL behaviour
+- `SnapshotAppendBufferStorage<TRange, TData>` — concrete implementation
+- `LinkedListStrideIndexStorage<TRange, TData>` — concrete implementation
 
 ---
 
@@ -342,21 +337,21 @@ The Eviction Executor is an **internal implementation detail of `EvictionEngine`
 
 ## Actor Execution Context Summary
 
-| Actor                             | Execution Context                        | Invoked By                             |
-|-----------------------------------|------------------------------------------|----------------------------------------|
-| `UserRequestHandler`              | User Thread                              | User (public API)                      |
-| Event Publisher                   | User Thread (enqueue only, non-blocking) | `UserRequestHandler`                   |
-| Background Event Loop             | Background Storage Loop                  | Background task (awaits channel)       |
-| Background Path (Event Processor) | Background Storage Loop                  | Background Event Loop                  |
-| Segment Storage (read)            | User Thread                              | `UserRequestHandler`                   |
-| Segment Storage (write)           | Background Storage Loop or TTL Loop      | Background Path (eviction) / TTL Actor |
-| Eviction Policy                   | Background Storage Loop                  | Eviction Engine (via evaluator)        |
-| Eviction Engine                   | Background Storage Loop                  | Background Path                        |
-| Eviction Executor (internal)      | Background Storage Loop                  | Eviction Engine                        |
-| Eviction Selector (metadata)      | Background Storage Loop                  | Eviction Engine                        |
-| TTL Actor                         | Thread Pool (fire-and-forget)            | TTL scheduler (work item queue)        |
+| Actor                             | Execution Context                        | Invoked By                                     |
+|-----------------------------------|------------------------------------------|------------------------------------------------|
+| `UserRequestHandler`              | User Thread                              | User (public API)                              |
+| Event Publisher                   | User Thread (enqueue only, non-blocking) | `UserRequestHandler`                           |
+| Background Event Loop             | Background Storage Loop                  | Background task (awaits channel)               |
+| Background Path (Event Processor) | Background Storage Loop                  | Background Event Loop                          |
+| Segment Storage (read)            | User Thread                              | `UserRequestHandler`                           |
+| Segment Storage (write)           | Background Storage Loop                  | Background Path (eviction / TTL normalization) |
+| Eviction Policy                   | Background Storage Loop                  | Eviction Engine (via evaluator)                |
+| Eviction Engine                   | Background Storage Loop                  | Background Path                                |
+| Eviction Executor (internal)      | Background Storage Loop                  | Eviction Engine                                |
+| Eviction Selector (metadata)      | Background Storage Loop                  | Eviction Engine                                |
+| TTL Normalization (integrated)    | Background Storage Loop                  | Background Path (`TryNormalize`)               |
 
-**Critical:** The user thread ends at event enqueue (after non-blocking channel write). All cache mutations — storage, statistics updates, eviction — occur exclusively in the Background Storage Loop (via `CacheNormalizationExecutor`). TTL-driven removals run fire-and-forget on the thread pool via `TtlExpirationExecutor`; idempotency is guaranteed by `CachedSegment.MarkAsRemoved()` (Interlocked.CompareExchange).
+**Critical:** The user thread ends at event enqueue (after non-blocking channel write). All cache mutations — storage, statistics updates, eviction, TTL normalization — occur exclusively in the Background Storage Loop (via `CacheNormalizationExecutor`). TTL-driven removals run via `storage.TryNormalize()` on the Background Storage Loop; idempotency is guaranteed by `CachedSegment.MarkAsRemoved()` (`Volatile.Write`) with an `IsRemoved` pre-check.
 
 ---
 
@@ -392,7 +387,7 @@ The Eviction Executor is an **internal implementation detail of `EvictionEngine`
 | Eviction Engine             | Eviction facade; orchestrates selector, evaluator, executor       |
 | Eviction Executor           | Constraint satisfaction loop (internal to engine)                 |
 | Eviction Selector           | Candidate sampling and per-segment metadata ownership             |
-| TTL Actor                   | Time-bounded segment expiration; fire-and-forget on thread pool   |
+| TTL Normalization           | Lazy timestamp-based expiration; discovery in `TryNormalize`      |
 | Resource Management         | Lifecycle and cleanup                                             |
 
 ---

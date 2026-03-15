@@ -12,6 +12,7 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
     where TRange : IComparable<TRange>
 {
     private readonly int _appendBufferSize;
+    private readonly TimeProvider _timeProvider;
 
     // Guards the atomic read/write pair of (_snapshot, _appendCount) during normalization.
     // Held only during Normalize() writes and at the start of FindIntersecting() to capture
@@ -32,9 +33,9 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
 
     /// <summary>
     /// Initializes a new <see cref="SnapshotAppendBufferStorage{TRange,TData}"/> with the
-    /// specified append buffer size.
+    /// specified append buffer size and optional time provider.
     /// </summary>
-    internal SnapshotAppendBufferStorage(int appendBufferSize = 8)
+    internal SnapshotAppendBufferStorage(int appendBufferSize = 8, TimeProvider? timeProvider = null)
     {
         if (appendBufferSize < 1)
         {
@@ -44,6 +45,7 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
         }
 
         _appendBufferSize = appendBufferSize;
+        _timeProvider = timeProvider ?? TimeProvider.System;
         _appendBuffer = new CachedSegment<TRange, TData>[appendBufferSize];
     }
 
@@ -60,6 +62,9 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
             snapshot = _snapshot;
             appendCount = _appendCount;
         }
+
+        // Pre-compute the current UTC ticks once for all expiry checks in this call.
+        var utcNowTicks = _timeProvider.GetUtcNow().UtcTicks;
 
         // Lazy-init: only allocate the results list on the first actual match.
         // Full-Miss path (no intersecting segments) returns the static empty array — zero allocation.
@@ -89,8 +94,8 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
                 break;
             }
 
-            // Use IsRemoved flag as the primary soft-delete filter (no shared collection needed).
-            if (!seg.IsRemoved && seg.Range.Overlaps(range))
+            // Filter out removed and TTL-expired segments (lazy expiration on read).
+            if (!seg.IsRemoved && !seg.IsExpired(utcNowTicks) && seg.Range.Overlaps(range))
             {
                 (results ??= []).Add(seg);
             }
@@ -100,7 +105,7 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
         for (var i = 0; i < appendCount; i++)
         {
             var seg = _appendBuffer[i];
-            if (!seg.IsRemoved && seg.Range.Overlaps(range))
+            if (!seg.IsRemoved && !seg.IsExpired(utcNowTicks) && seg.Range.Overlaps(range))
             {
                 (results ??= []).Add(seg);
             }
@@ -114,12 +119,7 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
     {
         _appendBuffer[_appendCount] = segment;
         Volatile.Write(ref _appendCount, _appendCount + 1); // Release fence: makes buffer entry visible to readers before count increment is observed
-        IncrementCount();
-
-        if (_appendCount == _appendBufferSize)
-        {
-            Normalize();
-        }
+        _count++;
     }
 
     /// <inheritdoc/>
@@ -128,7 +128,7 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
     /// current snapshot, and publishes the result atomically via <see cref="Interlocked.Exchange"/>.
     /// The append buffer is intentionally left untouched — its contents remain visible to
     /// <see cref="FindIntersecting"/> via the independent buffer scan and will be drained by the
-    /// next <see cref="Normalize"/> triggered by subsequent <see cref="Add"/> calls.
+    /// next <see cref="TryNormalize"/> call from the executor.
     /// Using <see cref="Interlocked.Exchange"/> (rather than <c>_normalizeLock</c>) is safe here
     /// because <c>_appendCount</c> is NOT modified: the lock's purpose is to synchronise the
     /// atomic update of both <c>_snapshot</c> and <c>_appendCount</c>; since only <c>_snapshot</c>
@@ -165,7 +165,7 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
         // (snapshot, appendCount) pair; since appendCount is unchanged, Interlocked.Exchange suffices.
         Interlocked.Exchange(ref _snapshot, merged);
 
-        IncrementCount(segments.Length);
+        _count += segments.Length;
     }
 
     /// <inheritdoc/>
@@ -178,6 +178,9 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
         {
             return null;
         }
+
+        // Pre-compute UTC ticks once for all expiry checks in this sampling pass.
+        var utcNowTicks = _timeProvider.GetUtcNow().UtcTicks;
 
         for (var attempt = 0; attempt < RandomRetryLimit; attempt++)
         {
@@ -193,7 +196,7 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
                 seg = _appendBuffer[index - snapshot.Length];
             }
 
-            if (!seg.IsRemoved)
+            if (!seg.IsRemoved && !seg.IsExpired(utcNowTicks))
             {
                 return seg;
             }
@@ -202,22 +205,54 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
         return null;
     }
 
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Checks whether the append buffer has reached capacity. If it has, runs the normalization
+    /// pass: merges snapshot and append buffer, discovers expired segments, and publishes the
+    /// new snapshot atomically. Expired segments are returned via <paramref name="expiredSegments"/>
+    /// so the executor can update eviction policy aggregates and fire diagnostics.
+    /// </remarks>
+    public override bool TryNormalize(out IReadOnlyList<CachedSegment<TRange, TData>>? expiredSegments)
+    {
+        if (_appendCount < _appendBufferSize)
+        {
+            expiredSegments = null;
+            return false;
+        }
+
+        Normalize(out expiredSegments);
+        return true;
+    }
+
     /// <summary>
     /// Rebuilds the sorted snapshot by merging live entries from snapshot and append buffer.
+    /// Expired segments are discovered, marked as removed, and returned via
+    /// <paramref name="expiredSegments"/> for the executor to process.
     /// </summary>
-    private void Normalize()
+    private void Normalize(out IReadOnlyList<CachedSegment<TRange, TData>>? expiredSegments)
     {
         var snapshot = Volatile.Read(ref _snapshot);
+        var utcNowTicks = _timeProvider.GetUtcNow().UtcTicks;
+        List<CachedSegment<TRange, TData>>? expired = null;
 
-        // Count live snapshot entries (skip removed segments) without allocating a List.
+        // Count live snapshot entries (skip removed/expired segments) without allocating a List.
         var liveSnapshotCount = 0;
         for (var i = 0; i < snapshot.Length; i++)
         {
             var seg = snapshot[i];
-            if (!seg.IsRemoved)
+            if (seg.IsRemoved)
             {
-                liveSnapshotCount++;
+                continue;
             }
+
+            if (seg.IsExpired(utcNowTicks))
+            {
+                TryRemove(seg);
+                (expired ??= []).Add(seg);
+                continue;
+            }
+
+            liveSnapshotCount++;
         }
 
         // Sort the append buffer in-place (Background Path owns _appendBuffer exclusively).
@@ -225,14 +260,24 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
         _appendBuffer.AsSpan(0, _appendCount).Sort(
             static (a, b) => a.Range.Start.Value.CompareTo(b.Range.Start.Value));
 
-        // Count live append buffer entries after sorting.
+        // Count live append buffer entries after sorting, discovering TTL-expired segments.
         var liveAppendCount = 0;
         for (var i = 0; i < _appendCount; i++)
         {
-            if (!_appendBuffer[i].IsRemoved)
+            var seg = _appendBuffer[i];
+            if (seg.IsRemoved)
             {
-                liveAppendCount++;
+                continue;
             }
+
+            if (seg.IsExpired(utcNowTicks))
+            {
+                TryRemove(seg);
+                (expired ??= []).Add(seg);
+                continue;
+            }
+
+            liveAppendCount++;
         }
 
         // Merge two sorted sequences directly into the output array — one allocation.
@@ -265,6 +310,8 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
         //       _appendCount, so the stale reference at slot 0 is never observable to readers.
         //   (d) The merged snapshot already holds references to all live segments; leaving them
         //       in buffer slots until overwritten does not extend their logical lifetime.
+
+        expiredSegments = expired;
     }
 
     private static CachedSegment<TRange, TData>[] MergeSorted(
@@ -330,22 +377,9 @@ internal sealed class SnapshotAppendBufferStorage<TRange, TData> : SegmentStorag
             j++;
         }
 
-        // Guard against TOCTOU race: a TTL thread may call TryMarkAsRemoved() on a segment
-        // between the counting pass in Normalize() (which sized the result array) and this
-        // merge pass (which re-checks IsRemoved). If that happens, fewer elements are written
-        // than allocated, leaving null trailing slots that would cause NullReferenceException
-        // in FindIntersecting's binary search and FindLastAtOrBefore.
-        //
-        // Trimming to the actual write count is lock-free and safe:
-        //   - On the happy path (no race), k == result.Length and the branch is never taken.
-        //   - On the rare race path, Array.Resize allocates a new array of size k and copies
-        //     the first k elements, discarding the null trailing slots.
-        //   - The counting pass in Normalize() remains a good-faith size hint that avoids
-        //     allocation on the common case; it does not need to be exact.
-        if (k < result.Length)
-        {
-            Array.Resize(ref result, k);
-        }
+        // k == result.Length: TTL expiry runs exclusively on the Background Path (single writer)
+        // inside Normalize(), so no concurrent writer can mark additional segments as removed
+        // between the counting pass and this merge pass.
 
         return result;
     }

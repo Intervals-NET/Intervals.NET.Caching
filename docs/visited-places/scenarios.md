@@ -55,6 +55,11 @@ Background Storage Loop                                             [FIFO queue]
        ├─ [FetchedData != null]
        │    ├─ storage.Store(newSegment)
        │    ├─ engine.InitializeSegment(newSegment)
+       │    ├─ storage.TryNormalize()            [step 2b: before eviction]
+       │    │    └─ [for each expired segment]
+       │    │         storage.Remove(segment)
+       │    │         engine.OnSegmentRemoved(segment)
+       │    │         diagnostics.TtlSegmentExpired()
        │    └─ engine.EvaluateAndExecute(allSegments, justStoredSegments)
        │         ├─ [no policy fires]  → done
        │         └─ [policy fires]
@@ -63,19 +68,10 @@ Background Storage Loop                                             [FIFO queue]
        │              │        until all constraints satisfied
        │              └─ storage.Remove(evicted); engine.OnSegmentRemoved(evicted)
        │
-       └─ [FetchedData == null]  → done (stats-only event; no eviction)
-
-TTL Loop (only when SegmentTtl is configured)         [fire-and-forget per segment]
-───────────────────────────────────────────────────────────────────────────────
-  After storage.Store(segment):
-       Schedule TtlExpirationWorkItem → Task.Delay(SegmentTtl)
-            │
-            └─ On delay fire: segment.MarkAsRemoved()
-                 ├─ [returns true]  → storage.Remove; engine.OnSegmentRemoved; TtlSegmentExpired
-                 └─ [returns false] → segment already removed by eviction; no-op
+       └─ [FetchedData == null]  → done (stats-only event; no eviction, no TTL normalization)
 ```
 
-**Reading the scenarios**: Each scenario in sections I–V corresponds to one or more steps in this diagram. Scenarios U1–U5 focus on the user thread portion; B1–B5 focus on the background storage loop; E1–E6 focus on the `EvaluateAndExecute` branch; T1–T3 focus on the TTL loop.
+**Reading the scenarios**: Each scenario in sections I–V corresponds to one or more steps in this diagram. Scenarios U1–U5 focus on the user thread portion; B1–B5 focus on the background storage loop; E1–E6 focus on the `EvaluateAndExecute` branch; T1–T3 focus on the TTL normalization pass.
 
 ---
 
@@ -472,7 +468,7 @@ TTL Loop (only when SegmentTtl is configured)         [fire-and-forget per segme
 
 ## V. TTL Scenarios
 
-**Core principle**: When `VisitedPlacesCacheOptions.SegmentTtl` is non-null, each stored segment has a `TtlExpirationWorkItem` scheduled immediately after storage. The TTL actor awaits the delay fire-and-forget on the thread pool, then calls `segment.MarkAsRemoved()` — if it returns `true` (first caller), it removes the segment directly from storage and notifies the eviction engine. TTL expiration is idempotent: if the segment was already evicted by a capacity policy, `MarkAsRemoved()` returns `false` and the removal is a no-op.
+**Core principle**: When `VisitedPlacesCacheOptions.SegmentTtl` is non-null, each stored segment has an `ExpiresAt` UTC-ticks deadline set once at storage time. TTL expiration is **lazy and passive**: expired segments are invisible to the User Path immediately (via `IsExpired` filtering in `FindIntersecting`) but are physically removed only when `TryNormalize` runs on the Background Path during the next normalization pass.
 
 ---
 
@@ -483,18 +479,16 @@ TTL Loop (only when SegmentTtl is configured)         [fire-and-forget per segme
 - Capacity policies: not exceeded at expiry time
 
 **Preconditions**:
-- Segment `S₁` was stored at `t=0`; a `TtlExpirationWorkItem` was scheduled for `t=30s`
+- Segment `S₁` was stored at `t=0`; `ExpiresAt` is set to `t=30s` in UTC ticks
 
 **Sequence**:
-1. TTL actor dequeues the work item at `t=0` and fires `Task.Delay(30s)` independently on the thread pool
-2. At `t=30s`, the delay completes
-3. TTL actor calls `S₁.MarkAsRemoved()` — returns `true` (first caller; segment is still present)
-4. TTL actor calls `_storage.Remove(S₁)` — segment physically removed from storage
-5. TTL actor calls `_engine.OnSegmentRemoved(S₁)` — notifies policies
-6. `_diagnostics.TtlSegmentExpired()` is fired
-7. `S₁` is no longer returned by `FindIntersecting`; subsequent user requests for its range incur a cache miss
+1. At `t=30s`, `S₁.IsExpired(utcNowTicks)` returns `true`
+2. User Path: `FindIntersecting` filters `S₁` from results immediately — user sees a cache miss for `S₁`'s range without waiting for physical removal
+3. Background Path: on the next normalization pass that triggers `TryNormalize`, storage discovers `S₁` is expired, calls `S₁.MarkAsRemoved()`, decrements the count, and returns `S₁` in the expired list
+4. `CacheNormalizationExecutor` calls `_evictionEngine.OnSegmentRemoved(S₁)` and `_diagnostics.TtlSegmentExpired()`
+5. `S₁` is physically unlinked from storage structures on the subsequent normalization pass
 
-**Note**: The User Path sees the removal atomically — `S₁` is either present or absent; no partial state is visible. The Background Storage Loop is unaffected; it continues processing normalization events in parallel.
+**Invariants enforced**: VPC.T.2 (lazy filtering), VPC.T.3 (Background Path only), VPC.T.4 (immutable `ExpiresAt`).
 
 ---
 
@@ -505,33 +499,34 @@ TTL Loop (only when SegmentTtl is configured)         [fire-and-forget per segme
 - A capacity policy evicts `S₁` at `t=5s` (before its TTL)
 
 **Sequence**:
-1. At `t=5s`, eviction removes `S₁` via `CacheNormalizationExecutor`:
-   - `S₁.MarkAsRemoved()` called — sets `_isRemoved = 1`, returns `true`
-   - `_storage.Remove(S₁)` called; `engine.OnSegmentsRemoved([S₁])` notified
-2. At `t=60s`, the TTL work item fires and calls `S₁.MarkAsRemoved()`:
-   - Returns `false` (another caller already set the flag)
-   - TTL actor skips `storage.Remove` and `engine.OnSegmentsRemoved` entirely
-3. `_diagnostics.TtlSegmentExpired()` is NOT fired — `TryRemove` returned `false` (segment already removed by eviction).
+1. At `t=5s`, eviction runs in `CacheNormalizationExecutor`:
+   - `SegmentStorageBase.Remove(S₁)` is called; `IsRemoved` is `false`, so `S₁.MarkAsRemoved()` is called and `_count` is decremented
+   - `_evictionEngine.OnSegmentRemoved(S₁)` is notified
+2. At `t=60s`, `TryNormalize` encounters `S₁` during a normalization pass:
+   - `S₁.IsRemoved` is already `true` — `TryNormalize` skips `S₁` (it is not included in the expired list)
+   - No double-decrement, no double engine notification
+3. `_diagnostics.TtlSegmentExpired()` is NOT fired — `S₁` was already removed by eviction before TTL discovery
 
 **Invariant enforced**: VPC.T.1 — TTL expiration is idempotent.
 
 ---
 
-### T3 — Disposal Cancels Pending TTL Delays
+### T3 — TTL Expiry Discovered at Normalization Threshold
 
 **Situation**:
-- Cache has 3 segments `S₁, S₂, S₃` with `SegmentTtl = 10 minutes`; all TTL work items are mid-delay
-- `DisposeAsync` is called
+- `SegmentTtl = TimeSpan.FromSeconds(10)`; `appendBufferSize = 8`
+- Segment `S₁` expires at `t=10s`; no user requests arrive for `S₁`'s range after expiry
 
 **Sequence**:
-1. `DisposeAsync` drains the normalization scheduler (`await _userRequestHandler.DisposeAsync()`)
-2. `DisposeAsync` disposes the TTL scheduler (`await _ttlScheduler.DisposeAsync()`):
-   - TTL scheduler cancels its `CancellationToken`
-   - All pending `Task.Delay` calls throw `OperationCanceledException`
-   - `TtlExpirationExecutor` catches the cancellation and exits cleanly (no unhandled exception)
-3. `DisposeAsync` returns; no TTL work items are left running
+1. After `t=10s`, user requests for other ranges continue storing new segments
+2. When 8 new segments have been stored, the normalization threshold is reached and `TryNormalize` fires
+3. `TryNormalize` iterates live segments, finds `S₁.IsExpired(utcNowTicks)` is `true`, marks and removes it
+4. The expired list is returned to the executor; diagnostics and engine notification follow
+5. Physical removal from storage structures completes in this same normalization pass
 
-**Invariant enforced**: VPC.T.3 — pending TTL delays are cancelled on disposal.
+**Note**: The latency between expiry and physical removal is bounded by the time until the next normalization threshold. Under low write traffic, expired segments linger longer but are always invisible to readers immediately (VPC.T.2).
+
+**Invariants enforced**: VPC.T.2 (lazy expiry), VPC.T.3 (Background Path only).
 
 ---
 

@@ -1,6 +1,6 @@
 # Storage Strategies — VisitedPlaces Cache
 
-This document describes the two MVP storage strategies available for `VisitedPlacesCache`. These are internal implementation details — the public API and architectural invariants (see `docs/visited-places/invariants.md`) hold regardless of which strategy is selected.
+This document describes the two storage strategies available for `VisitedPlacesCache`. These are internal implementation details — the public API and architectural invariants (see `docs/visited-places/invariants.md`) hold regardless of which strategy is selected.
 
 ---
 
@@ -90,9 +90,9 @@ Both strategies are designed around VPC's two-thread model:
 - **Background Path** writes are exclusive: only one background thread ever writes (single-writer guarantee)
 - **RCU semantics** (Read-Copy-Update): reads operate on a stable snapshot; the background thread builds a new snapshot and publishes it atomically via `Volatile.Write`
 
-**Logical removal** is used by both MVP strategies as an internal optimization: a removed segment is marked via `CachedSegment.IsRemoved` (set atomically with `Interlocked.CompareExchange`) so it is immediately invisible to reads, but its node/slot is only physically removed during the next normalization pass. This allows the background thread to batch physical removal work rather than doing it inline during eviction.
+**Logical removal** is used by both storage strategies as an internal optimization: a removed segment is marked via `CachedSegment.IsRemoved` (set atomically with `Interlocked.CompareExchange`) so it is immediately invisible to reads, but its node/slot is only physically removed during the next normalization pass. This allows the background thread to batch physical removal work rather than doing it inline during eviction.
 
-**Append buffer** is used by both MVP strategies: new segments are written to a small fixed-size buffer rather than immediately integrated into the main sorted structure. The main structure is rebuilt ("normalized") when the buffer becomes full. This amortizes the cost of maintaining sort order. The buffer size is configurable via `AppendBufferSize` on each options object (default: 8).
+**Append buffer** is used by both storage strategies: new segments are written to a small fixed-size buffer (Snapshot strategy) or counted toward a threshold (LinkedList strategy) rather than immediately integrated into the main sorted structure. The main structure is rebuilt ("normalized") when the threshold is reached. Normalization is **not triggered by `Add` itself** — the executor calls `TryNormalize` explicitly after each storage step. The buffer size is configurable via `AppendBufferSize` on each options object (default: 8).
 
 ---
 
@@ -142,22 +142,23 @@ SnapshotAppendBufferStorage
 **Add segment:**
 1. Write new segment into `_appendBuffer[_appendCount]`
 2. Increment `_appendCount`
-3. If `_appendCount == N` (buffer full): **normalize** (see below)
+3. Normalization is NOT triggered here — the executor calls `TryNormalize` explicitly after the storage step
 
 **Remove segment (logical removal):**
 1. Call `segment.TryMarkAsRemoved()` — sets `segment.IsRemoved = true` atomically (Interlocked.CompareExchange)
 2. No immediate structural change to snapshot or append buffer
 
-**Normalize:**
-1. Count live segments in a first pass to size the output array (good-faith estimate — a concurrent TTL expiration may reduce the actual count between this pass and the merge)
-2. Merge `_snapshot` (excluding `IsRemoved` segments) and `_appendBuffer[0.._appendCount]` into the new array via merge-sort; re-check `IsRemoved` inline during the merge
-3. Trim the result array to the actual write cursor `k` if `k < result.Length` (guards against the TOCTOU race where a TTL work item marks a segment as removed between step 1 and step 2, leaving null trailing slots — see Invariant VPC.C.8)
-4. Under `_normalizeLock`: atomically publish the new snapshot and reset `_appendCount = 0`
-5. Leave `_appendBuffer` contents in place (see below)
+**TryNormalize (called by executor after each storage step):**
+1. Check threshold: if `_appendCount < AppendBufferSize`, return `false` (no-op)
+2. Otherwise, run `Normalize()`:
+   1. Count live segments in a first pass to size the output array
+   2. Discover TTL-expired segments: call `seg.TryMarkAsRemoved()` on expired entries; collect them in the `expiredSegments` out list
+   3. Merge `_snapshot` (excluding `IsRemoved`) and `_appendBuffer[0.._appendCount]` into the new array via merge-sort; re-check `IsRemoved` inline during the merge
+   4. Under `_normalizeLock`: atomically publish the new snapshot and reset `_appendCount = 0`
+   5. Leave `_appendBuffer` contents in place (see below)
+3. Return `true` and the `expiredSegments` list (may be null if none expired)
 
 **Normalization cost**: O(n + m) merge of two sorted sequences (snapshot already sorted; append buffer sorted before merge)
-
-**Atomic publish via `_normalizeLock`:** Both `_snapshot` and `_appendCount` are updated together inside `_normalizeLock`, the same lock that `FindIntersecting` holds when capturing the `(_snapshot, _appendCount)` pair. This ensures readers always see either (old snapshot, old count) or (new snapshot, 0) — never the mixed state that would cause duplicate segment references in query results.
 
 **Why `_appendBuffer` is not cleared after normalization:** A `FindIntersecting` call that captured `appendCount > 0` before the lock update is still iterating `_appendBuffer` lock-free when `Normalize` completes. Calling `Array.Clear` on the shared buffer at that point nulls out slots the reader is actively dereferencing, causing a `NullReferenceException`. Stale references left in the buffer are harmless: readers entering after the lock update capture `appendCount = 0` and skip the buffer scan entirely; subsequent `Add()` calls overwrite each slot before making it visible to readers.
 
@@ -169,8 +170,8 @@ SnapshotAppendBufferStorage
 
 1. If `segments` is empty: return immediately (no-op)
 2. Sort `segments` in-place by range start (incoming order is not guaranteed)
-3. Count live entries in `_snapshot` (first pass, good-faith estimate — same TOCTOU caveat as `Normalize`)
-4. Merge sorted `_snapshot` (excluding `IsRemoved`) and sorted `segments` via `MergeSorted`; trim result if count shrank (same trim logic as `Normalize`, guarding against TTL TOCTOU race — see VPC.C.8)
+3. Count live entries in `_snapshot` (first pass)
+4. Merge sorted `_snapshot` (excluding `IsRemoved`) and sorted `segments` via `MergeSorted`
 5. Publish via `Interlocked.Exchange(_snapshot, mergedArray)` — **NOT under `_normalizeLock`** (see note below)
 6. Call `IncrementCount(segments.Length)` to update the total segment count
 
@@ -256,22 +257,28 @@ LinkedListStrideIndexStorage
 **Add segment:**
 1. Insert new segment into `_list` at the correct sorted position via `InsertSorted` (uses stride index for O(log(n/N)) anchor lookup + O(N) local walk)
 2. Increment `_addsSinceLastNormalization`
-3. If `_addsSinceLastNormalization == AppendBufferSize`: **normalize stride index** (see below)
+3. Normalization is NOT triggered here — the executor calls `TryNormalize` explicitly after the storage step
 
 **Remove segment (logical removal):**
 1. Call `segment.TryMarkAsRemoved()` — sets `segment.IsRemoved = true` atomically (Interlocked.CompareExchange)
 2. No immediate structural change to the list or stride index
 
-**Normalize stride index (two-pass for RCU safety):**
+**TryNormalize (called by executor after each storage step):**
+1. Check threshold: if `_addsSinceLastNormalization < AppendBufferSize`, return `false` (no-op)
+2. Otherwise, run `NormalizeStrideIndex()` (see below)
+3. Return `true` and the `expiredSegments` list (may be null if none expired)
+
+**NormalizeStrideIndex (two-pass for RCU safety):**
 
 Pass 1 — build new stride index:
 1. Walk `_list` from head to tail
-2. For each **live** node (skip `IsRemoved` nodes without unlinking them): if this is the Nth live node seen, add it to the new stride anchor array
-3. Publish new stride index: `Interlocked.Exchange(_strideIndex, newArray)` (release fence)
+2. Discover TTL-expired segments: call `seg.TryMarkAsRemoved()` on expired entries; collect them in the `expiredSegments` out list
+3. For each **live** node (skip `IsRemoved` nodes without unlinking them): if this is the Nth live node seen, add it to the new stride anchor array
+4. Publish new stride index: `Interlocked.Exchange(_strideIndex, newArray)` (release fence)
 
 Pass 2 — physical cleanup (safe only after new index is live):
-4. Walk `_list` again; physically unlink every `IsRemoved` node
-5. Reset `_addsSinceLastNormalization = 0`
+5. Walk `_list` again; physically unlink every `IsRemoved` node
+6. Reset `_addsSinceLastNormalization = 0`
 
 > **Why two passes?** Any User Path thread that read the *old* stride index before the swap may still be walking through `_list` using old anchor nodes as starting points. Those old anchors may point to nodes that are about to be physically removed. If we unlinked removed nodes *before* publishing the new index, a concurrent walk starting from a stale anchor could follow a node whose `Next` pointer was already set to `null` by physical removal, truncating the walk prematurely and missing live segments. Publishing first ensures all walkers using old anchors will complete correctly before those nodes disappear.
 
@@ -290,7 +297,7 @@ Pass 2 — physical cleanup (safe only after new index is live):
 3. For each segment in the sorted array: call `InsertSorted` to insert it into `_list` at the correct sorted position; call `IncrementCount(1)` per insertion
 4. Call `NormalizeStrideIndex()` once — rebuilds the stride index over all newly-inserted segments in a single two-pass traversal
 
-**Why a single `NormalizeStrideIndex()` at the end:** Calling `Add()` N times would trigger `NormalizeStrideIndex` after every `AppendBufferSize` additions (up to ⌈N/AppendBufferSize⌉ normalization passes). Each normalization is O(n). `AddRange` inserts all N segments first and then normalizes once — one O(n) pass regardless of N.
+**Why a single `NormalizeStrideIndex()` at the end:** `AddRange` accumulates `_addsSinceLastNormalization` by the full count of inserted segments. Rather than letting the executor's subsequent `TryNormalize` call discover the threshold was exceeded, `AddRange` calls `NormalizeStrideIndex()` directly after all insertions — ensuring the stride index is rebuilt exactly once regardless of how many segments were added.
 
 **`_addsSinceLastNormalization` reset:** `NormalizeStrideIndex` resets `_addsSinceLastNormalization = 0` in its `finally` block. `AddRange` does not need to reset it redundantly.
 
@@ -619,11 +626,11 @@ If unsure: start with **Snapshot + Append Buffer** (`SnapshotAppendBufferStorage
 
 ### Thread-Safe Segment Count
 
-Both strategies expose a `Count` property that is read by the `MaxSegmentCountPolicy` on the Background Storage Loop and may also be read by the TTL Loop (via `TtlExpirationExecutor`). To avoid torn reads, `_count` is maintained with `Interlocked.Increment`/`Decrement` for writes and `Volatile.Read` for reads. This ensures consistent count visibility across both execution contexts without a lock.
+Both strategies expose a `Count` property that is read by the `MaxSegmentCountPolicy` on the Background Storage Loop. With the passive TTL design, all mutations (`_count` increments and decrements) run exclusively on the Background Storage Loop — there is no separate TTL thread updating the count concurrently. The `_count` field uses plain `++`/`--` increments protected by the single-writer guarantee rather than `Interlocked` operations.
 
 ### Logical Removal: Internal Optimization Only
 
-Logical removal (via `CachedSegment.IsRemoved`) is an implementation detail of both MVP strategies. It is NOT an architectural invariant. Future storage strategies (e.g., skip list, B+ tree) may use immediate physical removal instead. External code must never observe or depend on the logically-removed-but-not-yet-unlinked state of a segment.
+Logical removal (via `CachedSegment.IsRemoved`) is an implementation detail of both storage strategies. It is NOT an architectural invariant. Future storage strategies (e.g., skip list, B+ tree) may use immediate physical removal instead. External code must never observe or depend on the logically-removed-but-not-yet-unlinked state of a segment.
 
 From the User Path's perspective, a segment is either present (returned by `FindIntersecting`) or absent. Logically-removed segments are filtered out during scans and are never returned to the User Path.
 

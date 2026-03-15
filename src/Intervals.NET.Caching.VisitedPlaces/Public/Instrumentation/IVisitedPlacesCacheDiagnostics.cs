@@ -75,14 +75,8 @@ public interface IVisitedPlacesCacheDiagnostics : ICacheDiagnostics
     // ============================================================================
 
     /// <summary>
-    /// Records a segment that was successfully expired and removed by the TTL actor.
-    /// Only actual removals fire this event; idempotent no-ops do not.
+    /// Records a segment that was successfully expired and removed during a normalization pass.
+    /// Only actual removals fire this event; idempotent no-ops (segment already evicted) do not.
     /// </summary>
     void TtlSegmentExpired();
-
-    /// <summary>
-    /// Records a TTL expiration work item scheduled for a newly stored segment.
-    /// Called once per segment stored when TTL is enabled.
-    /// </summary>
-    void TtlWorkItemScheduled();
 }

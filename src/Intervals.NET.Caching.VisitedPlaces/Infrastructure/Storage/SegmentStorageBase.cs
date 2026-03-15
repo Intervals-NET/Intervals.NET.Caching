@@ -22,12 +22,12 @@ internal abstract class SegmentStorageBase<TRange, TData> : ISegmentStorage<TRan
     protected readonly Random Random = new();
 
     // Total count of live (non-removed) segments.
-    // Decremented by TryRemove (which may be called from the TTL thread) via Interlocked.Decrement.
-    // Incremented only on the Background Path via Interlocked.Increment (through IncrementCount).
-    private int _count;
+    // All mutations (Add, AddRange, Remove, TryNormalize) occur exclusively on the
+    // Background Path (single writer), so plain reads/writes are safe — no Interlocked needed.
+    protected int _count;
 
     /// <inheritdoc/>
-    public int Count => Volatile.Read(ref _count);
+    public int Count => _count;
 
     /// <inheritdoc/>
     public abstract IReadOnlyList<CachedSegment<TRange, TData>> FindIntersecting(Range<TRange> range);
@@ -41,34 +41,20 @@ internal abstract class SegmentStorageBase<TRange, TData> : ISegmentStorage<TRan
     /// <inheritdoc/>
     public bool TryRemove(CachedSegment<TRange, TData> segment)
     {
-        if (segment.TryMarkAsRemoved())
+        if (segment.IsRemoved)
         {
-            Interlocked.Decrement(ref _count);
-            return true;
+            return false;
         }
-
-        return false;
+        segment.MarkAsRemoved();
+        _count--;
+        return true;
     }
 
     /// <inheritdoc/>
     public abstract CachedSegment<TRange, TData>? TryGetRandomSegment();
 
-    /// <summary>
-    /// Atomically increments the live segment count. Called by subclass Add implementations.
-    /// </summary>
-    protected void IncrementCount()
-    {
-        Interlocked.Increment(ref _count);
-    }
-
-    /// <summary>
-    /// Atomically increments the live segment count by <paramref name="amount"/>.
-    /// Called by subclass <c>AddRange</c> implementations.
-    /// </summary>
-    protected void IncrementCount(int amount)
-    {
-        Interlocked.Add(ref _count, amount);
-    }
+    /// <inheritdoc/>
+    public abstract bool TryNormalize(out IReadOnlyList<CachedSegment<TRange, TData>>? expiredSegments);
 
     // -------------------------------------------------------------------------
     // Shared binary search infrastructure

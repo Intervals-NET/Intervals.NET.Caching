@@ -41,21 +41,15 @@ VisitedPlaces-specific term definitions. Shared terms — `IRangeCache`, `IDataS
 
 ## TTL Terms
 
-**SegmentTtl** — An optional `TimeSpan` configured on `VisitedPlacesCacheOptions`. When set, a `TtlExpirationWorkItem` is scheduled immediately after each segment is stored. When null (default), no TTL is applied and segments are only removed by eviction.
+**SegmentTtl** — An optional `TimeSpan` configured on `VisitedPlacesCacheOptions`. When set, an `ExpiresAt` timestamp is computed at segment storage time (`now + SegmentTtl`). Expired segments are filtered from reads by `FindIntersecting` (immediate invisibility) and physically removed during the next `TryNormalize` pass on the Background Storage Loop. When null (default), no TTL is applied and segments are only removed by eviction.
 
-**TtlEngine** — Internal facade encapsulating the full TTL subsystem: `TtlExpirationExecutor`, `ConcurrentWorkScheduler`, dedicated `AsyncActivityCounter`, and disposal `CancellationTokenSource`. Exposed to `CacheNormalizationExecutor` as its sole TTL dependency. See Invariant VPC.T.4.
-
-**TtlExpirationWorkItem** — Carries a segment reference and expiry timestamp. Scheduled on a `ConcurrentWorkScheduler`; each work item awaits `Task.Delay` independently on the thread pool (fire-and-forget).
-
-**Idempotent Removal** — The coordination mechanism between TTL expiration and eviction. `CachedSegment.MarkAsRemoved()` ensures only the first caller performs storage removal; concurrent callers are no-ops. See Invariant VPC.T.1 and `docs/visited-places/architecture.md` — Single-Writer Details.
+**Idempotent Removal** — The safety mechanism applied during TTL normalization and eviction. `ISegmentStorage.Remove(segment)` checks `segment.IsRemoved` before calling `segment.MarkAsRemoved()` (`Volatile.Write`), making double-removal a no-op. This prevents a segment from being counted twice against eviction policy aggregates if both TTL normalization and eviction attempt to remove it in the same normalization pass. See Invariant VPC.T.1.
 
 ---
 
 ## Concurrency Terms
 
-**Background Storage Loop** — The single background thread that dequeues and processes `CacheNormalizationRequest`s in FIFO order. Sole writer of `CachedSegments` and segment `EvictionMetadata` via `CacheNormalizationExecutor`. Invariant VPC.D.3.
-
-**TTL Loop** — Independent background work dispatched fire-and-forget on the thread pool via `ConcurrentWorkScheduler`. Awaits TTL delays and removes expired segments directly via `ISegmentStorage`. Only present when `SegmentTtl` is configured. Runs concurrently with the Background Storage Loop; uses `CachedSegment.MarkAsRemoved()` for coordination.
+**Background Storage Loop** — The single background thread that dequeues and processes `CacheNormalizationRequest`s in FIFO order. Sole writer of `CachedSegments` and segment `EvictionMetadata` via `CacheNormalizationExecutor`. Also performs TTL normalization via `TryNormalize` at the end of each event processing cycle. Invariant VPC.D.3.
 
 **FIFO Event Processing** — Unlike `SlidingWindowCache` (latest-intent-wins), VPC processes every `CacheNormalizationRequest` in the exact order it was enqueued — no supersession. See `docs/visited-places/architecture.md` — FIFO vs. Latest-Intent-Wins for the rationale. Invariant VPC.B.1, VPC.B.1a.
 

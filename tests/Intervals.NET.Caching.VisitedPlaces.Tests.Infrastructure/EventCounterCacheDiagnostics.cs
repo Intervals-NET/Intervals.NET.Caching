@@ -33,7 +33,6 @@ public sealed class EventCounterCacheDiagnostics : IVisitedPlacesCacheDiagnostic
     private int _evictionSegmentRemoved;
     private int _backgroundOperationFailed;
     private int _ttlSegmentExpired;
-    private int _ttlWorkItemScheduled;
 
     // ============================================================
     // USER PATH COUNTERS
@@ -104,9 +103,6 @@ public sealed class EventCounterCacheDiagnostics : IVisitedPlacesCacheDiagnostic
     /// <summary>Number of segments removed due to TTL expiration.</summary>
     public int TtlSegmentExpired => Volatile.Read(ref _ttlSegmentExpired);
 
-    /// <summary>Number of TTL work items scheduled (one per segment stored when TTL is enabled).</summary>
-    public int TtlWorkItemScheduled => Volatile.Read(ref _ttlWorkItemScheduled);
-
     // ============================================================
     // RESET
     // ============================================================
@@ -132,7 +128,6 @@ public sealed class EventCounterCacheDiagnostics : IVisitedPlacesCacheDiagnostic
         Interlocked.Exchange(ref _evictionSegmentRemoved, 0);
         Interlocked.Exchange(ref _backgroundOperationFailed, 0);
         Interlocked.Exchange(ref _ttlSegmentExpired, 0);
-        Interlocked.Exchange(ref _ttlWorkItemScheduled, 0);
     }
 
     // ============================================================
@@ -184,7 +179,4 @@ public sealed class EventCounterCacheDiagnostics : IVisitedPlacesCacheDiagnostic
 
     /// <inheritdoc/>
     void IVisitedPlacesCacheDiagnostics.TtlSegmentExpired() => Interlocked.Increment(ref _ttlSegmentExpired);
-
-    /// <inheritdoc/>
-    void IVisitedPlacesCacheDiagnostics.TtlWorkItemScheduled() => Interlocked.Increment(ref _ttlWorkItemScheduled);
 }

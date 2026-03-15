@@ -16,5 +16,9 @@ public abstract class StorageStrategyOptions<TRange, TData>
     /// Creates and returns a new <see cref="ISegmentStorage{TRange,TData}"/> instance
     /// configured according to the options on this object.
     /// </summary>
-    internal abstract ISegmentStorage<TRange, TData> Create();
+    /// <param name="timeProvider">
+    /// The time provider used by the storage for lazy TTL filtering in
+    /// <c>FindIntersecting</c> and expiry discovery in <c>TryNormalize</c>.
+    /// </param>
+    internal abstract ISegmentStorage<TRange, TData> Create(TimeProvider timeProvider);
 }

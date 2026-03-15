@@ -716,31 +716,43 @@ public sealed class VisitedPlacesCacheInvariantTests : IAsyncDisposable
     // ============================================================
 
     /// <summary>
-    /// Invariant VPC.T.1 [Behavioral]: TTL expiration is idempotent.
-    /// A segment that has already been evicted by the eviction policy before its TTL fires
-    /// must not be double-removed or cause any error.
+    /// Invariant VPC.T.1 [Behavioral]: TTL expiration and eviction do not double-remove the same segment.
+    /// When a segment expires by TTL during <c>TryNormalize</c> (step 2b), it is physically removed
+    /// from storage before the eviction step (steps 3+4) runs. The eviction selector samples only live
+    /// segments, so the expired segment is never presented as an eviction candidate.
     /// </summary>
     [Fact]
     public async Task Invariant_VPC_T_1_TtlExpirationIsIdempotent()
     {
-        // ARRANGE — MaxSegmentCount(1): second request evicts first; first segment's TTL fires later
+        // ARRANGE — MaxSegmentCount(1): second store would normally evict first; appendBufferSize=1
+        // so TryNormalize fires on the same step as the second store (before eviction).
+        var fakeTime = new FakeTimeProvider();
+        var storageOptions = new SnapshotAppendBufferStorageOptions<int, int>(appendBufferSize: 1);
         var options = new VisitedPlacesCacheOptions<int, int>(
+            storageStrategy: storageOptions,
             eventChannelCapacity: 128,
-            segmentTtl: TimeSpan.FromMilliseconds(150));
-        var cache = TrackCache(TestHelpers.CreateCacheWithSimpleSource(_domain, _diagnostics, options, maxSegmentCount: 1));
+            segmentTtl: TimeSpan.FromSeconds(10));
+        var cache = TrackCache(TestHelpers.CreateCacheWithSimpleSource(
+            _domain, _diagnostics, options, maxSegmentCount: 1, timeProvider: fakeTime));
 
-        // ACT — store segment A, then B (B evicts A); then wait for A's TTL to fire
+        // Store segment A — eviction evaluates but segment A is just-stored (immune), no removal
         await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(0, 9));
+        Assert.Equal(1, _diagnostics.BackgroundSegmentStored);
+        Assert.Equal(0, _diagnostics.EvictionSegmentRemoved);
+
+        // Advance time past TTL — segment A is now logically expired
+        fakeTime.Advance(TimeSpan.FromSeconds(11));
+
+        // Store segment B — TryNormalize fires (step 2b), discovers segment A is expired,
+        // marks it removed, and physically removes it from storage (TtlSegmentExpired++).
+        // Eviction in steps 3+4 samples from storage — segment A is gone, only segment B
+        // exists (count=1) and it is just-stored (immune). No eviction candidates.
         await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(20, 29));
+        await cache.WaitForIdleAsync();
 
-        Assert.Equal(2, _diagnostics.BackgroundSegmentStored);
-        Assert.Equal(1, _diagnostics.EvictionTriggered);
-
-        // Wait for both TTL work items to fire (one is a no-op because segment was already evicted)
-        await Task.Delay(500);
-
-        // ASSERT — only one TTL expiration diagnostic fires (the no-op branch is silent), zero background failures
+        // ASSERT — only TTL fired (not eviction); no double-removal; no background failures
         Assert.Equal(1, _diagnostics.TtlSegmentExpired);
+        Assert.Equal(0, _diagnostics.EvictionSegmentRemoved);
         Assert.Equal(0, _diagnostics.BackgroundOperationFailed);
     }
 
@@ -750,23 +762,31 @@ public sealed class VisitedPlacesCacheInvariantTests : IAsyncDisposable
 
     /// <summary>
     /// Invariant VPC.T.2 [Behavioral]: The TTL background actor never blocks user requests.
-    /// Even when TTL is configured with a very short value, user-facing GetDataAsync returns
-    /// promptly (no deadlock or starvation from TTL processing).
+    /// With the lazy TTL design, TTL expiry is a fast in-memory timestamp check during
+    /// normalization — it performs no I/O or scheduling and cannot stall the User Path.
     /// </summary>
     [Fact]
     public async Task Invariant_VPC_T_2_TtlDoesNotBlockUserPath()
     {
-        // ARRANGE — very short TTL (1 ms); many requests in quick succession
+        // ARRANGE — TTL with FakeTimeProvider; advance time so all segments are "expired"
+        // before issuing multiple rapid requests. If TTL processing blocked the User Path,
+        // requests would serialize behind normalization and take much longer.
+        var fakeTime = new FakeTimeProvider();
+        var storageOptions = new SnapshotAppendBufferStorageOptions<int, int>(appendBufferSize: 1);
         var options = new VisitedPlacesCacheOptions<int, int>(
+            storageStrategy: storageOptions,
             eventChannelCapacity: 128,
-            segmentTtl: TimeSpan.FromMilliseconds(1));
-        var cache = TrackCache(TestHelpers.CreateCacheWithSimpleSource(_domain, _diagnostics, options));
+            segmentTtl: TimeSpan.FromSeconds(1));
+        var cache = TrackCache(TestHelpers.CreateCacheWithSimpleSource(_domain, _diagnostics, options, timeProvider: fakeTime));
+
+        // Pre-advance time so any stored segment is immediately expired on next normalization
+        fakeTime.Advance(TimeSpan.FromSeconds(2));
 
         var ranges = Enumerable.Range(0, 10)
             .Select(i => TestHelpers.CreateRange(i * 10, i * 10 + 9))
             .ToArray();
 
-        // ACT — issue all requests; each should complete quickly without blocking on TTL
+        // ACT — issue all requests; each should complete quickly without blocking on TTL normalization
         var sw = System.Diagnostics.Stopwatch.StartNew();
         foreach (var range in ranges)
         {
@@ -972,33 +992,34 @@ public sealed class VisitedPlacesCacheInvariantTests : IAsyncDisposable
     }
 
     // ============================================================
-    // VPC.T.3 — Disposal Cancels Pending TTL Work Items
+    // VPC.T.3 — Disposal With Unexpired Segments Completes Cleanly
     // ============================================================
 
     /// <summary>
-    /// Invariant VPC.T.3 [Behavioral]: Pending TTL work items are cancelled when the cache is disposed.
-    /// No TTL-related background failures should occur after disposal.
+    /// Invariant VPC.T.3 [Behavioral]: Disposing a cache that holds unexpired segments
+    /// completes cleanly with no background failures or spurious TTL expirations.
+    /// With the lazy TTL design there are no pending work items to cancel — the cache
+    /// can be collected immediately after disposal.
     /// </summary>
     [Fact]
-    public async Task Invariant_VPC_T_3_Disposal_CancelsPendingTtlWorkItems()
+    public async Task Invariant_VPC_T_3_Disposal_WithUnexpiredSegments_CompletesCleanly()
     {
-        // ARRANGE — very long TTL so the work item will definitely still be pending at disposal time
+        // ARRANGE — very long TTL so segments will never expire before disposal
+        var fakeTime = new FakeTimeProvider();
         var options = new VisitedPlacesCacheOptions<int, int>(
             eventChannelCapacity: 128,
             segmentTtl: TimeSpan.FromHours(1));
-        var cache = TrackCache(TestHelpers.CreateCacheWithSimpleSource(_domain, _diagnostics, options));
+        var cache = TrackCache(TestHelpers.CreateCacheWithSimpleSource(
+            _domain, _diagnostics, options, timeProvider: fakeTime));
 
-        // ACT — store a segment (schedules a TTL work item with a 1-hour delay)
+        // ACT — store a segment; it will not expire because time never advances
         await cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(0, 9));
-        Assert.Equal(1, _diagnostics.TtlWorkItemScheduled);
+        Assert.Equal(0, _diagnostics.TtlSegmentExpired);
 
-        // Dispose immediately — the pending Task.Delay for 1 hour must be cancelled
+        // Dispose the cache immediately — no background TTL work items to cancel
         await cache.DisposeAsync();
 
-        // Brief wait to allow any would-be TTL activity to surface (should be silent)
-        await Task.Delay(100);
-
-        // ASSERT — no TTL expiration (the delay was cancelled) and no background failures
+        // ASSERT — no TTL expiration and no background operation failure
         Assert.Equal(0, _diagnostics.TtlSegmentExpired);
         Assert.Equal(0, _diagnostics.BackgroundOperationFailed);
     }

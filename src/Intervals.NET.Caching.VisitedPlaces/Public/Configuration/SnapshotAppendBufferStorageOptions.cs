@@ -46,8 +46,8 @@ public sealed class SnapshotAppendBufferStorageOptions<TRange, TData>
     }
 
     /// <inheritdoc/>
-    internal override ISegmentStorage<TRange, TData> Create() =>
-        new SnapshotAppendBufferStorage<TRange, TData>(AppendBufferSize);
+    internal override ISegmentStorage<TRange, TData> Create(TimeProvider timeProvider) =>
+        new SnapshotAppendBufferStorage<TRange, TData>(AppendBufferSize, timeProvider);
 
     /// <inheritdoc/>
     public bool Equals(SnapshotAppendBufferStorageOptions<TRange, TData>? other)

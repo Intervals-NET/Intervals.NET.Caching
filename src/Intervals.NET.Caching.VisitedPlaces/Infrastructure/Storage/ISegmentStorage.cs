@@ -37,11 +37,13 @@ internal interface ISegmentStorage<TRange, TData>
     void AddRange(CachedSegment<TRange, TData>[] segments);
 
     /// <summary>
-    /// Atomically removes a segment from the storage.
+    /// Marks a segment as removed and decrements the live count.
+    /// Idempotent: returns <see langword="false"/> (no-op) if the segment has already been removed.
+    /// The caller must ensure the segment belongs to this storage instance.
     /// </summary>
     /// <returns>
-    /// <see langword="true"/> if this call was the first to remove the segment;
-    /// <see langword="false"/> if already removed (idempotent).
+    /// <see langword="true"/> if the segment was live and is now marked removed;
+    /// <see langword="false"/> if it was already removed.
     /// </returns>
     bool TryRemove(CachedSegment<TRange, TData> segment);
 
@@ -49,4 +51,21 @@ internal interface ISegmentStorage<TRange, TData>
     /// Returns a single randomly-selected live segment, or <see langword="null"/> if none available.
     /// </summary>
     CachedSegment<TRange, TData>? TryGetRandomSegment();
+
+    /// <summary>
+    /// Performs a normalization pass if the internal threshold has been reached.
+    /// During normalization, any segments whose TTL has expired are discovered,
+    /// marked as removed via <c>MarkAsRemoved</c>, physically removed from storage,
+    /// and returned via <paramref name="expiredSegments"/>.
+    /// </summary>
+    /// <param name="expiredSegments">
+    /// When normalization runs and at least one segment expired, receives the list of
+    /// newly-expired segments discovered during this pass.
+    /// <see langword="null"/> when normalization did not run or no segments expired.
+    /// </param>
+    /// <returns>
+    /// <see langword="true"/> if normalization was performed; <see langword="false"/> if the
+    /// threshold was not yet reached and no normalization took place.
+    /// </returns>
+    bool TryNormalize(out IReadOnlyList<CachedSegment<TRange, TData>>? expiredSegments);
 }

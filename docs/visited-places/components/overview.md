@@ -8,7 +8,7 @@ For actor responsibilities, see `docs/visited-places/actors.md`. For temporal be
 
 ## Package Structure
 
-`Intervals.NET.Caching.VisitedPlaces` contains 40 source files organized across four top-level directories:
+`Intervals.NET.Caching.VisitedPlaces` contains 37 source files organized across four top-level directories:
 
 ```
 src/Intervals.NET.Caching.VisitedPlaces/
@@ -23,7 +23,6 @@ src/Intervals.NET.Caching.VisitedPlaces/
 │   ├── CacheNormalizationRequest.cs
 │   ├── Background/
 │   ├── Eviction/
-│   ├── Ttl/
 │   └── UserPath/
 └── Infrastructure/                  ← Infrastructure concerns (internal)
     ├── Adapters/
@@ -58,17 +57,15 @@ Inherits from `IRangeCache<TRange,TData>` (shared foundation). Adds:
 VisitedPlacesCache (composition root)
   ├── _userRequestHandler: UserRequestHandler         ← User Path
   ├── _activityCounter: AsyncActivityCounter          ← WaitForIdleAsync support
-  ├── _ttlEngine: TtlEngine?                          ← TTL subsystem (nullable)
   └── Internal construction:
       ├── storage = options.StorageStrategy.Create()
       ├── evictionEngine = new EvictionEngine(policies, selector, diagnostics)
-      ├── ttlEngine = new TtlEngine(ttl, storage, evictionEngine, diagnostics) [if SegmentTtl set]
-      ├── executor = new CacheNormalizationExecutor(storage, evictionEngine, diagnostics, ttlEngine)
+      ├── executor = new CacheNormalizationExecutor(storage, evictionEngine, diagnostics, segmentTtl, timeProvider)
       ├── scheduler = Unbounded/BoundedSerialWorkScheduler(executor, activityCounter)
       └── _userRequestHandler = new UserRequestHandler(storage, dataSource, scheduler, diagnostics, domain)
 ```
 
-**Disposal sequence:** `UserRequestHandler.DisposeAsync()` → `TtlEngine.DisposeAsync()` (if present). See `docs/visited-places/architecture.md` for the three-state disposal pattern.
+**Disposal sequence:** `UserRequestHandler.DisposeAsync()` (cascades to scheduler, then background loop). See `docs/visited-places/architecture.md` for the disposal pattern.
 
 ### `Public/Configuration/`
 
@@ -110,8 +107,7 @@ For the full event reference, see `docs/visited-places/diagnostics.md`.
 - `Range` — the segment's range boundary
 - `Data` — the cached `ReadOnlyMemory<TData>`
 - `IEvictionMetadata? EvictionMetadata` — owned by the Eviction Selector; null until initialized
-- `bool TryMarkAsRemoved()` — atomic removal flag (`Interlocked.CompareExchange`); enables idempotent TTL+eviction coordination (Invariant VPC.T.1)
-
+- `bool IsRemoved` — removal flag set by `MarkAsRemoved()` (`Volatile.Write`); checked before removal via `IsRemoved` guard for idempotency (Invariant VPC.T.1)
 ---
 
 ## Subsystem 3 — Core: User Path
@@ -150,11 +146,11 @@ UserRequestHandler.HandleRequestAsync(requestedRange, ct)
 
 ## Subsystem 4 — Core: Background Path
 
-| File                                                               | Type           | Visibility | Role                                                                                                                                                                                        |
-|--------------------------------------------------------------------|----------------|------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `Core/Background/CacheNormalizationExecutor<TRange,TData,TDomain>` | `sealed class` | internal   | Processes `CacheNormalizationRequest`s; implements the four-step background sequence; sole storage writer (add path); delegates eviction to `EvictionEngine`, TTL scheduling to `TtlEngine` |
+| File                                                               | Type           | Visibility | Role                                                                                                                                                                                                       |
+|--------------------------------------------------------------------|----------------|------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `Core/Background/CacheNormalizationExecutor<TRange,TData,TDomain>` | `sealed class` | internal   | Processes `CacheNormalizationRequest`s; implements the four-step background sequence; sole storage writer (add path); delegates eviction to `EvictionEngine`; computes `ExpiresAt` for TTL at storage time |
 
-**Four-step sequence per event (Invariant VPC.B.3):** metadata update → storage + TTL scheduling → eviction evaluation + execution → post-removal. See `docs/visited-places/architecture.md` — Threading Model, Context 2 for the authoritative step-by-step description.
+**Four-step sequence per event (Invariant VPC.B.3):** metadata update → storage → eviction evaluation + execution → TTL normalization (`TryNormalize`). See `docs/visited-places/architecture.md` — Threading Model, Context 2 for the authoritative step-by-step description.
 
 ---
 
@@ -214,29 +210,7 @@ CacheNormalizationExecutor
 
 ---
 
-## Subsystem 6 — Core: TTL
-
-| File                                           | Type           | Visibility | Role                                                                                                                              |
-|------------------------------------------------|----------------|------------|-----------------------------------------------------------------------------------------------------------------------------------|
-| `Core/Ttl/TtlEngine<TRange,TData>`             | `sealed class` | internal   | Single TTL facade for `CacheNormalizationExecutor`; owns scheduler, activity counter, disposal CTS; implements `IAsyncDisposable` |
-| `Core/Ttl/TtlExpirationExecutor<TRange,TData>` | `sealed class` | internal   | Internal to `TtlEngine`; awaits `Task.Delay`, calls `MarkAsRemoved()`, removes from storage, notifies engine                      |
-| `Core/Ttl/TtlExpirationWorkItem<TRange,TData>` | `sealed class` | internal   | Internal to `TtlEngine`; carries segment reference and expiry timestamp                                                           |
-
-**Ownership hierarchy:**
-```
-CacheNormalizationExecutor
-  └── TtlEngine?                         ← sole TTL dependency; null if SegmentTtl not set
-        ├── ConcurrentWorkScheduler      ← dispatches work items to thread pool
-        ├── TtlExpirationExecutor        ← awaits delay, performs removal
-        ├── AsyncActivityCounter         ← private; NOT the same as the cache's main counter
-        └── CancellationTokenSource      ← cancelled on DisposeAsync
-```
-
-**Key design note:** `TtlEngine` uses its **own private `AsyncActivityCounter`**. This means `VisitedPlacesCache.WaitForIdleAsync()` does NOT wait for pending TTL delays — it only waits for the Background Storage Loop to drain. This is intentional: TTL delays can be arbitrarily long; blocking `WaitForIdleAsync` on them would make it unusable for tests.
-
----
-
-## Subsystem 7 — Infrastructure: Storage
+## Subsystem 6 — Infrastructure: Storage
 
 | File                                                                | Type             | Visibility | Role                                                                                                                                      |
 |---------------------------------------------------------------------|------------------|------------|-------------------------------------------------------------------------------------------------------------------------------------------|
@@ -244,6 +218,13 @@ CacheNormalizationExecutor
 | `Infrastructure/Storage/SegmentStorageBase<TRange,TData>`           | `abstract class` | internal   | Shared base for both strategies; implements `FindIntersecting` binary search anchor                                                       |
 | `Infrastructure/Storage/SnapshotAppendBufferStorage<TRange,TData>`  | `sealed class`   | internal   | Default; sorted snapshot + unsorted append buffer; User Path reads snapshot; Background Path normalizes buffer into snapshot periodically |
 | `Infrastructure/Storage/LinkedListStrideIndexStorage<TRange,TData>` | `sealed class`   | internal   | Alternative; doubly-linked list + stride index; O(log N) insertion + O(k) range query; better for high segment counts                     |
+
+**TTL is implemented entirely within the storage layer** — there is no separate TTL subsystem or class:
+- `CacheNormalizationExecutor` computes `ExpiresAt = now + SegmentTtl` at storage time and passes it to `Add`/`AddRange` (timestamp stored on the segment).
+- `SegmentStorageBase.FindIntersecting` filters expired segments at read time (immediate invisibility to the User Path).
+- `SegmentStorageBase.TryNormalize` discovers and physically removes expired segments on the Background Storage Loop (`Remove(segment)` → `engine.OnSegmentRemoved()` → `diagnostics.TtlSegmentExpired()`).
+
+See `docs/visited-places/invariants.md` — VPC.T group for formal invariants.
 
 For performance characteristics and trade-offs, see `docs/visited-places/storage-strategies.md`.
 
@@ -261,7 +242,7 @@ int Count { get; }
 
 ---
 
-## Subsystem 8 — Infrastructure: Adapters
+## Subsystem 7 — Infrastructure: Adapters
 
 | File                                                            | Type           | Visibility | Role                                                                                                                              |
 |-----------------------------------------------------------------|----------------|------------|-----------------------------------------------------------------------------------------------------------------------------------|
@@ -279,27 +260,19 @@ VisitedPlacesCache (Public Facade / Composition Root)
 │     ├── IDataSource (gap fetches)
 │     └── ISerialWorkScheduler → publishes CacheNormalizationRequest
 │
-├── AsyncActivityCounter (main)
-│     └── WaitForIdleAsync support
-│
-└── TtlEngine? (TTL Path, optional)
-      ├── ConcurrentWorkScheduler
-      ├── TtlExpirationExecutor
-      │     ├── ISegmentStorage (remove)
-      │     └── EvictionEngine.OnSegmentRemoved
-      ├── AsyncActivityCounter (private, TTL-only)
-      └── CancellationTokenSource
+└── AsyncActivityCounter (main)
+      └── WaitForIdleAsync support
 
 ─── Background Storage Loop ───────────────────────────────────────────────
 ISerialWorkScheduler
   └── CacheNormalizationExecutor (Background Path)
         ├── ISegmentStorage (add + remove — sole add-path writer)
-        ├── EvictionEngine (eviction facade)
-        │     ├── EvictionPolicyEvaluator
-        │     │     └── IEvictionPolicy[] (MaxSegmentCountPolicy, MaxTotalSpanPolicy, ...)
-        │     ├── EvictionExecutor
-        │     └── IEvictionSelector (LruEvictionSelector, FifoEvictionSelector, ...)
-        └── TtlEngine? (schedules expiration work items)
+        │     └── TryNormalize() — discovers and removes expired segments (TTL)
+        └── EvictionEngine (eviction facade)
+              ├── EvictionPolicyEvaluator
+              │     └── IEvictionPolicy[] (MaxSegmentCountPolicy, MaxTotalSpanPolicy, ...)
+              ├── EvictionExecutor
+              └── IEvictionSelector (LruEvictionSelector, FifoEvictionSelector, ...)
 ```
 
 ---
@@ -313,10 +286,9 @@ ISerialWorkScheduler
 | Core: User Path          | 1      |
 | Core: Background Path    | 1      |
 | Core: Eviction           | 14     |
-| Core: TTL                | 3      |
 | Infrastructure: Storage  | 4      |
 | Infrastructure: Adapters | 1      |
-| **Total**                | **40** |
+| **Total**                | **37** |
 
 ---
 
@@ -336,7 +308,6 @@ VPC depends on the following shared foundation types (compiled into the assembly
 | `ISerialWorkScheduler<T>`                        | `src/Intervals.NET.Caching/Infrastructure/Scheduling/Serial/` | Background serialization abstraction               |
 | `UnboundedSerialWorkScheduler<T>`                | `src/Intervals.NET.Caching/Infrastructure/Scheduling/Serial/` | Default lock-free task-chaining scheduler          |
 | `BoundedSerialWorkScheduler<T>`                  | `src/Intervals.NET.Caching/Infrastructure/Scheduling/Serial/` | Bounded-channel scheduler with backpressure        |
-| `ConcurrentWorkScheduler<T>`                     | `src/Intervals.NET.Caching/Infrastructure/Scheduling/`        | Fire-and-forget scheduler (used by TTL)            |
 | `LayeredRangeCache<TRange,TData>`                | `src/Intervals.NET.Caching/Layered/`                          | Multi-layer cache wrapper                          |
 | `LayeredRangeCacheBuilder<TRange,TData,TDomain>` | `src/Intervals.NET.Caching/Layered/`                          | Fluent layered cache builder                       |
 | `RangeCacheDataSourceAdapter<TRange,TData>`      | `src/Intervals.NET.Caching/Layered/`                          | Adapts `IRangeCache` as `IDataSource`              |

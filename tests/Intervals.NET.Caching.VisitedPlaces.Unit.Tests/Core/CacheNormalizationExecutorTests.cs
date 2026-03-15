@@ -579,6 +579,12 @@ public sealed class CacheNormalizationExecutorTests
         public bool TryRemove(CachedSegment<int, int> segment) => false;
 
         public CachedSegment<int, int>? TryGetRandomSegment() => null;
+
+        public bool TryNormalize(out IReadOnlyList<CachedSegment<int, int>>? expiredSegments)
+        {
+            expiredSegments = null;
+            return false;
+        }
     }
 
     #endregion

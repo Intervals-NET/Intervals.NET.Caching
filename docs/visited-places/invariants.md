@@ -229,9 +229,9 @@ Assert.Equal(expectedCount, cache.SegmentCount);
 
 **VPC.C.6** [Conceptual] Segments support **TTL-based expiration** via `VisitedPlacesCacheOptions.SegmentTtl`.
 
-- When `SegmentTtl` is non-null, a `TtlExpirationWorkItem` is scheduled immediately after each segment is stored.
-- The TTL actor awaits the expiration delay fire-and-forget on the thread pool and then removes the segment directly via `ISegmentStorage`.
-- When `SegmentTtl` is null (default), no TTL work items are scheduled and segments are only evicted by the configured eviction policies.
+- When `SegmentTtl` is non-null, each stored segment receives an `ExpiresAt` timestamp (UTC ticks computed at storage time).
+- TTL expiration is **lazy/passive**: expired segments are silently filtered by `FindIntersecting` on every read, and physically removed during the next `TryNormalize` pass on the Background Path.
+- When `SegmentTtl` is null (default), no `ExpiresAt` is set and segments are only evicted by the configured eviction policies.
 
 **VPC.C.7** [Architectural] **`SnapshotAppendBufferStorage` normalizes atomically**: the transition from (old snapshot, non-zero append count) to (new merged snapshot, zero append count) is performed under a lock shared with `FindIntersecting`.
 
@@ -240,24 +240,16 @@ Assert.Equal(expectedCount, cache.SegmentCount);
 - Without this guarantee, `FindIntersecting` could return the same segment reference twice (once from the new snapshot, once from the stale append buffer count), causing `Assemble` to double the data for that segment — silent data corruption.
 - The lock is held for nanoseconds (two field reads on the reader side, two field writes on the writer side). `Normalize` fires at most once per `appendBufferSize` additions, so contention is negligible.
 - `LinkedListStrideIndexStorage` is not affected — it inserts segments directly into the linked list with no dual-source scan.
-- **`_appendBuffer` is intentionally NOT cleared after normalization.** A `FindIntersecting` call that captured `appendCount > 0` before the lock update is still iterating `_appendBuffer` lock-free when `Normalize` completes. Calling `Array.Clear` on the shared buffer at that point nulls out slots the reader is actively dereferencing, causing a `NullReferenceException`. Leaving stale references in place is safe: readers entering after the lock update capture `appendCount = 0` and skip the buffer scan entirely; the next `Add()` call overwrites each slot before incrementing the count, so stale entries are never observable to new readers.
-
-**VPC.C.8** [Architectural] **`MergeSorted` defensively trims its result array** to the actual number of elements written, guarding against a TOCTOU race with the TTL Loop.
-
-- `Normalize()` counts live segments in two passes (counting pass, then merge pass). If a TTL work item calls `CachedSegment.TryMarkAsRemoved()` on a segment between these two passes, that segment is counted as live but then skipped as removed during the merge — leaving null trailing slots in the result array.
-- Without trimming, `FindIntersecting`'s binary search (`FindLastAtOrBefore`) would dereference a null element, producing a `NullReferenceException` on the User Path.
-- `MergeSorted` compares the write cursor `k` against `result.Length` after all merge loops complete. If `k < result.Length` (race occurred), it calls `Array.Resize(ref result, k)` to discard the null trailing slots before publishing.
-- On the common path (no concurrent TTL expiration during the narrow count-to-merge window), `k == result.Length` and the branch is not taken — zero overhead.
-- This fix is entirely lock-free: it requires no coordination between the Background Storage Loop and the TTL Loop beyond the existing `CachedSegment.TryMarkAsRemoved()` CAS. The counting pass remains a good-faith size hint that avoids allocation on the common case; it does not need to be exact.
+- **`_appendBuffer` is intentionally NOT cleared after normalization.** A `FindIntersecting` call that captured `appendCount > 0` before the lock update is still iterating `_appendBuffer` lock-free when `Normalize` completes. Calling `Array.Clear` on the shared buffer at that point nulls out slots the reader is actively dereferencing, causing a `NullReferenceException`. Leaving stale references in place is safe: readers entering after the lock update capture `appendCount = 0` and skip the buffer scan entirely; the next `Add()` call overwrites each slot before making it visible to readers.
 
 ---
 
 ## VPC.D. Concurrency Invariants
 
-**VPC.D.1** [Architectural] The execution model includes three execution contexts: User Thread, Background Storage Loop, and TTL Loop.
+**VPC.D.1** [Architectural] The execution model includes **exactly two execution contexts**: User Thread and Background Storage Loop.
 
 - No other threads may access cache-internal mutable state
-- The TTL Loop accesses storage directly via `ISegmentStorage` and uses `CachedSegment.MarkAsRemoved()` for atomic, idempotent removal coordination
+- There is no separate TTL thread or TTL Loop — TTL expiration is performed passively by the Background Storage Loop during `TryNormalize`
 
 **VPC.D.2** [Architectural] User Path read operations on `CachedSegments` are **safe under concurrent access** from multiple user threads.
 
@@ -279,10 +271,10 @@ Assert.Equal(expectedCount, cache.SegmentCount);
 - Under parallel callers, `WaitForIdleAsync`'s "was idle at some point" semantics (Invariant S.H.3) may return after the old TCS completes but before the event from a concurrent request has been processed
 - The method remains safe (no crashes, no hangs) under parallel access, but the guarantee degrades
 
-**VPC.D.6** [Architectural] **Thread-safe eviction policy lifecycle**: `IEvictionPolicy` instances are constructed once at cache initialization and accessed from **two execution contexts**: the Background Storage Loop (for `OnSegmentAdded`, `Evaluate`, and eviction-driven `OnSegmentRemoved`) and the TTL thread pool (for TTL-driven `OnSegmentRemoved`).
+**VPC.D.6** [Architectural] **Eviction policy lifecycle is single-threaded**: `IEvictionPolicy` instances are constructed once at cache initialization and accessed exclusively from the **Background Storage Loop**.
 
-- **`OnSegmentRemoved` must be thread-safe**: it can be called from either the Background Storage Loop or the TTL thread (via `TtlExpirationExecutor` → `EvictionEngine.OnSegmentRemoved`). The `Interlocked.CompareExchange` gate in `CachedSegment.TryMarkAsRemoved()` ensures only one caller invokes `OnSegmentRemoved` per segment, but the calling thread varies. Built-in policies use `Interlocked` operations for this reason
-- **`OnSegmentAdded` and `Evaluate` remain single-threaded**: called only from the Background Storage Loop, inheriting VPC.D.3's single-writer guarantee
+- `OnSegmentAdded`, `Evaluate`, and `OnSegmentRemoved` are all called only from the Background Storage Loop, inheriting VPC.D.3's single-writer guarantee
+- With the passive TTL design, TTL-driven removal also happens on the Background Storage Loop (inside `TryNormalize`), so `OnSegmentRemoved` is never called from a separate TTL thread
 - Pressure objects (`IEvictionPressure`) are stack-local: created fresh per evaluation cycle by `IEvictionPolicy.Evaluate`, used within a single `EvaluateAndExecute` call, and then discarded
 - The `EvictionExecutor` and `IEvictionSelector` are single-threaded — they run only within the Background Storage Loop's `EvaluateAndExecute` call
 
@@ -392,29 +384,31 @@ Assert.Equal(expectedCount, cache.SegmentCount);
 
 ## VPC.T. TTL (Time-To-Live) Invariants
 
-**VPC.T.1** [Architectural] TTL expiration is **idempotent**: if a segment has already been evicted by a capacity policy when its TTL fires, the removal is a no-op.
+**VPC.T.1** [Architectural] TTL expiration is **idempotent**: if a segment is evicted by a capacity policy before the Background Path discovers its TTL has expired, the removal is a no-op.
 
-- `TtlExpirationExecutor` calls `storage.TryRemove(segment)`, which internally calls `segment.TryMarkAsRemoved()` (an `Interlocked.CompareExchange` on the segment's `_isRemoved` field) before performing any storage mutation.
-- If `TryMarkAsRemoved()` returns `false` (another caller already set the flag), `TryRemove` returns `false` and the TTL actor skips removal entirely.
-- This ensures that concurrent eviction and TTL expiration cannot produce a double-remove or corrupt storage state.
+- Both the eviction path and the `TryNormalize` TTL path call `segment.MarkAsRemoved()` after checking `segment.IsRemoved`.
+- Because `TryNormalize` runs **before** eviction in each background step, TTL wins when a segment qualifies for both: `TryNormalize` removes it first, the subsequent eviction evaluation finds either a reduced count or no eligible candidate.
+- `TryGetRandomSegment` filters out already-removed segments, so eviction never encounters a segment that `TryNormalize` already removed.
+- `SegmentStorageBase.Remove` guards with an `IsRemoved` check before calling `MarkAsRemoved()` — safe because the Background Path is the sole writer (no TOCTOU race).
+- This ensures that TTL expiration and capacity eviction cannot produce a double-remove or corrupt storage state.
 
-**VPC.T.2** [Architectural] The TTL actor **never blocks the User Path**: it runs fire-and-forget on the thread pool via a dedicated `ConcurrentWorkScheduler`.
+**VPC.T.2** [Architectural] TTL expiration is **lazy/passive**: expired segments linger in storage until the next `TryNormalize` pass, but are **invisible to readers** via lazy filtering in `FindIntersecting`.
 
-- `TtlExpirationExecutor` awaits `Task.Delay(ttl - elapsed)` independently on the thread pool; each TTL work item runs concurrently with others.
-- TTL work items do not interact with the User Path or enqueue work into the Background Storage Loop. They do call `EvictionEngine.OnSegmentRemoved` to update policy aggregates (e.g., segment count), but this is thread-safe via `Interlocked` operations (see VPC.D.6).
-- TTL work items use their own `AsyncActivityCounter` so that `WaitForIdleAsync` does not wait for long-running TTL delays.
+- `FindIntersecting` checks `seg.IsExpired(utcNowTicks)` on every segment scan; expired segments are excluded from results immediately, even before physical removal.
+- Physical removal happens during the next `TryNormalize` call on the Background Path, which fires when the normalization threshold (`appendBufferSize`) is reached.
+- The latency between expiration and physical removal is bounded by the time until the next background event that reaches the normalization threshold.
 
-**VPC.T.3** [Conceptual] Pending TTL delays are **cancelled on disposal**.
+**VPC.T.3** [Architectural] TTL expiration runs **exclusively on the Background Path**, never on the User Path or a separate thread pool.
 
-- When `VisitedPlacesCache.DisposeAsync` is called, `TtlEngine.DisposeAsync` is invoked after the normalization scheduler has been drained.
-- The `ConcurrentWorkScheduler`'s `CancellationToken` is cancelled, aborting any in-progress `Task.Delay` calls via `OperationCanceledException`.
-- No TTL work item outlives the cache instance.
+- `TryNormalize` discovers expired segments, calls `segment.MarkAsRemoved()`, decrements the count, and returns the newly-expired list to the executor.
+- The executor calls `_evictionEngine.OnSegmentRemoved(segment)` and `_diagnostics.TtlSegmentExpired()` for each expired segment.
+- There is no `TtlEngine`, `TtlExpirationExecutor`, `ConcurrentWorkScheduler`, or per-segment `Task.Delay` — TTL is a timestamp check, not an orchestration problem.
 
-**VPC.T.4** [Architectural] The TTL subsystem internals (`TtlExpirationExecutor`, `ConcurrentWorkScheduler`, `AsyncActivityCounter`, `CancellationTokenSource`) are **encapsulated behind `TtlEngine`**.
+**VPC.T.4** [Architectural] `ExpiresAt` is set **once at storage time** and is immutable thereafter.
 
-- `CacheNormalizationExecutor` depends only on `TtlEngine` — it has no direct reference to the executor, scheduler, activity counter, or disposal CTS.
-- `VisitedPlacesCache` holds a single `TtlEngine?` field — the three-field infrastructure (`_ttlActivityCounter`, `_ttlScheduler`, `_ttlDisposalCts`) is owned internally by the engine.
-- This boundary enforces single-responsibility: the executor owns storage mutations; the engine owns TTL lifecycle coordination.
+- `CacheNormalizationExecutor.ComputeExpiresAt()` computes the expiration timestamp when a segment is about to be stored, using the injected `TimeProvider`.
+- The `ExpiresAt` value is passed as a constructor argument to `CachedSegment` — it is an `init`-only property and cannot be changed after construction.
+- `TimeProvider` is injected into `VisitedPlacesCache` (optional constructor parameter, defaults to `TimeProvider.System`) and flows to `StorageStrategyOptions.Create(timeProvider)` for use in `FindIntersecting`'s lazy filtering.
 
 ---
 

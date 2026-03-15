@@ -73,14 +73,15 @@ public static class TestHelpers
         IntegerFixedStepDomain domain,
         VisitedPlacesCacheOptions<int, int> options,
         EventCounterCacheDiagnostics diagnostics,
-        int maxSegmentCount = 100)
+        int maxSegmentCount = 100,
+        TimeProvider? timeProvider = null)
     {
         IReadOnlyList<IEvictionPolicy<int, int>> policies =
             [new MaxSegmentCountPolicy<int, int>(maxSegmentCount)];
         IEvictionSelector<int, int> selector = new LruEvictionSelector<int, int>();
 
         return new VisitedPlacesCache<int, int, IntegerFixedStepDomain>(
-            dataSource, domain, options, policies, selector, diagnostics);
+            dataSource, domain, options, policies, selector, diagnostics, timeProvider);
     }
 
     /// <summary>
@@ -90,10 +91,11 @@ public static class TestHelpers
         IntegerFixedStepDomain domain,
         EventCounterCacheDiagnostics diagnostics,
         VisitedPlacesCacheOptions<int, int>? options = null,
-        int maxSegmentCount = 100)
+        int maxSegmentCount = 100,
+        TimeProvider? timeProvider = null)
     {
         var dataSource = new SimpleTestDataSource();
-        return CreateCache(dataSource, domain, options ?? CreateDefaultOptions(), diagnostics, maxSegmentCount);
+        return CreateCache(dataSource, domain, options ?? CreateDefaultOptions(), diagnostics, maxSegmentCount, timeProvider);
     }
 
     /// <summary>

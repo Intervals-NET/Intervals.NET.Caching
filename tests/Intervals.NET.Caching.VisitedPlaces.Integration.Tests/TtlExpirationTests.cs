@@ -9,9 +9,9 @@ using Intervals.NET.Caching.VisitedPlaces.Tests.Infrastructure.Helpers;
 namespace Intervals.NET.Caching.VisitedPlaces.Integration.Tests;
 
 /// <summary>
-/// Integration tests for the TTL expiration mechanism.
-/// Validates end-to-end segment expiry, idempotency with concurrent eviction,
-/// TTL-disabled behaviour, and diagnostics counters.
+/// Integration tests for the lazy TTL expiration mechanism.
+/// TTL segments are filtered on read (invisible to the User Path once expired) and physically
+/// removed during the next <c>TryNormalize</c> pass triggered by the Background Path.
 /// </summary>
 public sealed class TtlExpirationTests : IAsyncDisposable
 {
@@ -41,74 +41,130 @@ public sealed class TtlExpirationTests : IAsyncDisposable
         var range = TestHelpers.CreateRange(0, 9);
         await _cache.GetDataAndWaitForIdleAsync(range);
 
-        // ASSERT — segment stored; no TTL work items scheduled
+        // ASSERT — segment stored; no TTL expiry fired
         Assert.Equal(1, _diagnostics.BackgroundSegmentStored);
-        Assert.Equal(0, _diagnostics.TtlWorkItemScheduled);
         Assert.Equal(0, _diagnostics.TtlSegmentExpired);
 
-        // Give ample time for any spurious TTL expiry to fire (it should not)
-        await Task.Delay(150);
+        // Advance a fake clock would do nothing (no TTL configured) — assert after
+        // waiting for any spurious background activity
+        await _cache.WaitForIdleAsync();
         Assert.Equal(0, _diagnostics.TtlSegmentExpired);
     }
 
     // ============================================================
-    // TTL ENABLED — end-to-end expiration
+    // TTL ENABLED — lazy filter (expiry on read, before normalization)
     // ============================================================
 
     [Fact]
-    public async Task TtlEnabled_SegmentExpiresAfterTtl()
+    public async Task TtlEnabled_AfterTimeAdvances_ExpiredSegmentInvisibleOnRead()
     {
-        // ARRANGE — 100 ms TTL
+        // ARRANGE — appendBufferSize=8 (default) so normalization won't fire after 1 segment.
+        // Use FakeTimeProvider so we can advance time without waiting.
+        var fakeTime = new FakeTimeProvider();
         var options = new VisitedPlacesCacheOptions<int, int>(
             eventChannelCapacity: 128,
-            segmentTtl: TimeSpan.FromMilliseconds(100));
-        _cache = TestHelpers.CreateCacheWithSimpleSource(_domain, _diagnostics, options);
+            segmentTtl: TimeSpan.FromSeconds(10));
+        _cache = TestHelpers.CreateCacheWithSimpleSource(_domain, _diagnostics, options, timeProvider: fakeTime);
 
         var range = TestHelpers.CreateRange(0, 9);
 
-        // ACT — store segment
+        // ACT — store segment, then advance time past TTL
         await _cache.GetDataAndWaitForIdleAsync(range);
-
         Assert.Equal(1, _diagnostics.BackgroundSegmentStored);
-        Assert.Equal(1, _diagnostics.TtlWorkItemScheduled);
 
-        // Wait for TTL to fire (with generous headroom)
-        await Task.Delay(350);
+        fakeTime.Advance(TimeSpan.FromSeconds(11)); // past the 10s TTL
 
-        // ASSERT — TTL expiry fired
+        // Read again — expired segment must be invisible (FullMiss, not FullHit)
+        var result = await _cache.GetDataAsync(range, CancellationToken.None);
+
+        // ASSERT — user path sees a miss (lazy filter kicked in); normalization not yet run
+        Assert.Equal(CacheInteraction.FullMiss, result.CacheInteraction);
+        Assert.Equal(0, _diagnostics.TtlSegmentExpired); // physical removal not yet triggered
+
+        await _cache.WaitForIdleAsync();
+    }
+
+    // ============================================================
+    // TTL ENABLED — normalization discovers and removes expired segments
+    // ============================================================
+
+    [Fact]
+    public async Task TtlEnabled_NormalizationTriggered_ExpiresAndReportsSegment()
+    {
+        // ARRANGE — appendBufferSize=1 so TryNormalize fires on every store.
+        // Use FakeTimeProvider to control expiry deterministically.
+        var fakeTime = new FakeTimeProvider();
+        var storageOptions = new SnapshotAppendBufferStorageOptions<int, int>(appendBufferSize: 1);
+        var options = new VisitedPlacesCacheOptions<int, int>(
+            storageStrategy: storageOptions,
+            eventChannelCapacity: 128,
+            segmentTtl: TimeSpan.FromSeconds(10));
+        _cache = TestHelpers.CreateCacheWithSimpleSource(_domain, _diagnostics, options, timeProvider: fakeTime);
+
+        var range1 = TestHelpers.CreateRange(0, 9);
+        var range2 = TestHelpers.CreateRange(20, 29); // second store triggers normalization
+
+        // Store first segment
+        await _cache.GetDataAndWaitForIdleAsync(range1);
+        Assert.Equal(1, _diagnostics.BackgroundSegmentStored);
+        Assert.Equal(0, _diagnostics.TtlSegmentExpired);
+
+        // Advance time past TTL
+        fakeTime.Advance(TimeSpan.FromSeconds(11));
+
+        // Store a second segment — TryNormalize fires, discovers segment1 is expired
+        await _cache.GetDataAndWaitForIdleAsync(range2);
+        await _cache.WaitForIdleAsync();
+
+        // ASSERT — expired segment was discovered and reported
         Assert.Equal(1, _diagnostics.TtlSegmentExpired);
+        Assert.Equal(0, _diagnostics.BackgroundOperationFailed);
     }
 
     [Fact]
-    public async Task TtlEnabled_MultipleSegments_AllExpire()
+    public async Task TtlEnabled_MultipleSegments_AllExpireOnNormalization()
     {
-        // ARRANGE — 100 ms TTL; two non-overlapping ranges
+        // ARRANGE — appendBufferSize=1; FakeTimeProvider
+        var fakeTime = new FakeTimeProvider();
+        var storageOptions = new SnapshotAppendBufferStorageOptions<int, int>(appendBufferSize: 1);
         var options = new VisitedPlacesCacheOptions<int, int>(
+            storageStrategy: storageOptions,
             eventChannelCapacity: 128,
-            segmentTtl: TimeSpan.FromMilliseconds(100));
-        _cache = TestHelpers.CreateCacheWithSimpleSource(_domain, _diagnostics, options);
+            segmentTtl: TimeSpan.FromSeconds(10));
+        _cache = TestHelpers.CreateCacheWithSimpleSource(_domain, _diagnostics, options, timeProvider: fakeTime);
 
-        // ACT
+        // Store two non-overlapping segments
         await _cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(0, 9));
         await _cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(20, 29));
-
         Assert.Equal(2, _diagnostics.BackgroundSegmentStored);
-        Assert.Equal(2, _diagnostics.TtlWorkItemScheduled);
 
-        await Task.Delay(350);
+        // Advance time past TTL
+        fakeTime.Advance(TimeSpan.FromSeconds(11));
 
-        // ASSERT — both TTL expirations fired
+        // Trigger a third store to force normalization; both prior segments are now expired
+        await _cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(40, 49));
+        await _cache.WaitForIdleAsync();
+
+        // ASSERT — both prior segments were expired during normalization
         Assert.Equal(2, _diagnostics.TtlSegmentExpired);
+        Assert.Equal(0, _diagnostics.BackgroundOperationFailed);
     }
+
+    // ============================================================
+    // TTL + RE-FETCH — after expiry, next request is a FullMiss
+    // ============================================================
 
     [Fact]
     public async Task TtlEnabled_AfterExpiry_SubsequentRequestRefetchesFromDataSource()
     {
-        // ARRANGE — 100 ms TTL
+        // ARRANGE — appendBufferSize=1 so normalization fires on every store
+        var fakeTime = new FakeTimeProvider();
+        var storageOptions = new SnapshotAppendBufferStorageOptions<int, int>(appendBufferSize: 1);
         var options = new VisitedPlacesCacheOptions<int, int>(
+            storageStrategy: storageOptions,
             eventChannelCapacity: 128,
-            segmentTtl: TimeSpan.FromMilliseconds(100));
-        _cache = TestHelpers.CreateCacheWithSimpleSource(_domain, _diagnostics, options);
+            segmentTtl: TimeSpan.FromSeconds(10));
+        _cache = TestHelpers.CreateCacheWithSimpleSource(_domain, _diagnostics, options, timeProvider: fakeTime);
 
         var range = TestHelpers.CreateRange(0, 9);
 
@@ -117,100 +173,112 @@ public sealed class TtlExpirationTests : IAsyncDisposable
         Assert.Equal(CacheInteraction.FullMiss, result1.CacheInteraction);
         Assert.Equal(1, _diagnostics.BackgroundSegmentStored);
 
-        // Wait for TTL expiry
-        await Task.Delay(350);
-        Assert.Equal(1, _diagnostics.TtlSegmentExpired);
+        // Advance time past TTL
+        fakeTime.Advance(TimeSpan.FromSeconds(11));
 
         _diagnostics.Reset();
 
-        // Second fetch — segment gone, must re-fetch from data source
+        // Second fetch — expired segment is invisible on read → FullMiss; stores a new segment
         var result2 = await _cache.GetDataAndWaitForIdleAsync(range);
 
-        // ASSERT — full miss again (segment was evicted by TTL)
+        // ASSERT — full miss again (expired segment not visible), new segment stored
         Assert.Equal(CacheInteraction.FullMiss, result2.CacheInteraction);
         Assert.Equal(1, _diagnostics.BackgroundSegmentStored);
-        Assert.Equal(1, _diagnostics.TtlWorkItemScheduled);
     }
 
     // ============================================================
-    // TTL + EVICTION — idempotency when eviction beats TTL
+    // TTL + EVICTION — idempotency (only one removal path fires)
     // ============================================================
 
     [Fact]
-    public async Task TtlEnabled_SegmentEvictedBeforeTtlFires_NoDoubleRemoval()
+    public async Task TtlEnabled_TtlAndEvictionCompete_OnlyOneRemovalFires()
     {
-        // ARRANGE — 200 ms TTL; MaxSegmentCount(1) so the second request evicts the first
+        // ARRANGE — MaxSegmentCount(1) so a second store would normally evict the first.
+        // appendBufferSize=1 so TryNormalize fires on the same step as the second store.
+        // With the execution order (TryNormalize before Eviction), TTL wins: it removes
+        // segment A in step 2b, so eviction in steps 3+4 finds no additional candidate.
+        var fakeTime = new FakeTimeProvider();
+        var storageOptions = new SnapshotAppendBufferStorageOptions<int, int>(appendBufferSize: 1);
         var options = new VisitedPlacesCacheOptions<int, int>(
+            storageStrategy: storageOptions,
             eventChannelCapacity: 128,
-            segmentTtl: TimeSpan.FromMilliseconds(200));
-        _cache = TestHelpers.CreateCacheWithSimpleSource(_domain, _diagnostics, options, maxSegmentCount: 1);
+            segmentTtl: TimeSpan.FromSeconds(10));
+        _cache = TestHelpers.CreateCacheWithSimpleSource(
+            _domain, _diagnostics, options, maxSegmentCount: 1, timeProvider: fakeTime);
 
-        // ACT — store first segment, then second (evicts first)
+        // Store first segment
         await _cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(0, 9));
+        Assert.Equal(1, _diagnostics.BackgroundSegmentStored);
+
+        // Advance past TTL
+        fakeTime.Advance(TimeSpan.FromSeconds(11));
+
+        // Store second segment — TryNormalize fires (TTL removes segment A), then eviction
+        // finds no candidates to remove (only B which is just-stored and immune, count=1).
         await _cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(20, 29));
+        await _cache.WaitForIdleAsync();
 
-        Assert.Equal(2, _diagnostics.BackgroundSegmentStored);
-        Assert.Equal(2, _diagnostics.TtlWorkItemScheduled);
-        Assert.Equal(1, _diagnostics.EvictionTriggered); // first segment was evicted
-
-        // Wait for both TTL expirations to fire
-        await Task.Delay(500);
-
-        // ASSERT — only the real removal fires TtlSegmentExpired; the already-evicted no-op is silent
+        // ASSERT — TTL fired for segment A; eviction did NOT also remove it
         Assert.Equal(1, _diagnostics.TtlSegmentExpired);
+        Assert.Equal(0, _diagnostics.EvictionSegmentRemoved);
         Assert.Equal(0, _diagnostics.BackgroundOperationFailed);
     }
 
     // ============================================================
-    // DISPOSAL — pending TTL work items are cancelled
+    // DISPOSAL — unexpired segments present; disposal completes cleanly
     // ============================================================
 
     [Fact]
-    public async Task Disposal_PendingTtlWorkItems_AreCancelledCleanly()
+    public async Task Disposal_WithUnexpiredSegments_CompletesCleanly()
     {
-        // ARRANGE — very long TTL so it won't fire before disposal
+        // ARRANGE — very long TTL so segments won't expire during this test
+        var fakeTime = new FakeTimeProvider();
         var options = new VisitedPlacesCacheOptions<int, int>(
             eventChannelCapacity: 128,
-            segmentTtl: TimeSpan.FromMinutes(10));
-        _cache = TestHelpers.CreateCacheWithSimpleSource(_domain, _diagnostics, options);
+            segmentTtl: TimeSpan.FromHours(1));
+        _cache = TestHelpers.CreateCacheWithSimpleSource(_domain, _diagnostics, options, timeProvider: fakeTime);
 
         await _cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(0, 9));
-        Assert.Equal(1, _diagnostics.TtlWorkItemScheduled);
         Assert.Equal(0, _diagnostics.TtlSegmentExpired);
 
-        // ACT — dispose cache while TTL is still pending
+        // ACT — dispose cache while TTL is still far from expiry
         await _cache.DisposeAsync();
         _cache = null; // prevent DisposeAsync() from being called again in IAsyncDisposable
 
-        // ASSERT — no crash, TTL did not fire, no background operation failure
+        // ASSERT — no crash, no TTL expiry, no background failures
         Assert.Equal(0, _diagnostics.TtlSegmentExpired);
         Assert.Equal(0, _diagnostics.BackgroundOperationFailed);
     }
 
     // ============================================================
-    // DIAGNOSTICS — TtlWorkItemScheduled counter
+    // DIAGNOSTICS — TtlSegmentExpired counter accuracy
     // ============================================================
 
     [Fact]
     public async Task TtlEnabled_DiagnosticsCounters_AreCorrect()
     {
-        // ARRANGE
+        // ARRANGE — appendBufferSize=1; three segments stored, then all expired, then trigger normalization
+        var fakeTime = new FakeTimeProvider();
+        var storageOptions = new SnapshotAppendBufferStorageOptions<int, int>(appendBufferSize: 1);
         var options = new VisitedPlacesCacheOptions<int, int>(
+            storageStrategy: storageOptions,
             eventChannelCapacity: 128,
-            segmentTtl: TimeSpan.FromMilliseconds(100));
-        _cache = TestHelpers.CreateCacheWithSimpleSource(_domain, _diagnostics, options);
+            segmentTtl: TimeSpan.FromSeconds(10));
+        _cache = TestHelpers.CreateCacheWithSimpleSource(_domain, _diagnostics, options, timeProvider: fakeTime);
 
-        // ACT — three separate non-overlapping requests
+        // Store three non-overlapping segments
         await _cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(0, 9));
         await _cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(20, 29));
         await _cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(40, 49));
-
-        // ASSERT — one TtlWorkItemScheduled per segment stored
         Assert.Equal(3, _diagnostics.BackgroundSegmentStored);
-        Assert.Equal(3, _diagnostics.TtlWorkItemScheduled);
 
-        // Wait and verify all three expire
-        await Task.Delay(400);
+        // Advance past TTL and trigger normalization via a fourth store
+        fakeTime.Advance(TimeSpan.FromSeconds(11));
+        await _cache.GetDataAndWaitForIdleAsync(TestHelpers.CreateRange(60, 69));
+        await _cache.WaitForIdleAsync();
+
+        // ASSERT — all three prior segments expired during normalization
         Assert.Equal(3, _diagnostics.TtlSegmentExpired);
+        Assert.Equal(0, _diagnostics.BackgroundOperationFailed);
     }
 }

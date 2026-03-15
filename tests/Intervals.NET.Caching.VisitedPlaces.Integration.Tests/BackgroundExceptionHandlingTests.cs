@@ -334,7 +334,6 @@ public sealed class BackgroundExceptionHandlingTests : IAsyncDisposable
         void IVisitedPlacesCacheDiagnostics.EvictionExecuted() { }
         void IVisitedPlacesCacheDiagnostics.EvictionSegmentRemoved() { }
         void IVisitedPlacesCacheDiagnostics.TtlSegmentExpired() { }
-        void IVisitedPlacesCacheDiagnostics.TtlWorkItemScheduled() { }
     }
 
     #endregion

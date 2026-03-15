@@ -12,8 +12,9 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Policies;
 /// <typeparam name="TData">The type of data being cached.</typeparam>
 /// <typeparam name="TDomain">The range domain type used to compute spans.</typeparam>
 /// <remarks>
-/// Maintains a running total span via <see cref="OnSegmentAdded"/>/<see cref="OnSegmentRemoved"/>
-/// using atomic operations for thread safety. Evaluation is O(1).
+/// Maintains a running total span via <see cref="OnSegmentAdded"/>/<see cref="OnSegmentRemoved"/>.
+/// All callers run exclusively on the Background Storage Loop (Invariant VPC.D.6) — no
+/// synchronization is required. Evaluation is O(1).
 /// </remarks>
 /// <summary>
 /// Non-generic factory companion for <see cref="MaxTotalSpanPolicy{TRange,TData,TDomain}"/>.
@@ -98,7 +99,7 @@ public sealed class MaxTotalSpanPolicy<TRange, TData, TDomain> : IEvictionPolicy
             return;
         }
 
-        Interlocked.Add(ref _totalSpan, span.Value);
+        _totalSpan += span.Value;
     }
 
     /// <inheritdoc/>
@@ -110,20 +111,18 @@ public sealed class MaxTotalSpanPolicy<TRange, TData, TDomain> : IEvictionPolicy
             return;
         }
 
-        Interlocked.Add(ref _totalSpan, -span.Value);
+        _totalSpan -= span.Value;
     }
 
     /// <inheritdoc/>
     public IEvictionPressure<TRange, TData> Evaluate()
     {
-        var currentSpan = Volatile.Read(ref _totalSpan);
-
-        if (currentSpan <= MaxTotalSpan)
+        if (_totalSpan <= MaxTotalSpan)
         {
             return NoPressure<TRange, TData>.Instance;
         }
 
-        return new TotalSpanPressure(currentSpan, MaxTotalSpan, _domain);
+        return new TotalSpanPressure(_totalSpan, MaxTotalSpan, _domain);
     }
 
     /// <summary>

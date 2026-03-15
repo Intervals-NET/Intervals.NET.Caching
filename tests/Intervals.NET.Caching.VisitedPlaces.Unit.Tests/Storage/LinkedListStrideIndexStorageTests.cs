@@ -6,7 +6,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Unit.Tests.Storage;
 
 /// <summary>
 /// Unit tests for <see cref="LinkedListStrideIndexStorage{TRange,TData}"/>.
-/// Covers Count, Add, TryRemove, TryGetRandomSegment, FindIntersecting, stride normalization.
+/// Covers Count, Add, Remove, TryGetRandomSegment, FindIntersecting, stride normalization.
 /// </summary>
 public sealed class LinkedListStrideIndexStorageTests
 {

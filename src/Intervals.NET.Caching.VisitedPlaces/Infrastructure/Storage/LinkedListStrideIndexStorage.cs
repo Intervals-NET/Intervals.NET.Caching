@@ -17,6 +17,7 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
 
     private readonly int _stride;
     private readonly int _appendBufferSize;
+    private readonly TimeProvider _timeProvider;
 
     // Sorted linked list — mutated on Background Path only.
     private readonly LinkedList<CachedSegment<TRange, TData>> _list = [];
@@ -36,9 +37,12 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
 
     /// <summary>
     /// Initializes a new <see cref="LinkedListStrideIndexStorage{TRange,TData}"/> with optional
-    /// append buffer size and stride values.
+    /// append buffer size, stride, and time provider values.
     /// </summary>
-    public LinkedListStrideIndexStorage(int appendBufferSize = DefaultAppendBufferSize, int stride = DefaultStride)
+    public LinkedListStrideIndexStorage(
+        int appendBufferSize = DefaultAppendBufferSize,
+        int stride = DefaultStride,
+        TimeProvider? timeProvider = null)
     {
         if (appendBufferSize < 1)
         {
@@ -54,12 +58,16 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
 
         _appendBufferSize = appendBufferSize;
         _stride = stride;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <inheritdoc/>
     public override IReadOnlyList<CachedSegment<TRange, TData>> FindIntersecting(Range<TRange> range)
     {
         var strideIndex = Volatile.Read(ref _strideIndex);
+
+        // Pre-compute the current UTC ticks once for all expiry checks in this call.
+        var utcNowTicks = _timeProvider.GetUtcNow().UtcTicks;
 
         // Lazy-init: only allocate the results list on the first actual match.
         // Full-Miss path (no intersecting segments) returns the static empty array — zero allocation.
@@ -118,8 +126,8 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
                     break;
                 }
 
-                // Use IsRemoved flag as the primary soft-delete filter (no shared collection needed).
-                if (!seg.IsRemoved && seg.Range.Overlaps(range))
+                // Filter out removed and TTL-expired segments (lazy expiration on read).
+                if (!seg.IsRemoved && !seg.IsExpired(utcNowTicks) && seg.Range.Overlaps(range))
                 {
                     (results ??= []).Add(seg);
                 }
@@ -142,20 +150,16 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
         InsertSorted(segment);
 
         _addsSinceLastNormalization++;
-        IncrementCount();
-
-        if (_addsSinceLastNormalization == _appendBufferSize)
-        {
-            NormalizeStrideIndex();
-        }
+        _count++;
     }
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Inserts each segment via <see cref="InsertSorted"/> (O(log(n/N) + N) each), then runs a
-    /// single <see cref="NormalizeStrideIndex"/> pass after all insertions.  Compared to calling
-    /// <see cref="Add"/> in a loop, this defers stride-index rebuilds until all segments are in
-    /// the list — reducing normalization passes from O(count/appendBufferSize) down to one.
+    /// Inserts each segment via <see cref="InsertSorted"/> (O(log(n/N) + N) each). Compared to
+    /// calling <see cref="Add"/> in a loop, this keeps all segments inserted before the executor
+    /// calls <see cref="TryNormalize"/> — no normalization passes during insertions.
+    /// <c>_addsSinceLastNormalization</c> is incremented by the number of inserted segments so
+    /// the next <see cref="TryNormalize"/> call sees the correct threshold state.
     /// </remarks>
     public override void AddRange(CachedSegment<TRange, TData>[] segments)
     {
@@ -172,13 +176,9 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
             InsertSorted(segment);
         }
 
-        IncrementCount(segments.Length);
-
-        // A single normalization after all insertions replaces the O(count/appendBufferSize)
-        // normalizations that would occur when calling Add() in a loop. NormalizeStrideIndex also
-        // resets _addsSinceLastNormalization = 0 in its finally block, so the next Add() call
-        // starts a fresh normalization cycle.
-        NormalizeStrideIndex();
+        _count += segments.Length;
+        _addsSinceLastNormalization += segments.Length;
+        // The executor will call TryNormalize after this AddRange returns.
     }
 
     /// <inheritdoc/>
@@ -188,6 +188,9 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
         {
             return null;
         }
+
+        // Pre-compute UTC ticks once for all expiry checks in this sampling pass.
+        var utcNowTicks = _timeProvider.GetUtcNow().UtcTicks;
 
         for (var attempt = 0; attempt < RandomRetryLimit; attempt++)
         {
@@ -253,13 +256,33 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
                 seg = node?.Value;
             }
 
-            if (seg is { IsRemoved: false })
+            if (seg is { IsRemoved: false } && !seg.IsExpired(utcNowTicks))
             {
                 return seg;
             }
         }
 
         return null;
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Checks whether enough segments have been added since the last normalization pass.
+    /// If the threshold is reached, rebuilds the stride index, physically unlinks removed nodes,
+    /// and discovers TTL-expired segments. Expired segments are returned via
+    /// <paramref name="expiredSegments"/> for the executor to update eviction policy aggregates
+    /// and fire diagnostics.
+    /// </remarks>
+    public override bool TryNormalize(out IReadOnlyList<CachedSegment<TRange, TData>>? expiredSegments)
+    {
+        if (_addsSinceLastNormalization < _appendBufferSize)
+        {
+            expiredSegments = null;
+            return false;
+        }
+
+        NormalizeStrideIndex(out expiredSegments);
+        return true;
     }
 
     /// <summary>
@@ -330,10 +353,15 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
     }
 
     /// <summary>
-    /// Rebuilds the stride index from the live linked list and physically unlinks removed nodes.
+    /// Rebuilds the stride index from the live linked list, physically unlinks removed nodes,
+    /// and discovers TTL-expired segments. Expired segments are returned via
+    /// <paramref name="expiredSegments"/> so the executor can update policy aggregates.
     /// </summary>
-    private void NormalizeStrideIndex()
+    private void NormalizeStrideIndex(out IReadOnlyList<CachedSegment<TRange, TData>>? expiredSegments)
     {
+        var utcNowTicks = _timeProvider.GetUtcNow().UtcTicks;
+        List<CachedSegment<TRange, TData>>? expired = null;
+
         // Upper bound on anchor count: ceil(liveCount / stride) ≤ ceil(listCount / stride).
         // Add 1 for safety against off-by-one when listCount is not a multiple of stride.
         var maxAnchors = (_list.Count / _stride) + 1;
@@ -350,11 +378,21 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
             // node as a stride anchor. Removed nodes are skipped for anchor selection but are NOT
             // physically unlinked yet — their Next pointers must remain valid for any concurrent
             // User Path walk still using the old stride index.
+            // TTL-expired segments are discovered and marked removed here so they are excluded
+            // from the new stride index.
             var liveNodeIdx = 0;
 
             var current = _list.First;
             while (current != null)
             {
+                var seg = current.Value;
+
+                if (!seg.IsRemoved && seg.IsExpired(utcNowTicks))
+                {
+                    TryRemove(seg);
+                    (expired ??= []).Add(seg);
+                }
+
                 if (!current.Value.IsRemoved)
                 {
                     if (liveNodeIdx % _stride == 0)
@@ -413,6 +451,8 @@ internal sealed class LinkedListStrideIndexStorage<TRange, TData> : SegmentStora
             // Reset the add counter — always runs, even if unlink loop throws.
             _addsSinceLastNormalization = 0;
         }
+
+        expiredSegments = expired;
     }
 
     /// <summary>

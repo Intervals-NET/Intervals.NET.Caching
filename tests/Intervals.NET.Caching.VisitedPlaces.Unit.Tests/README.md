@@ -13,7 +13,6 @@ dotnet test tests/Intervals.NET.Caching.VisitedPlaces.Unit.Tests/Intervals.NET.C
 ```
 Core/
   CacheNormalizationExecutorTests.cs   — Background Path four-step sequence
-  TtlExpirationExecutorTests.cs        — TTL fire-and-forget execution and idempotency
 
 Eviction/
   EvictionEngineTests.cs               — Engine facade: metadata delegation, segment init, evaluate-and-execute
@@ -41,9 +40,6 @@ Eviction/
 Storage/
   SnapshotAppendBufferStorageTests.cs  — Append buffer flush, sorted snapshot, FindIntersecting
   LinkedListStrideIndexStorageTests.cs — Stride index lookup, tail normalization, FindIntersecting
-
-Infrastructure/
-  ConcurrentWorkSchedulerTests.cs     — Fire-and-forget execution, activity counter lifecycle, disposal
 ```
 
 ## Key Dependencies
@@ -57,4 +53,3 @@ Infrastructure/
 - Storage tests exercise both `SnapshotAppendBufferStorage` and `LinkedListStrideIndexStorage` directly (no cache involved).
 - Eviction tests use real policy and selector instances against in-memory segment lists; no cache or data source needed.
 - `CacheNormalizationExecutorTests` wires a real storage and eviction engine together to verify the four-step Background Path sequence in isolation.
-- `ConcurrentWorkSchedulerTests` verifies the TTL fire-and-forget scheduler used by `TtlEngine`; it is in `Infrastructure/` because `ConcurrentWorkScheduler` belongs to the shared `Intervals.NET.Caching` infrastructure.

@@ -6,7 +6,7 @@ namespace Intervals.NET.Caching.VisitedPlaces.Unit.Tests.Storage;
 
 /// <summary>
 /// Unit tests for <see cref="SnapshotAppendBufferStorage{TRange,TData}"/>.
-/// Covers Constructor, Add, TryRemove, Count, FindIntersecting, TryGetRandomSegment.
+/// Covers Constructor, Add, Remove, Count, FindIntersecting, TryGetRandomSegment.
 /// </summary>
 public sealed class SnapshotAppendBufferStorageTests
 {
@@ -160,13 +160,15 @@ public sealed class SnapshotAppendBufferStorageTests
     [Fact]
     public void TryGetRandomSegment_AfterAddingMoreThanAppendBufferSize_EventuallyReturnsAllSegments()
     {
-        // ARRANGE — default AppendBufferSize is 8; add 10 to trigger normalization
+        // ARRANGE — default AppendBufferSize is 8; add 10 segments, flushing via TryNormalize
+        // whenever the append buffer is full (the executor would do this in production).
         var storage = new SnapshotAppendBufferStorage<int, int>();
         var segments = new List<CachedSegment<int, int>>();
 
         for (var i = 0; i < 10; i++)
         {
             segments.Add(AddSegment(storage, i * 10, i * 10 + 5));
+            storage.TryNormalize(out _); // flush buffer once full; no-op otherwise
         }
 
         // ACT — sample enough times for every segment to be returned at least once
@@ -264,11 +266,12 @@ public sealed class SnapshotAppendBufferStorageTests
     [Fact]
     public void FindIntersecting_AfterNormalization_StillFindsSegments()
     {
-        // ARRANGE — add >8 segments to trigger normalization
+        // ARRANGE — add >8 segments, calling TryNormalize to flush the buffer as the executor would
         var storage = new SnapshotAppendBufferStorage<int, int>();
         for (var i = 0; i < 9; i++)
         {
             AddSegment(storage, i * 10, i * 10 + 5);
+            storage.TryNormalize(out _); // flush buffer once full; no-op otherwise
         }
 
         // ACT — query middle of the range

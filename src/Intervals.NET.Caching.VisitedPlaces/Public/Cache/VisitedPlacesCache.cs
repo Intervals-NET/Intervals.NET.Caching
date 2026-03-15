@@ -7,7 +7,6 @@ using Intervals.NET.Caching.Infrastructure.Scheduling.Serial;
 using Intervals.NET.Caching.VisitedPlaces.Core;
 using Intervals.NET.Caching.VisitedPlaces.Core.Background;
 using Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
-using Intervals.NET.Caching.VisitedPlaces.Core.Ttl;
 using Intervals.NET.Caching.VisitedPlaces.Core.UserPath;
 using Intervals.NET.Caching.VisitedPlaces.Infrastructure.Adapters;
 using Intervals.NET.Caching.VisitedPlaces.Public.Configuration;
@@ -23,7 +22,6 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
 {
     private readonly UserRequestHandler<TRange, TData, TDomain> _userRequestHandler;
     private readonly AsyncActivityCounter _activityCounter;
-    private readonly TtlEngine<TRange, TData>? _ttlEngine;
 
     // Disposal state: tracks active/disposing/disposed states and coordinates concurrent callers.
     private readonly DisposalState _disposal = new();
@@ -40,16 +38,20 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
         VisitedPlacesCacheOptions<TRange, TData> options,
         IReadOnlyList<IEvictionPolicy<TRange, TData>> policies,
         IEvictionSelector<TRange, TData> selector,
-        IVisitedPlacesCacheDiagnostics? cacheDiagnostics = null)
+        IVisitedPlacesCacheDiagnostics? cacheDiagnostics = null,
+        TimeProvider? timeProvider = null)
     {
         // Fall back to no-op diagnostics so internal actors never receive null.
         cacheDiagnostics ??= NoOpDiagnostics.Instance;
+
+        // Resolve TimeProvider: use the injected instance or fall back to the system clock.
+        var resolvedTimeProvider = timeProvider ?? TimeProvider.System;
 
         // Shared activity counter: incremented by scheduler on enqueue, decremented after execution.
         _activityCounter = new AsyncActivityCounter();
 
         // Create storage via the strategy options object (Factory Method pattern).
-        var storage = options.StorageStrategy.Create();
+        var storage = options.StorageStrategy.Create(resolvedTimeProvider);
 
         // Inject storage into the selector so it can sample directly via GetRandomSegment()
         // without requiring the full segment list to be passed at each call site.
@@ -64,27 +66,14 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
         // and eviction-specific diagnostics. Storage mutations remain in the processor.
         var evictionEngine = new EvictionEngine<TRange, TData>(policies, selector, cacheDiagnostics);
 
-        // TTL engine: constructed only when SegmentTtl is configured. Encapsulates the work item
-        // type, concurrent scheduler, activity counter, and disposal CTS behind a single facade.
-        // Uses ConcurrentWorkScheduler internally — each TTL work item awaits Task.Delay
-        // independently on the ThreadPool, so items do not serialize behind each other's delays.
-        // Thread safety is provided by CachedSegment.MarkAsRemoved() (Interlocked.CompareExchange)
-        // and EvictionEngine.OnSegmentsRemoved (Interlocked.Add in MaxTotalSpanPolicy).
-        if (options.SegmentTtl.HasValue)
-        {
-            _ttlEngine = new TtlEngine<TRange, TData>(
-                options.SegmentTtl.Value,
-                storage,
-                evictionEngine,
-                cacheDiagnostics);
-        }
-
         // Cache normalization executor: single writer for Add, executes the four-step Background Path.
+        // TTL expiration is handled lazily inside TryNormalize — no separate TtlEngine needed.
         var executor = new CacheNormalizationExecutor<TRange, TData, TDomain>(
             storage,
             evictionEngine,
             cacheDiagnostics,
-            _ttlEngine);
+            options.SegmentTtl,
+            resolvedTimeProvider);
 
         // Diagnostics adapter: maps IWorkSchedulerDiagnostics → IVisitedPlacesCacheDiagnostics.
         var schedulerDiagnostics = new VisitedPlacesWorkSchedulerDiagnostics(cacheDiagnostics);
@@ -153,10 +142,5 @@ public sealed class VisitedPlacesCache<TRange, TData, TDomain>
         _disposal.DisposeAsync(async () =>
         {
             await _userRequestHandler.DisposeAsync().ConfigureAwait(false);
-
-            if (_ttlEngine != null)
-            {
-                await _ttlEngine.DisposeAsync().ConfigureAwait(false);
-            }
         });
 }

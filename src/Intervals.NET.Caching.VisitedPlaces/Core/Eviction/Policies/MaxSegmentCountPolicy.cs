@@ -9,8 +9,9 @@ namespace Intervals.NET.Caching.VisitedPlaces.Core.Eviction.Policies;
 /// <typeparam name="TRange">The type representing range boundaries.</typeparam>
 /// <typeparam name="TData">The type of data being cached.</typeparam>
 /// <remarks>
-/// Maintains a running count via <see cref="OnSegmentAdded"/>/<see cref="OnSegmentRemoved"/>
-/// using atomic operations for thread safety. Evaluation is O(1).
+/// Maintains a running count via <see cref="OnSegmentAdded"/>/<see cref="OnSegmentRemoved"/>.
+/// All callers run exclusively on the Background Storage Loop (Invariant VPC.D.6) — no
+/// synchronization is required. Evaluation is O(1).
 /// </remarks>
 /// <summary>
 /// Non-generic factory companion for <see cref="MaxSegmentCountPolicy{TRange,TData}"/>.
@@ -68,26 +69,24 @@ public sealed class MaxSegmentCountPolicy<TRange, TData> : IEvictionPolicy<TRang
     /// <inheritdoc/>
     public void OnSegmentAdded(CachedSegment<TRange, TData> segment)
     {
-        Interlocked.Increment(ref _count);
+        _count++;
     }
 
     /// <inheritdoc/>
     public void OnSegmentRemoved(CachedSegment<TRange, TData> segment)
     {
-        Interlocked.Decrement(ref _count);
+        _count--;
     }
 
     /// <inheritdoc/>
     public IEvictionPressure<TRange, TData> Evaluate()
     {
-        var count = Volatile.Read(ref _count);
-
-        if (count <= MaxCount)
+        if (_count <= MaxCount)
         {
             return NoPressure<TRange, TData>.Instance;
         }
 
-        return new SegmentCountPressure(count, MaxCount);
+        return new SegmentCountPressure(_count, MaxCount);
     }
 
     /// <summary>
