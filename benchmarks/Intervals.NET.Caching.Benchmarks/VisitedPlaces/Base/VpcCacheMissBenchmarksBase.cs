@@ -1,4 +1,3 @@
-using BenchmarkDotNet.Attributes;
 using Intervals.NET.Caching.Benchmarks.Infrastructure;
 using Intervals.NET.Caching.VisitedPlaces.Public.Cache;
 using Intervals.NET.Domain.Default.Numeric;
@@ -7,103 +6,100 @@ namespace Intervals.NET.Caching.Benchmarks.VisitedPlaces.Base;
 
 /// <summary>
 /// Abstract base for VPC cache-miss benchmarks.
-/// Covers two eviction scenarios: NoEviction (ample capacity) and WithEviction (at capacity).
+/// Holds layout constants and protected factory helpers only.
+/// [Params] and [GlobalSetup] live in each derived class because Eventual and Strong
+/// measure different things and therefore require different parameter sets.
 ///
 /// EXECUTION FLOW: User Request → Full miss → data source fetch → background segment
 /// storage (+ optional eviction).
 ///
-/// Methodology:
-/// - Learning pass in GlobalSetup: throwaway cache exercises PopulateWithGaps + miss range
-///   so the data source can be frozen before benchmark iterations begin.
-/// - Pre-populated cache with TotalSegments segments separated by gaps.
-/// - Request in a gap beyond all segments (guaranteed full miss).
-/// - Fresh cache per iteration via IterationSetup.
-/// - Derived classes control whether WaitForIdleAsync is inside the measurement boundary
-///   (strong) or deferred to IterationCleanup (eventual).
+/// Layout: segments of span SegmentSpan separated by gaps of GapSize.
+/// Miss ranges are placed beyond all populated segments with the same stride so
+/// consecutive miss ranges never overlap (each is a guaranteed cold miss).
 ///
-/// Parameters:
-/// - TotalSegments: {10, 1K, 100K} — straddles ~50K Snapshot/LinkedList crossover
-/// - StorageStrategy: Snapshot vs LinkedList
-/// - AppendBufferSize: {1, 8} — normalization frequency (every 1 vs every 8 stores)
+/// See <see cref="VpcCacheMissEventualBenchmarks"/> and <see cref="VpcCacheMissStrongBenchmarks"/>
+/// for parameter sets, setup methodology, and benchmark methods.
 /// </summary>
 public abstract class VpcCacheMissBenchmarksBase
 {
-    protected VisitedPlacesCache<int, int, IntegerFixedStepDomain>? Cache;
-    private FrozenDataSource _frozenDataSource = null!;
-    private IntegerFixedStepDomain _domain;
-    protected Range<int> MissRange;
-
-    private const int SegmentSpan = 10;
-    private const int GapSize = 10;
+    protected const int SegmentSpan = 10;
+    protected const int GapSize = 10;
+    protected const int Stride = SegmentSpan + GapSize; // = 20
 
     /// <summary>
-    /// Total segments in cache — tests scaling from small to large segment counts.
-    /// Values straddle the ~50K crossover point between Snapshot and LinkedList strategies.
+    /// Number of miss ranges pre-computed in GlobalSetup.
+    /// Must exceed BDN warmup + measurement iterations combined (typically ~30).
+    /// 200 provides a wide margin without excessive learning-pass cost.
     /// </summary>
-    [Params(10, 1_000, 100_000)]
-    public int TotalSegments { get; set; }
+    protected const int MaxIterations = 200;
 
     /// <summary>
-    /// Storage strategy — Snapshot vs LinkedList.
+    /// Computes an array of MaxIterations unique miss ranges, all placed beyond the
+    /// populated region. Each range is separated by GapSize so they never merge into
+    /// a single segment when stored sequentially across iterations.
     /// </summary>
-    [Params(StorageStrategyType.Snapshot, StorageStrategyType.LinkedList)]
-    public StorageStrategyType StorageStrategy { get; set; }
-
-    /// <summary>
-    /// Append buffer size — controls normalization frequency.
-    /// 1 = normalize every store, 8 = normalize every 8 stores (default).
-    /// </summary>
-    [Params(1, 8)]
-    public int AppendBufferSize { get; set; }
-
-    [GlobalSetup]
-    public void GlobalSetup()
+    protected static Range<int>[] BuildMissRanges(int totalSegments)
     {
-        _domain = new IntegerFixedStepDomain();
+        var beyondAll = totalSegments * Stride + 1000;
+        var ranges = new Range<int>[MaxIterations];
 
-        // Miss range: far beyond all populated segments.
-        const int stride = SegmentSpan + GapSize;
-        var beyondAll = TotalSegments * stride + 1000;
-        MissRange = Factories.Range.Closed<int>(beyondAll, beyondAll + SegmentSpan - 1);
+        for (var i = 0; i < MaxIterations; i++)
+        {
+            var start = beyondAll + i * Stride;
+            ranges[i] = Factories.Range.Closed<int>(start, start + SegmentSpan - 1);
+        }
 
-        // Learning pass: exercise PopulateWithGaps and the miss fetch on a throwaway cache.
-        var learningSource = new SynchronousDataSource(_domain);
+        return ranges;
+    }
+
+    /// <summary>
+    /// Runs the learning pass: exercises PopulateWithGaps and all miss ranges on a
+    /// throwaway cache so the data source learns every range before freezing.
+    /// </summary>
+    protected static FrozenDataSource RunLearningPass(
+        IntegerFixedStepDomain domain,
+        StorageStrategyType strategyType,
+        int totalSegments,
+        int appendBufferSize,
+        Range<int>[] missRanges)
+    {
+        var learningSource = new SynchronousDataSource(domain);
+
         var throwaway = VpcCacheHelpers.CreateCache(
-            learningSource, _domain, StorageStrategy,
-            maxSegmentCount: TotalSegments + 1000,
-            appendBufferSize: AppendBufferSize);
-        VpcCacheHelpers.PopulateWithGaps(throwaway, TotalSegments, SegmentSpan, GapSize);
-        throwaway.GetDataAsync(MissRange, CancellationToken.None).GetAwaiter().GetResult();
+            learningSource, domain, strategyType,
+            maxSegmentCount: totalSegments + 1000,
+            appendBufferSize: appendBufferSize);
+
+        VpcCacheHelpers.PopulateWithGaps(throwaway, totalSegments, SegmentSpan, GapSize);
+
+        foreach (var range in missRanges)
+        {
+            throwaway.GetDataAsync(range, CancellationToken.None).GetAwaiter().GetResult();
+        }
+
         throwaway.WaitForIdleAsync().GetAwaiter().GetResult();
 
-        _frozenDataSource = learningSource.Freeze();
+        return learningSource.Freeze();
     }
 
     /// <summary>
-    /// Creates a fresh cache with ample capacity (no eviction) and populates it.
-    /// Call from a derived [IterationSetup] targeting the NoEviction benchmark method.
+    /// Creates and populates a cache with TotalSegments segments.
     /// </summary>
-    protected void SetupNoEvictionCache()
+    protected static VisitedPlacesCache<int, int, IntegerFixedStepDomain> CreateAndPopulate(
+        FrozenDataSource frozenDataSource,
+        IntegerFixedStepDomain domain,
+        StorageStrategyType strategyType,
+        int maxSegmentCount,
+        int appendBufferSize,
+        int totalSegments)
     {
-        Cache = VpcCacheHelpers.CreateCache(
-            _frozenDataSource, _domain, StorageStrategy,
-            maxSegmentCount: TotalSegments + 1000,
-            appendBufferSize: AppendBufferSize);
+        var cache = VpcCacheHelpers.CreateCache(
+            frozenDataSource, domain, strategyType,
+            maxSegmentCount: maxSegmentCount,
+            appendBufferSize: appendBufferSize);
 
-        VpcCacheHelpers.PopulateWithGaps(Cache, TotalSegments, SegmentSpan, GapSize);
-    }
+        VpcCacheHelpers.PopulateWithGaps(cache, totalSegments, SegmentSpan, GapSize);
 
-    /// <summary>
-    /// Creates a fresh cache at capacity (eviction triggered on each miss) and populates it.
-    /// Call from a derived [IterationSetup] targeting the WithEviction benchmark method.
-    /// </summary>
-    protected void SetupWithEvictionCache()
-    {
-        Cache = VpcCacheHelpers.CreateCache(
-            _frozenDataSource, _domain, StorageStrategy,
-            maxSegmentCount: TotalSegments,
-            appendBufferSize: AppendBufferSize);
-
-        VpcCacheHelpers.PopulateWithGaps(Cache, TotalSegments, SegmentSpan, GapSize);
+        return cache;
     }
 }
