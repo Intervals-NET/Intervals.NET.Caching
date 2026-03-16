@@ -1,6 +1,5 @@
 using BenchmarkDotNet.Attributes;
 using Intervals.NET.Domain.Default.Numeric;
-using Intervals.NET.Domain.Extensions.Fixed;
 using Intervals.NET.Caching.Benchmarks.Infrastructure;
 
 namespace Intervals.NET.Caching.Benchmarks.Layered;
@@ -28,7 +27,7 @@ namespace Intervals.NET.Caching.Benchmarks.Layered;
 [MemoryDiagnoser]
 [MarkdownExporter]
 [GroupBenchmarksBy(BenchmarkDotNet.Configs.BenchmarkLogicalGroupRule.ByCategory)]
-public class ScenarioBenchmarks
+public class LayeredScenarioBenchmarks
 {
     private FrozenDataSource _frozenDataSource = null!;
     private IntegerFixedStepDomain _domain;

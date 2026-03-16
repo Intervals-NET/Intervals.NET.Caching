@@ -24,7 +24,7 @@ namespace Intervals.NET.Caching.Benchmarks.VisitedPlaces;
 /// </summary>
 [MemoryDiagnoser]
 [MarkdownExporter]
-public class ConstructionBenchmarks
+public class VpcConstructionBenchmarks
 {
     private SynchronousDataSource _dataSource = null!;
     private IntegerFixedStepDomain _domain;

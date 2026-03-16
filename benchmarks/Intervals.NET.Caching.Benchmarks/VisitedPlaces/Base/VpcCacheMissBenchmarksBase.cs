@@ -1,47 +1,44 @@
 using BenchmarkDotNet.Attributes;
-using Intervals.NET.Domain.Default.Numeric;
 using Intervals.NET.Caching.Benchmarks.Infrastructure;
 using Intervals.NET.Caching.VisitedPlaces.Public.Cache;
+using Intervals.NET.Domain.Default.Numeric;
 
-namespace Intervals.NET.Caching.Benchmarks.VisitedPlaces;
+namespace Intervals.NET.Caching.Benchmarks.VisitedPlaces.Base;
 
 /// <summary>
-/// Cache Miss Benchmarks for VisitedPlaces Cache.
-/// Measures the complete cost of a cache miss: data source fetch + background normalization.
-/// 
-/// Two methods:
-/// - NoEviction: miss on a cache with ample capacity (no eviction triggered)
-/// - WithEviction: miss on a cache at capacity (eviction triggered on normalization)
-/// 
+/// Abstract base for VPC cache-miss benchmarks.
+/// Covers two eviction scenarios: NoEviction (ample capacity) and WithEviction (at capacity).
+///
+/// EXECUTION FLOW: User Request → Full miss → data source fetch → background segment
+/// storage (+ optional eviction).
+///
 /// Methodology:
 /// - Learning pass in GlobalSetup: throwaway cache exercises PopulateWithGaps + miss range
 ///   so the data source can be frozen before benchmark iterations begin.
 /// - Pre-populated cache with TotalSegments segments separated by gaps.
 /// - Request in a gap beyond all segments (guaranteed full miss).
-/// - WaitForIdleAsync INSIDE benchmark (measuring complete miss + normalization cost).
-/// - Fresh cache per iteration.
-/// 
+/// - Fresh cache per iteration via IterationSetup.
+/// - Derived classes control whether WaitForIdleAsync is inside the measurement boundary
+///   (strong) or deferred to IterationCleanup (eventual).
+///
 /// Parameters:
 /// - TotalSegments: {10, 1K, 100K} — straddles ~50K Snapshot/LinkedList crossover
 /// - StorageStrategy: Snapshot vs LinkedList
 /// - AppendBufferSize: {1, 8} — normalization frequency (every 1 vs every 8 stores)
 /// </summary>
-[MemoryDiagnoser]
-[MarkdownExporter]
-public class CacheMissBenchmarks
+public abstract class VpcCacheMissBenchmarksBase
 {
-    private VisitedPlacesCache<int, int, IntegerFixedStepDomain>? _cache;
+    protected VisitedPlacesCache<int, int, IntegerFixedStepDomain>? Cache;
     private FrozenDataSource _frozenDataSource = null!;
     private IntegerFixedStepDomain _domain;
-    private Range<int> _missRange;
+    protected Range<int> MissRange;
 
     private const int SegmentSpan = 10;
-    private const int GapSize = 10; // Gap between segments during population
+    private const int GapSize = 10;
 
     /// <summary>
     /// Total segments in cache — tests scaling from small to large segment counts.
     /// Values straddle the ~50K crossover point between Snapshot and LinkedList strategies.
-    /// 1M removed: populating 1M segments per iteration is prohibitively expensive in setup.
     /// </summary>
     [Params(10, 1_000, 100_000)]
     public int TotalSegments { get; set; }
@@ -67,7 +64,7 @@ public class CacheMissBenchmarks
         // Miss range: far beyond all populated segments.
         const int stride = SegmentSpan + GapSize;
         var beyondAll = TotalSegments * stride + 1000;
-        _missRange = Factories.Range.Closed<int>(beyondAll, beyondAll + SegmentSpan - 1);
+        MissRange = Factories.Range.Closed<int>(beyondAll, beyondAll + SegmentSpan - 1);
 
         // Learning pass: exercise PopulateWithGaps and the miss fetch on a throwaway cache.
         var learningSource = new SynchronousDataSource(_domain);
@@ -76,65 +73,37 @@ public class CacheMissBenchmarks
             maxSegmentCount: TotalSegments + 1000,
             appendBufferSize: AppendBufferSize);
         VpcCacheHelpers.PopulateWithGaps(throwaway, TotalSegments, SegmentSpan, GapSize);
-        throwaway.GetDataAsync(_missRange, CancellationToken.None).GetAwaiter().GetResult();
+        throwaway.GetDataAsync(MissRange, CancellationToken.None).GetAwaiter().GetResult();
         throwaway.WaitForIdleAsync().GetAwaiter().GetResult();
 
         _frozenDataSource = learningSource.Freeze();
     }
 
-    #region NoEviction
-
-    [IterationSetup(Target = nameof(CacheMiss_NoEviction))]
-    public void IterationSetup_NoEviction()
+    /// <summary>
+    /// Creates a fresh cache with ample capacity (no eviction) and populates it.
+    /// Call from a derived [IterationSetup] targeting the NoEviction benchmark method.
+    /// </summary>
+    protected void SetupNoEvictionCache()
     {
-        // Generous capacity — no eviction triggered on miss
-        _cache = VpcCacheHelpers.CreateCache(
+        Cache = VpcCacheHelpers.CreateCache(
             _frozenDataSource, _domain, StorageStrategy,
             maxSegmentCount: TotalSegments + 1000,
             appendBufferSize: AppendBufferSize);
 
-        // Populate segments to cover the FindIntersecting cost during miss
-        VpcCacheHelpers.PopulateWithGaps(_cache, TotalSegments, SegmentSpan, GapSize);
+        VpcCacheHelpers.PopulateWithGaps(Cache, TotalSegments, SegmentSpan, GapSize);
     }
 
     /// <summary>
-    /// Measures complete cache miss cost without eviction.
-    /// Includes: data source fetch + normalization (store + metadata update).
-    /// WaitForIdleAsync inside benchmark to capture full background processing cost.
+    /// Creates a fresh cache at capacity (eviction triggered on each miss) and populates it.
+    /// Call from a derived [IterationSetup] targeting the WithEviction benchmark method.
     /// </summary>
-    [Benchmark]
-    public async Task CacheMiss_NoEviction()
+    protected void SetupWithEvictionCache()
     {
-        await _cache!.GetDataAsync(_missRange, CancellationToken.None);
-        await _cache.WaitForIdleAsync();
-    }
-
-    #endregion
-
-    #region WithEviction
-
-    [IterationSetup(Target = nameof(CacheMiss_WithEviction))]
-    public void IterationSetup_WithEviction()
-    {
-        // At capacity — eviction triggered on miss (one segment evicted per new segment stored)
-        _cache = VpcCacheHelpers.CreateCache(
+        Cache = VpcCacheHelpers.CreateCache(
             _frozenDataSource, _domain, StorageStrategy,
             maxSegmentCount: TotalSegments,
             appendBufferSize: AppendBufferSize);
 
-        VpcCacheHelpers.PopulateWithGaps(_cache, TotalSegments, SegmentSpan, GapSize);
+        VpcCacheHelpers.PopulateWithGaps(Cache, TotalSegments, SegmentSpan, GapSize);
     }
-
-    /// <summary>
-    /// Measures complete cache miss cost with eviction.
-    /// Includes: data source fetch + normalization (store + eviction evaluation + eviction execution).
-    /// </summary>
-    [Benchmark]
-    public async Task CacheMiss_WithEviction()
-    {
-        await _cache!.GetDataAsync(_missRange, CancellationToken.None);
-        await _cache.WaitForIdleAsync();
-    }
-
-    #endregion
 }

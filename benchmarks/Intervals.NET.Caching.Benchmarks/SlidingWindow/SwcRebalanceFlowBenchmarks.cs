@@ -31,7 +31,7 @@ namespace Intervals.NET.Caching.Benchmarks.SlidingWindow;
 /// </summary>
 [MemoryDiagnoser]
 [MarkdownExporter]
-public class RebalanceFlowBenchmarks
+public class SwcRebalanceFlowBenchmarks
 {
     /// <summary>
     /// RequestedRange Span behavior model: Fixed (stable), Growing (increasing), Shrinking (decreasing)
@@ -135,7 +135,7 @@ public class RebalanceFlowBenchmarks
             readMode: readMode,
             leftThreshold: 1, // Set to 1 (100%) to ensure any request even the same range as previous triggers rebalance, isolating rebalance cost
             rightThreshold: 0,
-            debounceDelay: TimeSpan.FromMilliseconds(10)
+            debounceDelay: TimeSpan.Zero // Zero debounce: isolates rematerialization cost, eliminates timer overhead from measurements
         );
 
         // Learning pass: exercise the full request sequence on a throwaway cache so the data

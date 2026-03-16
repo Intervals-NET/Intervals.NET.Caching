@@ -22,7 +22,7 @@ namespace Intervals.NET.Caching.Benchmarks.SlidingWindow;
 [MemoryDiagnoser]
 [MarkdownExporter]
 [GroupBenchmarksBy(BenchmarkDotNet.Configs.BenchmarkLogicalGroupRule.ByCategory)]
-public class ScenarioBenchmarks
+public class SwcScenarioBenchmarks
 {
     private FrozenDataSource _frozenDataSource = null!;
     private IntegerFixedStepDomain _domain;
@@ -64,7 +64,8 @@ public class ScenarioBenchmarks
             rightCacheSize: CacheCoefficientSize,
             UserCacheReadMode.Snapshot,
             leftThreshold: 0.2,
-            rightThreshold: 0.2
+            rightThreshold: 0.2,
+            debounceDelay: TimeSpan.Zero // Zero debounce: eliminates timer overhead, isolates cache mechanics
         );
 
         _copyOnReadOptions = new SlidingWindowCacheOptions(
@@ -72,7 +73,8 @@ public class ScenarioBenchmarks
             rightCacheSize: CacheCoefficientSize,
             UserCacheReadMode.CopyOnRead,
             leftThreshold: 0.2,
-            rightThreshold: 0.2
+            rightThreshold: 0.2,
+            debounceDelay: TimeSpan.Zero // Zero debounce: eliminates timer overhead, isolates cache mechanics
         );
 
         // Learning pass: exercise cold start on throwaway caches for both strategies.

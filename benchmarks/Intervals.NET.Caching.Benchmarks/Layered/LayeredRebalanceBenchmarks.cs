@@ -24,7 +24,7 @@ namespace Intervals.NET.Caching.Benchmarks.Layered;
 /// </summary>
 [MemoryDiagnoser]
 [MarkdownExporter]
-public class RebalanceBenchmarks
+public class LayeredRebalanceBenchmarks
 {
     private FrozenDataSource _frozenDataSource = null!;
     private IntegerFixedStepDomain _domain;

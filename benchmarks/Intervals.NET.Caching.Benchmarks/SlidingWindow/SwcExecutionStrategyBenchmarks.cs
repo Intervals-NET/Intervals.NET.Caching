@@ -28,7 +28,7 @@ namespace Intervals.NET.Caching.Benchmarks.SlidingWindow;
 /// </summary>
 [MemoryDiagnoser]
 [MarkdownExporter]
-public class ExecutionStrategyBenchmarks
+public class SwcExecutionStrategyBenchmarks
 {
     // Benchmark Parameters - 2 Orthogonal Axes (Execution strategy is now split into separate benchmark methods)
 

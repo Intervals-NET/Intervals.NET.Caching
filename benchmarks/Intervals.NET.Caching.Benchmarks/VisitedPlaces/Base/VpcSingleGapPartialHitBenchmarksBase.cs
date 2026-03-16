@@ -1,12 +1,12 @@
 using BenchmarkDotNet.Attributes;
-using Intervals.NET.Domain.Default.Numeric;
 using Intervals.NET.Caching.Benchmarks.Infrastructure;
 using Intervals.NET.Caching.VisitedPlaces.Public.Cache;
+using Intervals.NET.Domain.Default.Numeric;
 
-namespace Intervals.NET.Caching.Benchmarks.VisitedPlaces;
+namespace Intervals.NET.Caching.Benchmarks.VisitedPlaces.Base;
 
 /// <summary>
-/// Single-Gap Partial Hit Benchmarks for VisitedPlaces Cache.
+/// Abstract base for VPC single-gap partial-hit benchmarks.
 /// Measures partial hit cost when a request crosses exactly one cached/uncached boundary.
 ///
 /// Layout uses alternating [gap][segment] pattern (stride = SegmentSpan + GapSize):
@@ -24,16 +24,16 @@ namespace Intervals.NET.Caching.Benchmarks.VisitedPlaces;
 /// - Learning pass in GlobalSetup: throwaway cache exercises PopulateWithGaps + both
 ///   benchmark request ranges so the data source can be frozen.
 /// - Fresh cache per iteration via IterationSetup with FrozenDataSource.
+/// - Derived classes control whether WaitForIdleAsync is inside the measurement boundary
+///   (strong) or deferred to IterationCleanup (eventual).
 ///
 /// Parameters:
 ///   - TotalSegments: {1_000, 10_000} — storage size (FindIntersecting cost)
 ///   - StorageStrategy: Snapshot vs LinkedList
 /// </summary>
-[MemoryDiagnoser]
-[MarkdownExporter]
-public class SingleGapPartialHitBenchmarks
+public abstract class VpcSingleGapPartialHitBenchmarksBase
 {
-    private VisitedPlacesCache<int, int, IntegerFixedStepDomain>? _cache;
+    protected VisitedPlacesCache<int, int, IntegerFixedStepDomain>? Cache;
     private FrozenDataSource _frozenDataSource = null!;
     private IntegerFixedStepDomain _domain;
 
@@ -43,9 +43,8 @@ public class SingleGapPartialHitBenchmarks
     private const int Stride = SegmentSpan + GapSize; // = 15
     private const int SegmentStart = GapSize; // = 5, so gaps come first
 
-    // Precomputed request ranges (set in GlobalSetup once TotalSegments is known)
-    private Range<int> _oneHitRange;
-    private Range<int> _twoHitsRange;
+    protected Range<int> OneHitRange;
+    protected Range<int> TwoHitsRange;
 
     /// <summary>
     /// Total segments in cache — measures storage size impact on FindIntersecting.
@@ -65,12 +64,12 @@ public class SingleGapPartialHitBenchmarks
         _domain = new IntegerFixedStepDomain();
 
         // OneHit: request [0,9] → gap [0,4], hit [5,9] from segment [5,14]
-        _oneHitRange = Factories.Range.Closed<int>(0, SegmentSpan - 1);
+        OneHitRange = Factories.Range.Closed<int>(0, SegmentSpan - 1);
 
         // TwoHits: request [12,21] → hit [12,14] from [5,14], gap [15,19], hit [20,21] from [20,29]
-        _twoHitsRange = Factories.Range.Closed<int>(
-            SegmentSpan + GapSize / 2,                    // = 12
-            SegmentSpan + GapSize / 2 + SegmentSpan - 1); // = 21
+        TwoHitsRange = Factories.Range.Closed<int>(
+            SegmentSpan + GapSize / 2,                     // = 12
+            SegmentSpan + GapSize / 2 + SegmentSpan - 1);  // = 21
 
         // Learning pass: exercise PopulateWithGaps and both benchmark request ranges.
         var learningSource = new SynchronousDataSource(_domain);
@@ -79,66 +78,38 @@ public class SingleGapPartialHitBenchmarks
             maxSegmentCount: TotalSegments + 100,
             appendBufferSize: 8);
         VpcCacheHelpers.PopulateWithGaps(throwaway, TotalSegments, SegmentSpan, GapSize, SegmentStart);
-        throwaway.GetDataAsync(_oneHitRange, CancellationToken.None).GetAwaiter().GetResult();
-        throwaway.GetDataAsync(_twoHitsRange, CancellationToken.None).GetAwaiter().GetResult();
+        throwaway.GetDataAsync(OneHitRange, CancellationToken.None).GetAwaiter().GetResult();
+        throwaway.GetDataAsync(TwoHitsRange, CancellationToken.None).GetAwaiter().GetResult();
         throwaway.WaitForIdleAsync().GetAwaiter().GetResult();
 
         _frozenDataSource = learningSource.Freeze();
     }
 
-    #region OneHit
-
-    [IterationSetup(Target = nameof(PartialHit_SingleGap_OneHit))]
-    public void IterationSetup_OneHit()
+    /// <summary>
+    /// Creates a fresh cache and populates it for the OneHit benchmark.
+    /// Call from a derived [IterationSetup] targeting the OneHit benchmark method.
+    /// </summary>
+    protected void SetupOneHitCache()
     {
-        // Fresh cache per iteration: the benchmark stores the gap segment each time.
-        _cache = VpcCacheHelpers.CreateCache(
+        Cache = VpcCacheHelpers.CreateCache(
             _frozenDataSource, _domain, StorageStrategy,
             maxSegmentCount: TotalSegments + 100,
             appendBufferSize: 8);
 
-        // Populate with TotalSegments segments in alternating gap/segment layout.
-        // Segments at: SegmentStart + k*Stride = 5, 20, 35, ...
-        VpcCacheHelpers.PopulateWithGaps(_cache, TotalSegments, SegmentSpan, GapSize, SegmentStart);
+        VpcCacheHelpers.PopulateWithGaps(Cache, TotalSegments, SegmentSpan, GapSize, SegmentStart);
     }
 
     /// <summary>
-    /// Partial hit: request [0,9] crosses the initial gap [0,4] into segment [5,14].
-    /// Produces 1 gap fetch + 1 cache hit. Measures single boundary crossing cost.
+    /// Creates a fresh cache and populates it for the TwoHits benchmark.
+    /// Call from a derived [IterationSetup] targeting the TwoHits benchmark method.
     /// </summary>
-    [Benchmark]
-    public async Task PartialHit_SingleGap_OneHit()
+    protected void SetupTwoHitsCache()
     {
-        await _cache!.GetDataAsync(_oneHitRange, CancellationToken.None);
-        await _cache.WaitForIdleAsync();
-    }
-
-    #endregion
-
-    #region TwoHits
-
-    [IterationSetup(Target = nameof(PartialHit_SingleGap_TwoHits))]
-    public void IterationSetup_TwoHits()
-    {
-        // Fresh cache per iteration: the benchmark stores the gap segment each time.
-        _cache = VpcCacheHelpers.CreateCache(
+        Cache = VpcCacheHelpers.CreateCache(
             _frozenDataSource, _domain, StorageStrategy,
             maxSegmentCount: TotalSegments + 100,
             appendBufferSize: 8);
 
-        VpcCacheHelpers.PopulateWithGaps(_cache, TotalSegments, SegmentSpan, GapSize, SegmentStart);
+        VpcCacheHelpers.PopulateWithGaps(Cache, TotalSegments, SegmentSpan, GapSize, SegmentStart);
     }
-
-    /// <summary>
-    /// Partial hit: request [12,21] spans across gap [15,19] touching segments [5,14] and [20,29].
-    /// Produces 1 gap fetch + 2 cache hits. Measures double boundary crossing cost.
-    /// </summary>
-    [Benchmark]
-    public async Task PartialHit_SingleGap_TwoHits()
-    {
-        await _cache!.GetDataAsync(_twoHitsRange, CancellationToken.None);
-        await _cache.WaitForIdleAsync();
-    }
-
-    #endregion
 }

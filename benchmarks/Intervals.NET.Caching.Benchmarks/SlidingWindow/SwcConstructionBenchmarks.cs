@@ -22,7 +22,7 @@ namespace Intervals.NET.Caching.Benchmarks.SlidingWindow;
 /// </summary>
 [MemoryDiagnoser]
 [MarkdownExporter]
-public class ConstructionBenchmarks
+public class SwcConstructionBenchmarks
 {
     private SynchronousDataSource _dataSource = null!;
     private IntegerFixedStepDomain _domain;

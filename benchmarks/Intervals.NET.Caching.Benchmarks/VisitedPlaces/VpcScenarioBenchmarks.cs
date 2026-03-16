@@ -31,7 +31,7 @@ namespace Intervals.NET.Caching.Benchmarks.VisitedPlaces;
 [MemoryDiagnoser]
 [MarkdownExporter]
 [GroupBenchmarksBy(BenchmarkDotNet.Configs.BenchmarkLogicalGroupRule.ByCategory)]
-public class ScenarioBenchmarks
+public class VpcScenarioBenchmarks
 {
     /// <summary>
     /// Scheduling strategy: Unbounded (null capacity) vs Bounded (capacity=10).

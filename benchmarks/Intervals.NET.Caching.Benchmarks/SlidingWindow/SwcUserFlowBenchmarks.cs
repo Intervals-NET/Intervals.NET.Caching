@@ -26,7 +26,7 @@ namespace Intervals.NET.Caching.Benchmarks.SlidingWindow;
 [MemoryDiagnoser]
 [MarkdownExporter]
 [GroupBenchmarksBy(BenchmarkDotNet.Configs.BenchmarkLogicalGroupRule.ByCategory)]
-public class UserFlowBenchmarks
+public class SwcUserFlowBenchmarks
 {
     private SlidingWindowCache<int, int, IntegerFixedStepDomain>? _snapshotCache;
     private SlidingWindowCache<int, int, IntegerFixedStepDomain>? _copyOnReadCache;
@@ -199,7 +199,7 @@ public class UserFlowBenchmarks
 
     #region Partial Hit Benchmarks
 
-    [Benchmark]
+    [Benchmark(Baseline = true)]
     [BenchmarkCategory("PartialHit")]
     public async Task<ReadOnlyMemory<int>> User_PartialHit_ForwardShift_Snapshot()
     {
@@ -235,7 +235,7 @@ public class UserFlowBenchmarks
 
     #region Full Miss Benchmarks
 
-    [Benchmark]
+    [Benchmark(Baseline = true)]
     [BenchmarkCategory("FullMiss")]
     public async Task<ReadOnlyMemory<int>> User_FullMiss_Snapshot()
     {

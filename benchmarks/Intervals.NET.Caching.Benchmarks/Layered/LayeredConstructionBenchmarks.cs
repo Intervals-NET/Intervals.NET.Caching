@@ -22,7 +22,7 @@ namespace Intervals.NET.Caching.Benchmarks.Layered;
 /// </summary>
 [MemoryDiagnoser]
 [MarkdownExporter]
-public class ConstructionBenchmarks
+public class LayeredConstructionBenchmarks
 {
     private SynchronousDataSource _dataSource = null!;
     private IntegerFixedStepDomain _domain;
