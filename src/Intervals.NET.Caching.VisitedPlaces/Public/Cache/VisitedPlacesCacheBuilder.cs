@@ -1,0 +1,254 @@
+using Intervals.NET.Domain.Abstractions;
+using Intervals.NET.Caching.Layered;
+using Intervals.NET.Caching.VisitedPlaces.Core.Eviction;
+using Intervals.NET.Caching.VisitedPlaces.Public.Configuration;
+using Intervals.NET.Caching.VisitedPlaces.Public.Instrumentation;
+
+namespace Intervals.NET.Caching.VisitedPlaces.Public.Cache;
+
+/// <summary>
+/// Non-generic entry point for creating <see cref="VisitedPlacesCache{TRange,TData,TDomain}"/>
+/// instances via fluent builders. Enables full generic type inference so callers do not need
+/// to specify type parameters explicitly.
+/// </summary>
+public static class VisitedPlacesCacheBuilder
+{
+    /// <summary>
+    /// Creates a <see cref="VisitedPlacesCacheBuilder{TRange,TData,TDomain}"/> for building a single
+    /// <see cref="VisitedPlacesCache{TRange,TData,TDomain}"/> instance.
+    /// </summary>
+    /// <typeparam name="TRange">The type representing range boundaries. Must implement <see cref="IComparable{T}"/>.</typeparam>
+    /// <typeparam name="TData">The type of data being cached.</typeparam>
+    /// <typeparam name="TDomain">The range domain type. Must implement <see cref="IRangeDomain{TRange}"/>.</typeparam>
+    /// <param name="dataSource">The data source from which to fetch data.</param>
+    /// <param name="domain">The domain defining range characteristics.</param>
+    /// <returns>A new <see cref="VisitedPlacesCacheBuilder{TRange,TData,TDomain}"/> instance.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="dataSource"/> or <paramref name="domain"/> is <c>null</c>.
+    /// </exception>
+    public static VisitedPlacesCacheBuilder<TRange, TData, TDomain> For<TRange, TData, TDomain>(
+        IDataSource<TRange, TData> dataSource,
+        TDomain domain)
+        where TRange : IComparable<TRange>
+        where TDomain : IRangeDomain<TRange>
+    {
+        ArgumentNullException.ThrowIfNull(dataSource);
+
+        if (domain is null)
+        {
+            throw new ArgumentNullException(nameof(domain));
+        }
+
+        return new VisitedPlacesCacheBuilder<TRange, TData, TDomain>(dataSource, domain);
+    }
+
+    /// <summary>
+    /// Creates a <see cref="LayeredRangeCacheBuilder{TRange,TData,TDomain}"/> for building a
+    /// multi-layer cache stack.
+    /// </summary>
+    /// <param name="dataSource">The real (bottom-most) data source from which raw data is fetched.</param>
+    /// <param name="domain">The range domain shared by all layers.</param>
+    /// <returns>A new <see cref="LayeredRangeCacheBuilder{TRange,TData,TDomain}"/> instance.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="dataSource"/> or <paramref name="domain"/> is <c>null</c>.
+    /// </exception>
+    public static LayeredRangeCacheBuilder<TRange, TData, TDomain> Layered<TRange, TData, TDomain>(
+        IDataSource<TRange, TData> dataSource,
+        TDomain domain)
+        where TRange : IComparable<TRange>
+        where TDomain : IRangeDomain<TRange>
+    {
+        ArgumentNullException.ThrowIfNull(dataSource);
+
+        if (domain is null)
+        {
+            throw new ArgumentNullException(nameof(domain));
+        }
+
+        return new LayeredRangeCacheBuilder<TRange, TData, TDomain>(dataSource, domain);
+    }
+}
+
+/// <summary>
+/// Fluent builder for constructing a single <see cref="VisitedPlacesCache{TRange,TData,TDomain}"/> instance.
+/// Obtain via <see cref="VisitedPlacesCacheBuilder.For{TRange,TData,TDomain}"/>.
+/// </summary>
+public sealed class VisitedPlacesCacheBuilder<TRange, TData, TDomain>
+    where TRange : IComparable<TRange>
+    where TDomain : IRangeDomain<TRange>
+{
+    private readonly IDataSource<TRange, TData> _dataSource;
+    private readonly TDomain _domain;
+    private VisitedPlacesCacheOptions<TRange, TData>? _options;
+    private Action<VisitedPlacesCacheOptionsBuilder<TRange, TData>>? _configurePending;
+    private IVisitedPlacesCacheDiagnostics? _diagnostics;
+    private IReadOnlyList<IEvictionPolicy<TRange, TData>>? _policies;
+    private IEvictionSelector<TRange, TData>? _selector;
+    private bool _built;
+
+    internal VisitedPlacesCacheBuilder(IDataSource<TRange, TData> dataSource, TDomain domain)
+    {
+        _dataSource = dataSource;
+        _domain = domain;
+    }
+
+    /// <summary>
+    /// Configures the cache with a pre-built <see cref="VisitedPlacesCacheOptions{TRange,TData}"/> instance.
+    /// </summary>
+    /// <param name="options">The options to use.</param>
+    /// <returns>This builder instance, for fluent chaining.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="options"/> is <c>null</c>.
+    /// </exception>
+    public VisitedPlacesCacheBuilder<TRange, TData, TDomain> WithOptions(VisitedPlacesCacheOptions<TRange, TData> options)
+    {
+        _options = options ?? throw new ArgumentNullException(nameof(options));
+        _configurePending = null;
+        return this;
+    }
+
+    /// <summary>
+    /// Configures the cache options inline using a fluent <see cref="VisitedPlacesCacheOptionsBuilder{TRange,TData}"/>.
+    /// </summary>
+    /// <param name="configure">A delegate that applies the desired settings to the options builder.</param>
+    /// <returns>This builder instance, for fluent chaining.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="configure"/> is <c>null</c>.
+    /// </exception>
+    public VisitedPlacesCacheBuilder<TRange, TData, TDomain> WithOptions(
+        Action<VisitedPlacesCacheOptionsBuilder<TRange, TData>> configure)
+    {
+        _options = null;
+        _configurePending = configure ?? throw new ArgumentNullException(nameof(configure));
+        return this;
+    }
+
+    /// <summary>
+    /// Attaches a diagnostics implementation to observe cache events.
+    /// When not called, <see cref="NoOpDiagnostics.Instance"/> is used.
+    /// </summary>
+    /// <param name="diagnostics">The diagnostics implementation to use.</param>
+    /// <returns>This builder instance, for fluent chaining.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="diagnostics"/> is <c>null</c>.
+    /// </exception>
+    public VisitedPlacesCacheBuilder<TRange, TData, TDomain> WithDiagnostics(IVisitedPlacesCacheDiagnostics diagnostics)
+    {
+        _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
+        return this;
+    }
+
+    /// <summary>
+    /// Configures the eviction system with a list of policies and a selector.
+    /// Both are required; <see cref="Build"/> throws if this method has not been called.
+    /// </summary>
+    /// <param name="policies">One or more eviction policies (OR semantics: eviction triggers when ANY policy exceeds pressure). Must be non-null and non-empty.</param>
+    /// <param name="selector">The selector determining eviction candidate order. Must be non-null.</param>
+    /// <returns>This builder instance, for fluent chaining.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="policies"/> or <paramref name="selector"/> is <c>null</c>.
+    /// </exception>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="policies"/> is empty.
+    /// </exception>
+    public VisitedPlacesCacheBuilder<TRange, TData, TDomain> WithEviction(
+        IReadOnlyList<IEvictionPolicy<TRange, TData>> policies,
+        IEvictionSelector<TRange, TData> selector)
+    {
+        ArgumentNullException.ThrowIfNull(policies);
+
+        if (policies.Count == 0)
+        {
+            throw new ArgumentException(
+                "At least one eviction policy must be provided.",
+                nameof(policies));
+        }
+
+        _policies = policies;
+        _selector = selector ?? throw new ArgumentNullException(nameof(selector));
+        return this;
+    }
+
+    /// <summary>
+    /// Configures the eviction system inline using a fluent <see cref="EvictionConfigBuilder{TRange,TData}"/>.
+    /// Both at least one policy and a selector are required; <see cref="Build"/> throws if this method
+    /// has not been called.
+    /// </summary>
+    /// <param name="configure">A delegate that applies eviction policies and a selector to the builder.</param>
+    /// <returns>This builder instance, for fluent chaining.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="configure"/> is <c>null</c>.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the delegate does not add at least one policy or does not set a selector.
+    /// </exception>
+    public VisitedPlacesCacheBuilder<TRange, TData, TDomain> WithEviction(
+        Action<EvictionConfigBuilder<TRange, TData>> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var evictionBuilder = new EvictionConfigBuilder<TRange, TData>();
+        configure(evictionBuilder);
+        var (policies, selector) = evictionBuilder.Build();
+
+        _policies = policies;
+        _selector = selector;
+        return this;
+    }
+
+    /// <summary>
+    /// Builds and returns a configured <see cref="IVisitedPlacesCache{TRange,TData,TDomain}"/> instance.
+    /// </summary>
+    /// <returns>
+    /// A fully wired <see cref="VisitedPlacesCache{TRange,TData,TDomain}"/> ready for use.
+    /// Dispose the returned instance (via <c>await using</c>) to release background resources.
+    /// </returns>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when <see cref="WithOptions(VisitedPlacesCacheOptions{TRange,TData})"/> or
+    /// <see cref="WithOptions(Action{VisitedPlacesCacheOptionsBuilder{TRange,TData}})"/> has not been called,
+    /// or when <see cref="WithEviction"/> has not been called,
+    /// or when <see cref="Build"/> has already been called on this builder instance.
+    /// </exception>
+    public IVisitedPlacesCache<TRange, TData, TDomain> Build()
+    {
+        if (_built)
+        {
+            throw new InvalidOperationException(
+                "Build() has already been called on this builder. " +
+                "Each builder instance may only produce one cache.");
+        }
+
+        var resolvedOptions = _options;
+
+        if (resolvedOptions is null && _configurePending is not null)
+        {
+            var optionsBuilder = new VisitedPlacesCacheOptionsBuilder<TRange, TData>();
+            _configurePending(optionsBuilder);
+            resolvedOptions = optionsBuilder.Build();
+        }
+
+        if (resolvedOptions is null)
+        {
+            throw new InvalidOperationException(
+                "Options must be configured before calling Build(). " +
+                "Use WithOptions() to supply a VisitedPlacesCacheOptions instance or configure options inline.");
+        }
+
+        if (_policies is null || _selector is null)
+        {
+            throw new InvalidOperationException(
+                "Eviction must be configured before calling Build(). " +
+                "Use WithEviction() to supply policies and a selector.");
+        }
+
+        _built = true;
+
+        return new VisitedPlacesCache<TRange, TData, TDomain>(
+            _dataSource,
+            _domain,
+            resolvedOptions,
+            _policies,
+            _selector,
+            _diagnostics);
+    }
+}

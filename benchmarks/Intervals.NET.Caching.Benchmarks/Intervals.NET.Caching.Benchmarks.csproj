@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
         <TargetFramework>net8.0</TargetFramework>
@@ -21,6 +21,8 @@
 
     <ItemGroup>
         <ProjectReference Include="..\..\src\Intervals.NET.Caching\Intervals.NET.Caching.csproj" />
+        <ProjectReference Include="..\..\src\Intervals.NET.Caching.SlidingWindow\Intervals.NET.Caching.SlidingWindow.csproj" />
+        <ProjectReference Include="..\..\src\Intervals.NET.Caching.VisitedPlaces\Intervals.NET.Caching.VisitedPlaces.csproj" />
     </ItemGroup>
 
     <ItemGroup>
